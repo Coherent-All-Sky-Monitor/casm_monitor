@@ -1,0 +1,64 @@
+# casm_monitor configuration. Path override: env CASM_MONITOR_CONFIG.
+# NOTE: no secrets live here. The redis password and the LMC port are read at
+# runtime from medusa.cfg (Fourier Space's own file, read-only).
+
+store_root: /mnt/nvme3/casm_monitor
+
+web:
+  host: 127.0.0.1
+  port: 8060
+
+paths:
+  vis_dir: /mnt/nvme4/data/casm/visibilities_64ant
+  hella_cands_dir: /mnt/nvme4/data/casm/hella_cands
+  t2_db: /mnt/nvme5/casm_pipeline/db/t2.sqlite
+  registry_dir: /mnt/nvme5/casm_pipeline/weights/registry
+  deployed_weights_csv: /home/casm/software/dev/casm-wiki/deployed_weights.csv
+  medusa_cfg: /home/casm/software/fourier-space/opt/casm/share/common/medusa.cfg
+
+kafka:
+  bootstrap: casm-corr1:9092
+  topics:
+    - casm_antenna_bp
+    - casm_antenna_ts
+    - casm_antenna_hg
+
+hosts:
+  # corr1 is local; corr2 and zapdos are reached over ssh (BatchMode, key auth).
+  corr2_ssh: casm-corr2
+  zapdos_ssh: zapdos
+  check_head_node: false
+
+disks:
+  - /mnt/nvme3
+  - /mnt/nvme4
+  - /mnt/nvme5
+
+# Collector cadences in seconds. zapdos is contacted at most once per hour and
+# the collector additionally refuses to probe more often than
+# zapdos_min_interval_s, so a service restart loop cannot spam it.
+cadences:
+  obs: 30
+  hella: 60
+  hella_corr2: 600
+  services: 30
+  zapdos: 3600
+  disks: 300
+  gpus: 60
+  weights: 120
+  sky: 60
+  store: 300
+
+zapdos_min_interval_s: 3600
+
+# Per-stream shard time-to-live in days, used by the retention helper.
+shard_ttl_days:
+  kafka_bandpass_full: 14
+  kafka_bandpass_subband: 90
+  snap_board_read: 36500
+  vis_reduced: 3
+  vis_reduced_chanavg: 60
+
+# M3 gate: the weights upload button stays disabled unless this is true AND
+# CASM_MONITOR_ALLOW_UPLOAD=1 is set in the unit environment.
+allow_upload: false

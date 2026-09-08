@@ -1,0 +1,15 @@
+[Unit]
+Description=CASM monitor collectors (writes the history store)
+After=network-online.target
+
+[Service]
+Environment=CASM_MONITOR_CONFIG=%h/software/dev/casm_monitor/config/monitor.yaml
+ExecStart=/home/casm/software/dev/casm_venvs/casm_offline_env/bin/casm-monitor-collect
+Restart=always
+RestartSec=5
+MemoryMax=8G
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,26 @@
+{
+ "casm_antenna_bp": {
+  "create_time_ms": 1788905896149,
+  "offset": 1041190,
+  "key": "casm_antenna",
+  "body_bytes": 270336,
+  "captured_utc": "2026-09-08",
+  "note": "captured with kafka-console-consumer.sh, no consumer group; bp decodes as float32 (22,3072), 16 populated rows"
+ },
+ "casm_antenna_ts": {
+  "create_time_ms": 1788905837789,
+  "offset": 1041196,
+  "key": "casm_antenna",
+  "body_bytes": 813120,
+  "captured_utc": "2026-09-08",
+  "note": "captured with kafka-console-consumer.sh, no consumer group; bp decodes as float32 (22,3072), 16 populated rows"
+ },
+ "casm_antenna_hg": {
+  "create_time_ms": 1788905847774,
+  "offset": 1041202,
+  "key": "casm_antenna",
+  "body_bytes": 26400,
+  "captured_utc": "2026-09-08",
+  "note": "captured with kafka-console-consumer.sh, no consumer group; bp decodes as float32 (22,3072), 16 populated rows"
+ }
+}

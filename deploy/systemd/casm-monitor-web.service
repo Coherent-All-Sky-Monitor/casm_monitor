@@ -1,0 +1,15 @@
+[Unit]
+Description=CASM monitor web UI (127.0.0.1:8060, reached over ssh -L)
+After=network-online.target
+
+[Service]
+Environment=CASM_MONITOR_CONFIG=%h/software/dev/casm_monitor/config/monitor.yaml
+ExecStart=/home/casm/software/dev/casm_venvs/casm_offline_env/bin/casm-monitor-web
+Restart=always
+RestartSec=5
+MemoryMax=4G
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

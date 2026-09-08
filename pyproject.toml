@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "casm-monitor"
+version = "0.1.0"
+description = "Independent CASM radio-array monitoring service (collectors, history store, web UI)"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "CASM team" }]
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pyyaml",
+    "numpy",
+    "zarr>=3",
+    "kafka-python",
+    "redis",
+    "astropy",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "httpx"]
+
+[project.scripts]
+casm-monitor-collect = "casm_monitor.collectors.runner:main"
+casm-monitor-web = "casm_monitor.web.app:main"
+casm-monitor-jobs = "casm_monitor.jobs.worker:main"
+
+[tool.setuptools.packages.find]
+include = ["casm_monitor*"]
+
+# The SPA bundle is built into casm_monitor/web/static/ and shipped with the
+# package so the server never needs node at runtime.
+[tool.setuptools.package-data]
+casm_monitor = ["web/static/*", "web/static/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

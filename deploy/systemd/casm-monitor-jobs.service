@@ -1,0 +1,18 @@
+[Unit]
+Description=CASM monitor job worker (cal/imaging jobs, one at a time)
+After=network-online.target
+
+[Service]
+Environment=CASM_MONITOR_CONFIG=%h/software/dev/casm_monitor/config/monitor.yaml
+ExecStart=/home/casm/software/dev/casm_venvs/casm_offline_env/bin/casm-monitor-jobs
+Restart=always
+RestartSec=5
+# A cal solve materialises ~10 GB through casm_io; the CPU cap keeps the live
+# medusa pipelines' cores free (96 cores on the node, 16 for jobs).
+MemoryMax=256G
+CPUQuota=1600%
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
