@@ -38,6 +38,7 @@ export function useStatus(): UseStatusResult {
     }
 
     function startPolling() {
+      if (closedByUs.current) return;
       if (pollTimer.current) return;
       // Poll immediately, then on the interval.
       getStatus()
@@ -84,8 +85,9 @@ export function useStatus(): UseStatusResult {
       };
 
       ws.onclose = () => {
-        setConnected(false);
         wsRef.current = null;
+        setConnected(false);
+        if (closedByUs.current) return;
         startPolling();
         scheduleReconnect();
       };
@@ -95,12 +97,24 @@ export function useStatus(): UseStatusResult {
       };
     }
 
+    function closeSocket(ws: WebSocket) {
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.close();
+    }
+
     function scheduleReconnect() {
       if (closedByUs.current) return;
-      const delay = Math.min(
+      // Add jitter so many clients reconnecting at once do not thunder in
+      // lockstep, while keeping the same exponential backoff cap.
+      const base = Math.min(
         RECONNECT_MAX_MS,
         RECONNECT_BASE_MS * 2 ** reconnectAttempt.current,
       );
+      const jitter = base * (0.2 * Math.random() - 0.1);
+      const delay = Math.min(RECONNECT_MAX_MS, Math.max(0, base + jitter));
       reconnectAttempt.current += 1;
       reconnectTimer.current = setTimeout(connect, delay);
     }
@@ -114,19 +128,24 @@ export function useStatus(): UseStatusResult {
       closedByUs.current = true;
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       stopPolling();
-      wsRef.current?.close();
+      if (wsRef.current) closeSocket(wsRef.current);
       wsRef.current = null;
     };
   }, []);
 
+  // Single long-lived interval that reads lastUpdate via a ref, rather than
+  // a new setInterval on every payload (the previous [lastUpdate] dependency
+  // meant a fresh timer was created on every message).
+  const lastUpdateRef = useRef<number | null>(null);
+  lastUpdateRef.current = lastUpdate;
+
   useEffect(() => {
     const timer = setInterval(() => {
-      setBackendStale(
-        lastUpdate === null || Date.now() - lastUpdate > STALE_AFTER_MS,
-      );
+      const last = lastUpdateRef.current;
+      setBackendStale(last === null || Date.now() - last > STALE_AFTER_MS);
     }, 1000);
     return () => clearInterval(timer);
-  }, [lastUpdate]);
+  }, []);
 
   return { status, connected, backendStale, lastUpdate };
 }

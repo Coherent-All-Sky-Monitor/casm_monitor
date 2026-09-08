@@ -1,4 +1,5 @@
 import { useUrlParam } from "../lib/useUrlParam";
+import { isValidDateInput } from "../lib/timeRange";
 import ToggleBar from "./ToggleBar";
 
 const PRESETS = [
@@ -32,24 +33,36 @@ export default function TimeRangePicker({
   const [from, setFrom] = useUrlParam(fromKey, "");
   const [to, setTo] = useUrlParam(toKey, "");
 
+  const fromInvalid = range === "custom" && from !== "" && !isValidDateInput(from);
+  const toInvalid = range === "custom" && to !== "" && !isValidDateInput(to);
+
   return (
     <div className="time-range-picker">
       <ToggleBar paramKey={rangeKey} options={PRESETS} defaultValue={defaultRange} />
       {range === "custom" && (
         <>
+          <label htmlFor={`${fromKey}-input`}>from (local time)</label>
           <input
+            id={`${fromKey}-input`}
             type="datetime-local"
             value={from}
             onChange={(e) => setFrom(e.target.value)}
-            aria-label="from"
+            aria-label="from (local time)"
           />
           <span>–</span>
+          <label htmlFor={`${toKey}-input`}>to (local time)</label>
           <input
+            id={`${toKey}-input`}
             type="datetime-local"
             value={to}
             onChange={(e) => setTo(e.target.value)}
-            aria-label="to"
+            aria-label="to (local time)"
           />
+          {(fromInvalid || toInvalid) && (
+            <span className="time-range-picker__warning" role="alert">
+              Enter a valid date/time (times are local, not UTC).
+            </span>
+          )}
         </>
       )}
     </div>

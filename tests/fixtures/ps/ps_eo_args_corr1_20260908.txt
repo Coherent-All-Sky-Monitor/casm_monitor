@@ -1,0 +1,31 @@
+COMMAND
+tail -f bf_proc_hella.log
+/bin/sh -c numactl -C 47 --membind=0 -- casm_corr_dump -b 32 -f 3072 -i 128 -k b000 -o /mnt/nvme4/data/casm/visibilities_64ant//2026-09-04-16:43:47.dat -n 32
+casm_corr_dump -b 32 -f 3072 -i 128 -k b000 -o /mnt/nvme4/data/casm/visibilities_64ant//2026-09-04-16:43:47.dat -n 32
+/bin/sh -c numactl -C 3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20 --membind=0 -- casm_bfcorr -a 64 -f 512 -i a000 -m corr --corr_out a018 --corr_int_factor 2048 -b 512 --bf_int_factor 32 --incoh_out a030 --incoh_weights a03c --sub_incoh -t 2048 -d 0 -m bf --bf_out a00c --bf_weights a024 --bf_scale_factor 8
+casm_bfcorr -a 64 -f 512 -i a000 -m corr --corr_out a018 --corr_int_factor 2048 -b 512 --bf_int_factor 32 --incoh_out a030 --incoh_weights a03c --sub_incoh -t 2048 -d 0 -m bf --bf_out a00c --bf_weights a024 --bf_scale_factor 8
+/bin/sh -c numactl -C 48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63 --membind=1 -- casm_bfcorr -a 64 -f 512 -i a004 -m corr --corr_out a01c --corr_int_factor 2048 -b 512 --bf_int_factor 32 --incoh_out a034 --incoh_weights a040 --sub_incoh -t 2048 -d 5 -m bf --bf_out a010 --bf_weights a028 --bf_scale_factor 8
+casm_bfcorr -a 64 -f 512 -i a004 -m corr --corr_out a01c --corr_int_factor 2048 -b 512 --bf_int_factor 32 --incoh_out a034 --incoh_weights a040 --sub_incoh -t 2048 -d 5 -m bf --bf_out a010 --bf_weights a028 --bf_scale_factor 8
+/bin/sh -c numactl -C 3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20 --membind=0 -- casm_bfcorr -a 64 -f 512 -i a002 -m corr --corr_out a01a --corr_int_factor 2048 -b 512 --bf_int_factor 32 --incoh_out a032 --incoh_weights a03e --sub_incoh -t 2048 -d 1 -m bf --bf_out a00e --bf_weights a026 --bf_scale_factor 8
+casm_bfcorr -a 64 -f 512 -i a002 -m corr --corr_out a01a --corr_int_factor 2048 -b 512 --bf_int_factor 32 --incoh_out a032 --incoh_weights a03e --sub_incoh -t 2048 -d 1 -m bf --bf_out a00e --bf_weights a026 --bf_scale_factor 8
+/bin/sh -c numactl -C 64,65,66,67,68,69,70,71,72,73 --membind=1 -- /home/casm/software/vishnu/casm_hella_vishnu/deploy/hella_fork_wrapper.sh -c /tmp/hella_2.cfg
+/home/casm/software/vishnu/casm_hella_vishnu/build/src/apps/casm_hella_refactored -c /tmp/hella_2.cfg
+/bin/sh -c numactl -C 31,32,33,34,35,36,37,38,39,40 --membind=0 -- /home/casm/software/vishnu/casm_hella_vishnu/deploy/hella_fork_wrapper.sh -c /tmp/hella_1.cfg
+/home/casm/software/vishnu/casm_hella_vishnu/build/src/apps/casm_hella_refactored -c /tmp/hella_1.cfg
+/bin/sh -c numactl -C 74,75,76,77,78,79,80,81,82,83 --membind=1 -- /home/casm/software/vishnu/casm_hella_vishnu/deploy/hella_fork_wrapper.sh -c /tmp/hella_3.cfg
+/home/casm/software/vishnu/casm_hella_vishnu/build/src/apps/casm_hella_refactored -c /tmp/hella_3.cfg
+/bin/sh -c numactl -C 21,22,23,24,25,26,27,28,29,30 --membind=0 -- /home/casm/software/vishnu/casm_hella_vishnu/deploy/hella_fork_wrapper.sh -c /tmp/hella_0.cfg
+/home/casm/software/vishnu/casm_hella_vishnu/build/src/apps/casm_hella_refactored -c /tmp/hella_0.cfg
+python /home/casm/software/fourier-space/opt/casm/bin/casm_hella.py 2 bf_proc
+python /home/casm/software/fourier-space/opt/casm/bin/casm_hella.py 1 bf_proc
+python /home/casm/software/fourier-space/opt/casm/bin/casm_bfcorr.py 0 antenna
+python /home/casm/software/fourier-space/opt/casm/bin/casm_hella.py 3 bf_proc
+python /home/casm/software/fourier-space/opt/casm/bin/casm_hella.py 0 bf_proc
+python /home/casm/software/fourier-space/opt/casm/bin/casm_bfcorr.py 1 antenna
+python /home/casm/software/fourier-space/opt/casm/bin/casm_corr_dump.py 0 corr_proc
+python /home/casm/software/fourier-space/opt/casm/bin/casm_bfcorr.py 2 antenna
+/usr/bin/python3 /usr/bin/networkd-dispatcher --run-startup-triggers
+/usr/sbin/cron -f -P
+/usr/sbin/NetworkManager --no-daemon
+/usr/sbin/wpa_supplicant -u -s -O DIR=/run/wpa_supplicant GROUP=netdev
+/usr/sbin/rsyslogd -n -iNONE

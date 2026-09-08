@@ -39,6 +39,17 @@ As services (units are linked but never enabled/started by the script):
     bash deploy/install.sh
     systemctl --user enable --now casm-monitor-collect casm-monitor-web casm-monitor-jobs
 
+The service writes nothing outside its store root (`/mnt/nvme3/casm_monitor`):
+every shard path, job directory and retention deletion is resolved and refused
+unless it is inside that root, stream names and shard ids are restricted to
+`[A-Za-z0-9_.-]+`, and deleted shards go through `store_root/.trash/` rather
+than an `rm -rf` of a manifest-supplied path. `deploy/install.sh` is the single,
+documented exception: run by an operator by hand, it writes the unit symlinks
+and their `CASM_MONITOR_CONFIG` drop-ins under
+`${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/`, which is how a systemd
+`--user` unit gets installed at all. No collector, job or web handler ever calls
+it.
+
 ## Look at it
 
 The web service binds 127.0.0.1 only, so from your laptop:

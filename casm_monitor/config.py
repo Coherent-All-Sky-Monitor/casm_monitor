@@ -138,7 +138,12 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         check_head_node=_as_bool(hosts.get("check_head_node", defaults.check_head_node)),
         disks=tuple(raw.get("disks", defaults.disks)),
         cadences=cadences,
-        zapdos_min_interval_s=float(raw.get("zapdos_min_interval_s", defaults.zapdos_min_interval_s)),
+        # Clamped: zapdos is contacted at most once per hour, so a config that
+        # asks for less is silently raised to the floor (the collector clamps
+        # again in code and takes the slot with an atomic compare-and-set).
+        zapdos_min_interval_s=max(
+            float(raw.get("zapdos_min_interval_s", defaults.zapdos_min_interval_s)), 3600.0
+        ),
         shard_ttl_days={str(k): float(v) for k, v in (raw.get("shard_ttl_days") or {}).items()},
         allow_upload=_as_bool(raw.get("allow_upload", defaults.allow_upload)),
         config_path=p if p.is_file() else None,

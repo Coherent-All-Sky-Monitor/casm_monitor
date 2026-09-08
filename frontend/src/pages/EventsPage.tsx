@@ -7,6 +7,7 @@ import { useUrlParam } from "../lib/useUrlParam";
 import type { EventRecord } from "../lib/types";
 
 const REFRESH_MS = 30_000;
+const KIND_DEBOUNCE_MS = 300;
 
 function SeverityBadge({ severity }: { severity: string }) {
   return <span className={`severity-${severity}`}>{severity}</span>;
@@ -47,13 +48,22 @@ export default function EventsPage() {
   const [range] = useUrlParam("range_range", "24h");
   const [customFrom] = useUrlParam("range_from", "");
 
+  // The kind filter is a prefix/LIKE match against a table the user may be
+  // typing into character by character; debounce so we don't fire a request
+  // per keystroke.
+  const [debouncedKind, setDebouncedKind] = useState(kind);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedKind(kind), KIND_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [kind]);
+
   useEffect(() => {
     let cancelled = false;
     function load() {
       const since = resolveSince(range, customFrom);
       getEvents({
         since: since || undefined,
-        kind: kind || undefined,
+        kind: debouncedKind || undefined,
         severity: severity || undefined,
         limit: 500,
       })
@@ -68,7 +78,7 @@ export default function EventsPage() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [kind, severity, range, customFrom]);
+  }, [debouncedKind, severity, range, customFrom]);
 
   return (
     <Page title="Events">
@@ -80,7 +90,7 @@ export default function EventsPage() {
       <div className="events-toolbar">
         <input
           type="text"
-          placeholder="filter kind…"
+          placeholder="filter kind (prefix match)…"
           value={kind}
           onChange={(e) => setKind(e.target.value)}
         />

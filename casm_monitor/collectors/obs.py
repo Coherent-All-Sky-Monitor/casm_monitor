@@ -16,7 +16,9 @@ Two read-only sources, both used, because they answer different questions:
 from __future__ import annotations
 
 import re
+import shlex
 import socket
+from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
@@ -31,7 +33,7 @@ LMC_REQUEST = (
 )
 
 _UTC_START_RE = re.compile(r"(\d{4}-\d{2}-\d{2}-\d{2}:\d{2}:\d{2})")
-_HELLA_CFG_RE = re.compile(r"/tmp/hella_(\d+)\.cfg")
+_HELLA_CFG_RE = re.compile(r"hella_(\d+)\.cfg$")
 
 
 def lmc_daemon_status(host: str, port: int, timeout: float = 5.0) -> str:
@@ -74,14 +76,26 @@ def parse_daemon_status(xml: str) -> dict[str, Any]:
     }
 
 
+def _argv(line: str) -> list[str]:
+    """Tokenize one ``ps -eo args`` line; fall back to whitespace splitting."""
+    try:
+        return shlex.split(line)
+    except ValueError:
+        return line.split()
+
+
 def parse_ps(ps_output: str) -> dict[str, Any]:
     """Pull obs facts out of ``ps -eo args`` text.
 
-    Only the GPU binaries count, never their ``/bin/sh -c numactl ...``
-    wrappers nor medusa's python daemons of the same name: a ``casm_bfcorr``
-    line must carry ``--bf_out`` and a hella line must be the search binary
-    given a ``/tmp/hella_<job>.cfg``. Getting this wrong is what makes
-    ``--sub_incoh`` read as off while it is on.
+    Matching is on the **executable basename** of the tokenized argv, never on a
+    substring of the line. That is what keeps out the ``/bin/sh -c numactl ...``
+    wrappers (argv[0] is ``sh``), medusa's python daemons of the same name
+    (argv[0] is ``python``, the ``.py`` is argv[1]) and the hella fork wrapper
+    (argv[0] is ``hella_fork_wrapper.sh``), while keeping the real binaries:
+    ``casm_corr_dump`` with ``-o``, ``casm_bfcorr`` with ``--bf_out``, and
+    ``casm_hella*`` with ``-c /tmp/hella_<job>.cfg``. Getting this wrong is what
+    makes ``--sub_incoh`` read as off while it is on. Duplicate lines are
+    tolerated: hella jobs are a set, and the bfcorr counts are per real process.
     """
     utc_start: str | None = None
     scale: float | None = None
@@ -90,25 +104,29 @@ def parse_ps(ps_output: str) -> dict[str, Any]:
     hella_jobs: set[int] = set()
     n_corr_dump = 0
     for line in ps_output.splitlines():
-        wrapper = line.startswith("/bin/sh") or " -c numactl" in line
-        if "casm_corr_dump" in line and " -o " in line and not wrapper:
+        argv = _argv(line)
+        if not argv:
+            continue
+        exe = Path(argv[0]).name
+        if exe == "casm_corr_dump" and "-o" in argv:
             n_corr_dump += 1
             match = _UTC_START_RE.search(line)
             if match:
                 utc_start = match.group(1)
-        if "casm_bfcorr" in line and "--bf_out" in line and not wrapper:
+        elif exe == "casm_bfcorr" and "--bf_out" in argv:
             n_bfcorr += 1
-            if "--sub_incoh" in line:
+            if "--sub_incoh" in argv:
                 n_sub_incoh += 1
-            fields = line.split()
-            if "--bf_scale_factor" in fields:
+            if "--bf_scale_factor" in argv:
                 try:
-                    scale = float(fields[fields.index("--bf_scale_factor") + 1])
+                    scale = float(argv[argv.index("--bf_scale_factor") + 1])
                 except (IndexError, ValueError):
                     pass
-        hella = _HELLA_CFG_RE.search(line)
-        if hella and "casm_hella" in line and not wrapper and ".py" not in line:
-            hella_jobs.add(int(hella.group(1)))
+        elif exe.startswith("casm_hella") and not exe.endswith(".py"):
+            for token in argv[1:]:
+                match = _HELLA_CFG_RE.search(token)
+                if match:
+                    hella_jobs.add(int(match.group(1)))
     return {
         "utc_start": utc_start,
         # 1 only when every searching bfcorr has the flag, so a partial state
@@ -161,7 +179,11 @@ class ObsCollector(Collector):
         ctx.scalar("obs.lmc_ok", lmc_ok)
 
         # -- process view -------------------------------------------------
-        _rc, out, _err = run(["ps", "-eo", "args"], timeout=10.0)
+        # A failed ps is a collector error (the runner records it and the
+        # strip goes stale), never a silent "nothing is running" state change.
+        rc, out, err = run(["ps", "-eo", "args"], timeout=10.0)
+        if rc != 0:
+            raise RuntimeError(f"ps -eo args failed (rc={rc}): {err.strip()[:200]}")
         info = parse_ps(out)
         if info["utc_start"]:
             ctx.on_change(

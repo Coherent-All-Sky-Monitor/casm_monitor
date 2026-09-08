@@ -134,11 +134,13 @@ class Store:
         return {"ts": r["ts"], "name": r["name"], "tags": _jload(r["tags"]), "value": r["value"]}
 
     def latest_scalars(self) -> dict[str, dict[str, Any]]:
-        """Newest row per scalar name."""
+        """Newest row per scalar name (ordered by ts, like ``latest_scalar``,
+        so a back-dated write with a larger rowid cannot make the two
+        disagree about which row is "latest")."""
         rows = self.query(
             "SELECT s.ts, s.name, s.tags, s.value FROM scalars s "
-            "JOIN (SELECT name, MAX(rowid) AS rid FROM scalars GROUP BY name) m "
-            "ON s.rowid = m.rid"
+            "JOIN (SELECT name, MAX(ts) AS max_ts FROM scalars GROUP BY name) m "
+            "ON s.name = m.name AND s.ts = m.max_ts"
         )
         return {
             r["name"]: {
@@ -160,26 +162,35 @@ class Store:
     ) -> tuple[list[float], list[Any]]:
         """Time series for one scalar, decimated to at most ``max_points``.
 
-        Decimation is a uniform stride over the selected rows with the last
-        point always kept, so a plotted trend keeps its endpoints.
+        Decimation is a uniform stride, applied in SQL so we never pull every
+        matching row into Python just to throw most of them away. The last
+        point is always kept, so a plotted trend keeps its endpoints.
         """
-        sql = "SELECT ts, value FROM scalars WHERE name = ?"
+        where_sql = " WHERE name = ?"
         args: list[Any] = [name]
         if t0 is not None:
-            sql += " AND ts >= ?"
+            where_sql += " AND ts >= ?"
             args.append(t0)
         if t1 is not None:
-            sql += " AND ts <= ?"
+            where_sql += " AND ts <= ?"
             args.append(t1)
-        sql += " ORDER BY ts ASC"
-        rows = self.query(sql, args)
-        n = len(rows)
-        if max_points > 0 and n > max_points:
-            stride = (n + max_points - 1) // max_points
-            picked = rows[::stride]
-            if picked and picked[-1] is not rows[-1]:
-                picked.append(rows[-1])
-            rows = picked
+
+        count_rows = self.query(f"SELECT COUNT(*) AS n FROM scalars{where_sql}", args)
+        n = int(count_rows[0]["n"]) if count_rows else 0
+        if n == 0:
+            return [], []
+
+        if max_points <= 0 or n <= max_points:
+            rows = self.query(f"SELECT ts, value FROM scalars{where_sql} ORDER BY ts ASC", args)
+            return [r["ts"] for r in rows], [r["value"] for r in rows]
+
+        stride = (n + max_points - 1) // max_points
+        sql = (
+            "SELECT ts, value FROM ("
+            f"  SELECT ts, value, ROW_NUMBER() OVER (ORDER BY ts ASC) AS rn FROM scalars{where_sql}"
+            ") WHERE (rn - 1) % ? = 0 OR rn = ? ORDER BY ts ASC"
+        )
+        rows = self.query(sql, [*args, stride, n])
         return [r["ts"] for r in rows], [r["value"] for r in rows]
 
     # -- events ---------------------------------------------------------
@@ -215,7 +226,8 @@ class Store:
             sql += " AND ts > ?"
             args.append(since)
         if kind:
-            sql += " AND kind = ?"
+            # Prefix match: the Events page filters as the operator types.
+            sql += " AND kind LIKE ? || '%'"
             args.append(kind)
         if severity:
             sql += " AND severity = ?"

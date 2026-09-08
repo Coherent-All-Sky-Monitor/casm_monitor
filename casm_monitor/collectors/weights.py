@@ -108,11 +108,43 @@ class WeightsCollector(Collector):
                 key=lambda e: (parse_iso(e.get("utc")) or 0.0, parse_iso(e.get("recorded_utc")) or 0.0),
             )
 
+        # The product the array is actually running is the one the newest live
+        # event names. If its JSON is missing, that is a registry fault to
+        # report — never a reason to show the newest unrelated product instead.
         product: dict[str, Any] | None = None
-        if live and live.get("product_id"):
-            product = load_product(registry_dir, str(live["product_id"]))
-        if product is None:
+        product_missing = 0
+        live_product_id = str(live.get("product_id")) if (live and live.get("product_id")) else None
+        if live_product_id:
+            product = load_product(registry_dir, live_product_id)
+            if product is None:
+                product_missing = 1
+                source = "missing"
+            else:
+                source = "live_event"
+        else:
             product = newest_product(registry_dir)
+            source = "newest_registry_product" if product else "none"
+        ctx.scalar("weights.product_source", source)
+        seen_before = ctx.store.latest_scalar("weights.product_missing") is not None
+        detail = {"product_id": live_product_id, "live_event_utc": (live or {}).get("utc")}
+        changed = ctx.on_change(
+            "weights.product_missing",
+            product_missing,
+            kind="registry_product_missing",
+            severity="error",
+            subject=live_product_id or "weights registry",
+            detail=detail,
+        )
+        if product_missing:
+            ctx.scalar("weights.missing_product_id", live_product_id or "unknown")
+            if not changed and not seen_before:
+                # First ever collect and it is already broken: say so once.
+                ctx.event(
+                    "registry_product_missing",
+                    severity="error",
+                    subject=live_product_id or "weights registry",
+                    detail=detail,
+                )
 
         ledger = read_last_ledger_row(ctx.settings.deployed_weights_csv)
         ledger_weights = ledger_weights_basename(ledger)
@@ -148,7 +180,9 @@ class WeightsCollector(Collector):
 
         registry_name = Path(h5_path).name if h5_path else None
         mismatch = 1 if (registry_name and ledger_weights and registry_name != ledger_weights) else 0
-        if registry_name is None or ledger_weights is None:
+        if registry_name is None or ledger_weights is None or product_missing:
+            # A product the live event names but the registry does not hold is
+            # a mismatch in its own right.
             mismatch = 1
         ctx.on_change(
             "weights.registry_mismatch",
@@ -160,6 +194,8 @@ class WeightsCollector(Collector):
                 "registry_weights_file": registry_name,
                 "ledger_weights_file": ledger_weights,
                 "product_id": product_id,
+                "product_missing": product_missing,
+                "product_source": source,
             },
         )
 

@@ -5,8 +5,11 @@ export type ItemState = "ok" | "warn" | "stale" | "error";
 
 export interface StatusItem {
   value: unknown;
-  ts: string;
-  age_s: number;
+  // Never-collected items report ts/age_s as null (state is still "stale"
+  // in that case, per the backend's "never blank" rule) rather than being
+  // omitted, so both must be treated as optionally absent here.
+  ts: string | null;
+  age_s: number | null;
   state: ItemState;
   label: string;
   unit: string | null;

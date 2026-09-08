@@ -2,6 +2,14 @@
 # Symlink the casm_monitor user units into ~/.config/systemd/user/ and reload.
 # It deliberately does NOT enable or start anything: enabling is an operator
 # decision (linger is already on for this account).
+#
+# THIS SCRIPT IS THE ONE DOCUMENTED EXCEPTION to the rule that casm_monitor
+# writes nothing outside its store root: installing a systemd --user unit means
+# writing a symlink and a drop-in under ${XDG_CONFIG_HOME:-$HOME/.config}/
+# systemd/user/, which is by definition outside /mnt/nvme3/casm_monitor. It is
+# operator-run, once, by hand — no service, collector, job or web handler ever
+# invokes it, and nothing else in the package writes outside the store root.
+# The only paths it touches are the two listed above (see README, "Install").
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

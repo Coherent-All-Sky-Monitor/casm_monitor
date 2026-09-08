@@ -340,6 +340,16 @@ button {
   font-family: var(--mono-font);
 }
 
+.time-range-picker label {
+  color: var(--fg-dim);
+  font-size: 0.78rem;
+}
+
+.time-range-picker__warning {
+  color: var(--chip-warn-fg);
+  font-size: 0.78rem;
+}
+
 /* Events table */
 
 .events-toolbar {

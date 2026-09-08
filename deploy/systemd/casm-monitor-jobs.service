@@ -1,16 +1,24 @@
 [Unit]
 Description=CASM monitor job worker (cal/imaging jobs, one at a time)
 After=network-online.target
+# Restart backoff: five restarts inside ten minutes and systemd gives up,
+# rather than hammering LMC, Redis, Kafka and ssh in a crash loop.
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Environment=CASM_MONITOR_CONFIG=%h/software/dev/casm_monitor/config/monitor.yaml
 ExecStart=/home/casm/software/dev/casm_venvs/casm_offline_env/bin/casm-monitor-jobs
-Restart=always
-RestartSec=5
+Restart=on-failure
+RestartSec=15
 # A cal solve materialises ~10 GB through casm_io; the CPU cap keeps the live
 # medusa pipelines' cores free (96 cores on the node, 16 for jobs).
 MemoryMax=256G
 CPUQuota=1600%
+# On stop the worker SIGTERMs the running job's process group itself and marks
+# it failed with reason worker_stopped; give it time to do that before systemd
+# kills the cgroup.
+TimeoutStopSec=45
 StandardOutput=journal
 StandardError=journal
 

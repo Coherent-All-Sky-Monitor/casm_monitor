@@ -5,12 +5,23 @@ all do blocking I/O). Failures are isolated: an exception or a timeout in one
 collector is written to ``collector_heartbeat``, recorded as a
 ``collector_ok = 0`` scalar, and after three consecutive failures raised as an
 ``error`` event — the other collectors keep their cadence throughout.
+
+A timeout cancels only our wait, never the thread (Python cannot interrupt one).
+So the runner keeps the ``concurrent.futures`` handle of the invocation and
+refuses to start the next iteration of that collector while the previous thread
+is still alive: the skip is recorded as ``collector_overlap = 1`` plus one
+``collector_overlap`` event per stretch of skips. That is what stops a slow
+collector from duplicating external probes and store writes. The other half of
+the guarantee lives in :func:`casm_monitor.util.run`: every subprocess probe
+(ssh, nvidia-smi, ps, ss, pgrep) has a subprocess-level timeout, so the thread
+really does end instead of hanging for ever.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import concurrent.futures
 import logging
 import signal
 import time
@@ -70,29 +81,64 @@ class CollectorRunner:
         self.collectors = list(collectors) if collectors is not None else default_collectors(settings)
         self.failures: dict[str, int] = {c.name: 0 for c in self.collectors}
         self._stop = asyncio.Event()
+        # Our own pool (never the default executor) so we hold the real thread
+        # handle and can tell "still running" from "we stopped waiting".
+        self._pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(4, len(self.collectors) + 2), thread_name_prefix="collector"
+        )
+        self._inflight: dict[str, concurrent.futures.Future] = {}
+        self._overlapping: set[str] = set()
 
     # -- one pass -------------------------------------------------------
     async def run_once(self, collector: Collector) -> bool:
-        """Run one collector, isolating its failure. True if it succeeded."""
-        loop = asyncio.get_running_loop()
+        """Run one collector, isolating its failure. True if it succeeded.
+
+        Returns False both for a failure and for a skipped run (a previous
+        invocation of this collector is still in its thread).
+        """
+        if self._skip_if_overlapping(collector):
+            return False
         started = time.time()
+        future = self._pool.submit(collector.collect, self.ctx)
+        self._inflight[collector.name] = future
         try:
-            await asyncio.wait_for(
-                loop.run_in_executor(None, collector.collect, self.ctx),
-                timeout=collector.timeout_s,
-            )
-        except asyncio.TimeoutError:
+            await asyncio.wait_for(asyncio.wrap_future(future), timeout=collector.timeout_s)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            # The thread keeps going; the overlap guard above is what protects
+            # the next iteration from running on top of it.
             self._record_failure(collector, f"timeout after {collector.timeout_s}s")
             return False
         except Exception:
             self._record_failure(collector, traceback.format_exc(limit=6))
             return False
         self.failures[collector.name] = 0
+        self._overlapping.discard(collector.name)
         self.store.heartbeat_ok(collector.name)
         self.store.put_scalar("collector_ok", 1, tags={"collector": collector.name})
+        self.store.put_scalar("collector_overlap", 0, tags={"collector": collector.name})
         self.store.put_scalar(
             "collector_duration_s", round(time.time() - started, 3), tags={"collector": collector.name}
         )
+        return True
+
+    def _skip_if_overlapping(self, collector: Collector) -> bool:
+        """True when the previous invocation of ``collector`` is still alive."""
+        previous = self._inflight.get(collector.name)
+        if previous is None or previous.done():
+            return False
+        self.store.put_scalar("collector_overlap", 1, tags={"collector": collector.name})
+        log.warning(
+            "collector %s still running from the previous iteration; skipping this one",
+            collector.name,
+        )
+        if collector.name not in self._overlapping:
+            self._overlapping.add(collector.name)
+            self.store.add_event(
+                "collector_overlap",
+                severity="warn",
+                subject=collector.name,
+                detail={"timeout_s": collector.timeout_s, "cadence_s": collector.cadence_s},
+            )
         return True
 
     def _record_failure(self, collector: Collector, message: str) -> None:
@@ -126,7 +172,9 @@ class CollectorRunner:
         while not self._stop.is_set():
             if ttls:
                 try:
-                    removed = apply_retention(self.store, ttls)
+                    removed = apply_retention(
+                        self.store, ttls, store_root=self.settings.store_root
+                    )
                     if removed:
                         self.store.add_event(
                             "retention_run",
@@ -160,6 +208,9 @@ class CollectorRunner:
         self._stop.set()
 
     def close(self) -> None:
+        # wait=False: a collector thread stuck in a syscall must not stop the
+        # process from exiting (systemd would kill us anyway).
+        self._pool.shutdown(wait=False, cancel_futures=True)
         if self._own_store:
             self.store.close()
 

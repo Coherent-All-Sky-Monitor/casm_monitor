@@ -4,19 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
+import threading
 import time
+from pathlib import Path
 
 import pytest
 
 from casm_monitor.collectors import CollectorContext, HellaCollector
 from casm_monitor.collectors.base import Collector
-from casm_monitor.collectors.hella import parse_hella_cfg, parse_multi
+from casm_monitor.collectors.hella import parse_cfg_files, parse_hella_cfg, split_marked
 from casm_monitor.collectors.nodes import DisksCollector, StoreCollector
 from casm_monitor.collectors.obs import parse_daemon_status, parse_ps
 from casm_monitor.collectors.runner import CollectorRunner, default_collectors
-from casm_monitor.collectors.services import ZapdosCollector
-from casm_monitor.collectors.weights import ledger_weights_basename, read_last_ledger_row
+from casm_monitor.collectors.services import ZapdosCollector, zapdos_interval_s
+from casm_monitor.collectors.weights import (
+    WeightsCollector,
+    ledger_weights_basename,
+    read_last_ledger_row,
+)
 from casm_monitor.store import ShardWriter, Store
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 HELLA_CFG = """OUTPUT BOTH
 OUTPUTPATH /mnt/nvme4/data/casm/hella_cands/cands_2026-09-04-16:42:39.dat.0
@@ -61,11 +70,43 @@ def test_parse_hella_cfg():
     assert cfg["OUTPUTPATH"].endswith(".dat.0")
 
 
-def test_parse_multi_uses_output_path_job_index():
-    text = HELLA_CFG + HELLA_CFG.replace(".dat.0", ".dat.3").replace("SNR 15", "SNR 12")
-    blocks = parse_multi(text)
+def test_parse_cfg_files_keys_on_the_filename():
+    """One parse per file, job id from the filename — never a token split."""
+    files = {
+        "/tmp/hella_0.cfg": HELLA_CFG,
+        "/tmp/hella_3.cfg": HELLA_CFG.replace(".dat.0", ".dat.3").replace("SNR 15", "SNR 12"),
+    }
+    blocks = parse_cfg_files(files)
     assert sorted(blocks) == [0, 3]
     assert blocks[0]["SNR"] == "15" and blocks[3]["SNR"] == "12"
+    # every key of every file survives (a concatenation split on 'OUTPUT '
+    # merged these into one block)
+    assert blocks[3]["OUTPUT_BANDPASS"] == "0" and blocks[3]["OUTPUT"] == "BOTH"
+
+
+def test_parse_live_corr1_cfg_fixtures():
+    """The four live corr1 files (captured 2026-09-08): jobs 0-3, SNR 15, DM_MIN 20."""
+    files = {
+        str(p): p.read_text() for p in sorted((FIXTURES / "hella" / "corr1").glob("hella_*.cfg"))
+    }
+    blocks = parse_cfg_files(files)
+    assert sorted(blocks) == [0, 1, 2, 3]
+    assert {b["SNR"] for b in blocks.values()} == {"15"}
+    assert {b["DM_MIN"] for b in blocks.values()} == {"20"}
+    assert [blocks[j]["OUTPUTPATH"].rsplit(".", 1)[-1] for j in sorted(blocks)] == list("0123")
+    assert [blocks[j]["BEAM0"] for j in sorted(blocks)] == ["0", "64", "128", "192"]
+
+
+def test_parse_live_corr2_marked_fixture():
+    """The corr2 ssh read (``=== <file>`` markers): jobs 4-7, same thresholds."""
+    text = (FIXTURES / "hella" / "corr2_marked.txt").read_text()
+    files = split_marked(text)
+    assert sorted(files) == [f"/tmp/hella_{i}.cfg" for i in (4, 5, 6, 7)]
+    blocks = parse_cfg_files(files)
+    assert sorted(blocks) == [4, 5, 6, 7]
+    assert {b["SNR"] for b in blocks.values()} == {"15"}
+    assert {b["DM_MIN"] for b in blocks.values()} == {"20"}
+    assert [blocks[j]["BEAM0"] for j in sorted(blocks)] == ["256", "320", "384", "448"]
 
 
 def test_parse_daemon_status():
@@ -83,6 +124,19 @@ def test_parse_ps():
     assert info["bf_scale_factor"] == 8.0
     assert info["n_hella"] == 2  # the two search binaries, not wrappers or .py
     assert info["n_corr_dump"] == 1
+
+
+def test_parse_ps_live_snapshot_fixture():
+    """A real ``ps -eo args`` capture from corr1 (2026-09-08), unedited lines."""
+    text = (FIXTURES / "ps" / "ps_eo_args_corr1_20260908.txt").read_text()
+    info = parse_ps(text)
+    assert info["utc_start"] == "2026-09-04-16:43:47"
+    assert info["n_corr_dump"] == 1  # the binary, not its /bin/sh numactl wrapper
+    assert info["n_bfcorr"] == 3 and info["n_sub_incoh"] == 3 and info["sub_incoh"] == 1
+    assert info["bf_scale_factor"] == 8.0
+    # four search binaries; the four fork wrappers and the four casm_hella.py
+    # medusa daemons must not be counted
+    assert info["n_hella"] == 4
 
 
 def test_parse_ps_partial_sub_incoh():
@@ -166,11 +220,16 @@ def test_failing_collector_does_not_stop_others(settings, store: Store):
     }
     assert '{"collector": "good"}' in oks and oks['{"collector": "good"}'] == 1
     assert oks['{"collector": "bad"}'] == 0
-    # three consecutive failures -> exactly one error event per broken collector
+    # three consecutive failures -> exactly one error event for the raiser
     failing = store.events(kind="collector_failing")
-    assert {e["subject"] for e in failing} == {"bad", "slow"}
+    assert {e["subject"] for e in failing} == {"bad"}
     assert all(e["severity"] == "error" for e in failing)
-    assert len(failing) == 2
+    assert len(failing) == 1
+    # 'slow' timed out once and was then SKIPPED (its thread was still alive),
+    # so it never got a second and third failure — that is the overlap guard.
+    assert "timeout" in hb["slow"]["last_err"]
+    assert [e["subject"] for e in store.events(kind="collector_overlap")] == ["slow"]
+    runner.close()
 
 
 def test_on_change_emits_only_on_change(settings, store: Store):
@@ -218,9 +277,52 @@ def test_zapdos_probe_is_rate_limited(settings, store: Store, monkeypatch):
     assert store.latest_scalar("services.zapdos_ok")["value"] == 1
 
     # only after the interval has passed does a second probe happen
-    store.set_watermark("zapdos", "last_probe_ts", time.time() - 2 * settings.zapdos_min_interval_s)
+    store.set_watermark("zapdos", "last_probe_ts", time.time() - 2 * 3600.0)
     collector.collect(ctx)
     assert len(calls) == 2
+
+
+def test_zapdos_interval_is_clamped_to_an_hour(settings, store: Store, monkeypatch):
+    """A config asking for a 1 s interval still cannot probe more than hourly."""
+    impatient = dataclasses.replace(settings, zapdos_min_interval_s=1.0)
+    assert zapdos_interval_s(impatient) == 3600.0
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "casm_monitor.collectors.services.run",
+        lambda cmd, timeout=10.0: (calls.append(cmd), (0, "", ""))[1],
+    )
+    ctx = CollectorContext(settings=impatient, store=store, shards=ShardWriter(store))
+    collector = ZapdosCollector(impatient)
+    collector.collect(ctx)
+    store.set_watermark("zapdos", "last_probe_ts", time.time() - 120.0)  # 2 min ago
+    collector.collect(ctx)
+    assert len(calls) == 1
+
+
+def test_zapdos_slot_is_taken_atomically(settings, store: Store, monkeypatch):
+    """Two collector instances racing on one store: exactly one probe."""
+    calls: list[float] = []
+    barrier = threading.Barrier(2)
+
+    def fake_run(cmd, timeout=10.0):
+        calls.append(time.time())
+        return 0, "", ""
+
+    monkeypatch.setattr("casm_monitor.collectors.services.run", fake_run)
+
+    def probe():
+        collector = ZapdosCollector(settings)
+        ctx = CollectorContext(settings=settings, store=store, shards=ShardWriter(store))
+        barrier.wait(timeout=10)
+        collector.collect(ctx)
+
+    threads = [threading.Thread(target=probe) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=20)
+    assert len(calls) == 1
 
 
 def test_disks_and_store_collectors_run_locally(settings, store: Store, tmp_path):
@@ -239,7 +341,7 @@ def test_disks_and_store_collectors_run_locally(settings, store: Store, tmp_path
 
 def test_hella_collector_reads_local_cfgs(settings, store: Store, tmp_path, monkeypatch):
     collector = HellaCollector(settings, node="corr1")
-    monkeypatch.setattr(collector, "_read", lambda: parse_multi(HELLA_CFG))
+    monkeypatch.setattr(collector, "_read", lambda: parse_cfg_files({"/tmp/hella_0.cfg": HELLA_CFG}))
     ctx = CollectorContext(settings=settings, store=store, shards=ShardWriter(store))
     collector.collect(ctx)
     assert store.latest_scalar("hella.corr1.snr")["value"] == 15.0
@@ -256,3 +358,143 @@ def test_hella_corr2_failure_is_tolerated(settings, store: Store, monkeypatch):
     collector.collect(ctx)  # must not raise
     assert store.latest_scalar("hella.corr2.n_jobs")["value"] == 0
     assert store.events(kind="hella_cfg_unavailable")
+
+
+def test_hella_corr2_uses_the_marked_ssh_read(settings, store: Store, monkeypatch):
+    """corr2 is read with the per-file marker command and parsed per file."""
+    captured: dict[str, list[str]] = {}
+    text = (FIXTURES / "hella" / "corr2_marked.txt").read_text()
+
+    def fake_run(cmd, timeout=10.0):
+        captured["cmd"] = cmd
+        return 0, text, ""
+
+    monkeypatch.setattr("casm_monitor.collectors.hella.run", fake_run)
+    collector = HellaCollector(settings, node="corr2")
+    ctx = CollectorContext(settings=settings, store=store, shards=ShardWriter(store))
+    collector.collect(ctx)
+    assert 'for f in /tmp/hella_*.cfg' in captured["cmd"][-1]
+    assert store.latest_scalar("hella.corr2.n_jobs")["value"] == 4
+    assert store.latest_scalar("hella.corr2.jobs")["value"] == "4,5,6,7"
+    assert store.latest_scalar("hella.corr2.snr")["value"] == 15.0
+    assert store.latest_scalar("hella.corr2.dm_min")["value"] == 20.0
+
+
+# -- overlap guard ------------------------------------------------------
+def test_timed_out_collector_is_not_started_again(settings, store: Store):
+    """A collector still in its thread is skipped, not launched a second time."""
+
+    class Stuck(Collector):
+        name = "stuck"
+        timeout_s = 0.05
+
+        def __init__(self, s):
+            super().__init__(s, cadence_s=0.01)
+            self.entered = 0
+            self.release = threading.Event()
+
+        def collect(self, ctx: CollectorContext) -> None:
+            self.entered += 1
+            self.release.wait(timeout=10)
+
+    stuck = Stuck(settings)
+    runner = CollectorRunner(settings, [stuck], store=store)
+
+    async def two_passes():
+        assert await runner.run_once(stuck) is False  # timeout
+        assert await runner.run_once(stuck) is False  # skipped, thread alive
+
+    try:
+        asyncio.run(two_passes())
+        assert stuck.entered == 1
+        overlaps = [
+            r["value"]
+            for r in store.query("SELECT value FROM scalars WHERE name = 'collector_overlap'")
+        ]
+        assert overlaps == [1]
+        assert [e["subject"] for e in store.events(kind="collector_overlap")] == ["stuck"]
+
+        # once the thread finishes, the collector runs again
+        stuck.release.set()
+        for _ in range(100):
+            if runner._inflight["stuck"].done():
+                break
+            time.sleep(0.05)
+        asyncio.run(runner.run_once(stuck))
+        assert stuck.entered == 2
+    finally:
+        stuck.release.set()
+        runner.close()
+
+
+# -- kafka / weights conclusions ---------------------------------------
+def test_kafka_ok_requires_every_topic(settings, store: Store, monkeypatch):
+    """kafka_ok stays 0 while a configured topic has no end offsets."""
+    from casm_monitor.collectors.services import ServicesCollector
+
+    ctx = CollectorContext(settings=settings, store=store, shards=ShardWriter(store))
+    collector = ServicesCollector(settings)
+
+    class FakeConsumer:
+        def __init__(self, offsets):
+            self._offsets = offsets
+
+        def partitions_for_topic(self, topic):
+            return {0} if topic in self._offsets else set()
+
+        def end_offsets(self, tps):
+            return {tp: self._offsets[tp.topic] for tp in tps}
+
+        def close(self, autocommit=False):
+            pass
+
+    def install(offsets):
+        import sys
+        import types
+
+        module = types.ModuleType("kafka")
+        module.KafkaConsumer = lambda **_kw: FakeConsumer(offsets)
+        module.TopicPartition = lambda topic, p: type(
+            "TP", (), {"topic": topic, "partition": p, "__hash__": lambda s: hash((topic, p))}
+        )()
+        monkeypatch.setitem(sys.modules, "kafka", module)
+
+    topics = list(settings.kafka_topics)
+    install({topics[0]: 10, topics[1]: 20})  # third topic missing
+    collector._kafka(ctx)
+    assert store.latest_scalar("services.kafka_ok")["value"] == 0
+    assert topics[2] in store.latest_scalar("services.kafka_topics_missing")["value"]
+
+    install({topics[0]: 11, topics[1]: 21, topics[2]: 31})
+    collector._kafka(ctx)
+    assert store.latest_scalar("services.kafka_ok")["value"] == 1
+
+    # one topic stops moving: it is named, the other two stay advancing
+    install({topics[0]: 12, topics[1]: 21, topics[2]: 32})
+    collector._kafka(ctx)
+    assert store.latest_scalar("services.kafka_advancing")["value"] == 0
+    assert store.latest_scalar("services.kafka_stalled_topic")["value"] == topics[1]
+    assert store.latest_scalar(f"kafka.{topics[0]}.advancing")["value"] == 1
+
+
+def test_weights_missing_product_is_flagged_not_substituted(settings, store: Store, tmp_path):
+    """A live event naming a product the registry lacks is a mismatch."""
+    registry = tmp_path / "registry"
+    (registry / "products").mkdir(parents=True)
+    (registry / "products" / "OTHER0101.json").write_text(
+        json.dumps({"product_id": "OTHER0101", "h5_path": "/a/newest.h5", "recorded_utc": "2026-09-07T00:00:00Z"})
+    )
+    (registry / "live_events.jsonl").write_text(
+        json.dumps({"utc": "2026-09-08T00:00:00Z", "product_id": "GONE0908", "source": "deploy"}) + "\n"
+    )
+    local = dataclasses.replace(settings, registry_dir=registry)
+    ctx = CollectorContext(settings=local, store=store, shards=ShardWriter(store))
+    WeightsCollector(local).collect(ctx)
+
+    assert store.latest_scalar("weights.product_missing")["value"] == 1
+    assert store.latest_scalar("weights.registry_mismatch")["value"] == 1
+    assert store.latest_scalar("weights.product_source")["value"] == "missing"
+    # never the newest unrelated product
+    assert store.latest_scalar("weights.product_id")["value"] == "unknown"
+    assert store.latest_scalar("weights.weights_file")["value"] == "unknown"
+    assert store.events(kind="registry_product_missing")[0]["detail"]["product_id"] == "GONE0908"

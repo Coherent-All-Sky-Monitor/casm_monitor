@@ -15,12 +15,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Sequence
 
 from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from .. import __version__
@@ -33,6 +36,40 @@ log = logging.getLogger("casm_monitor.web")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 WS_PUSH_INTERVAL_S = 10.0
+# How long a computed status payload is reused across concurrent callers
+# (many WS clients + polling fallbacks landing in the same tick should not
+# each hit SQLite on the event loop thread).
+STATUS_CACHE_TTL_S = 1.0
+
+
+class StatusCache:
+    """Coalesces concurrent status computations within a short TTL window.
+
+    ``compute`` runs in a threadpool (it does blocking SQLite I/O); the
+    result is shared by every caller that arrives within ``ttl_s`` of the
+    last computation instead of each triggering its own DB round trip.
+    """
+
+    def __init__(self, compute: Any, ttl_s: float = STATUS_CACHE_TTL_S) -> None:
+        self._compute = compute
+        self._ttl_s = ttl_s
+        self._lock = asyncio.Lock()
+        self._value: dict[str, Any] | None = None
+        self._computed_at = 0.0
+
+    async def get(self) -> dict[str, Any]:
+        now = time.monotonic()
+        if self._value is not None and (now - self._computed_at) < self._ttl_s:
+            return self._value
+        async with self._lock:
+            now = time.monotonic()
+            if self._value is not None and (now - self._computed_at) < self._ttl_s:
+                return self._value
+            value = await run_in_threadpool(self._compute)
+            self._value = value
+            self._computed_at = now
+            return value
+
 
 PLACEHOLDER_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -59,9 +96,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     writer = Store(settings.db_path, store_root=settings.store_root)
     reader = Store(settings.db_path, read_only=True, store_root=settings.store_root)
 
+    ws_tasks: set[asyncio.Task[None]] = set()
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
+        # Cancel outstanding WS handlers before tearing down the DB handles
+        # they read/write through, otherwise a handler still mid-tick can
+        # touch a closed connection.
+        for task in list(ws_tasks):
+            task.cancel()
+        for task in list(ws_tasks):
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         reader.close()
         writer.close()
 
@@ -69,9 +116,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.reader = reader
     app.state.writer = writer
+    app.state.ws_tasks = ws_tasks
 
     def status_payload() -> dict[str, Any]:
         return build_status(reader.latest_scalars(), settings.cadences)
+
+    status_cache = StatusCache(status_payload)
 
     # -- health / status ------------------------------------------------
     @app.get("/api/health")
@@ -83,8 +133,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.get("/api/status")
-    def status() -> dict[str, Any]:
-        return status_payload()
+    async def status() -> dict[str, Any]:
+        return await status_cache.get()
+
+    def require_parsed_iso(field: str, text: str | None) -> float | None:
+        """parse_iso, but a non-empty unparseable value is a client error
+        (400) rather than silently falling back to "no filter" / "all
+        rows"."""
+        if not text:
+            return None
+        parsed = parse_iso(text)
+        if parsed is None:
+            raise HTTPException(status_code=400, detail=f"{field} is not a valid ISO-8601 timestamp")
+        return parsed
 
     # -- events ---------------------------------------------------------
     @app.get("/api/events")
@@ -97,7 +158,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if severity is not None and severity not in ("info", "warn", "error"):
             raise HTTPException(status_code=400, detail="severity must be info|warn|error")
         rows = reader.events(
-            since=parse_iso(since), kind=kind, severity=severity, limit=max(1, min(limit, 5000))
+            since=require_parsed_iso("since", since),
+            kind=kind,
+            severity=severity,
+            limit=max(1, min(limit, 5000)),
         )
         for row in rows:
             row["ts"] = iso(row["ts"])
@@ -113,8 +177,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         times, values = reader.series(
             name,
-            t0=parse_iso(t0),
-            t1=parse_iso(t1),
+            t0=require_parsed_iso("t0", t0),
+            t1=require_parsed_iso("t1", t1),
             max_points=max(1, min(max_points, 100_000)),
         )
         return {"name": name, "t": times, "v": values}
@@ -167,14 +231,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.websocket("/ws/status")
     async def ws_status(websocket: WebSocket) -> None:
         await websocket.accept()
+        task = asyncio.current_task()
+        if task is not None:
+            ws_tasks.add(task)
         try:
             while True:
-                await websocket.send_json(status_payload())
-                await asyncio.sleep(WS_PUSH_INTERVAL_S)
-        except WebSocketDisconnect:
-            return
-        except (RuntimeError, ConnectionError):  # pragma: no cover - client gone
-            return
+                try:
+                    payload = await status_cache.get()
+                    await websocket.send_json(payload)
+                except WebSocketDisconnect:
+                    return
+                except Exception:
+                    # Client gone / socket half-closed mid-send: this is
+                    # routine, not worth a traceback.
+                    log.debug("ws send failed", exc_info=True)
+                    return
+
+                # Race the push interval against the client closing the
+                # socket, so a disconnect is noticed immediately instead of
+                # only at the next scheduled tick.
+                recv_task = asyncio.ensure_future(websocket.receive())
+                sleep_task = asyncio.ensure_future(asyncio.sleep(WS_PUSH_INTERVAL_S))
+                done: set[asyncio.Task[Any]] = set()
+                pending: set[asyncio.Task[Any]] = {recv_task, sleep_task}
+                try:
+                    done, pending = await asyncio.wait(
+                        {recv_task, sleep_task}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                finally:
+                    for p in pending:
+                        p.cancel()
+                    for p in pending:
+                        with contextlib.suppress(asyncio.CancelledError, Exception):
+                            await p
+
+                if recv_task in done:
+                    try:
+                        message = recv_task.result()
+                    except WebSocketDisconnect:
+                        return
+                    if message.get("type") == "websocket.disconnect":
+                        return
+                    # Any other client frame is ignored; the socket is
+                    # push-only from the server's side.
+        except asyncio.CancelledError:
+            # Server shutdown: let lifespan's cancellation propagate.
+            raise
+        finally:
+            if task is not None:
+                ws_tasks.discard(task)
 
     # -- SPA ------------------------------------------------------------
     def index_response() -> Response:

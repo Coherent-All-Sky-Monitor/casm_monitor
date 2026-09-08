@@ -1,12 +1,16 @@
 [Unit]
 Description=CASM monitor web UI (127.0.0.1:8060, reached over ssh -L)
 After=network-online.target
+# Restart backoff: five restarts inside ten minutes and systemd gives up,
+# rather than hammering LMC, Redis, Kafka and ssh in a crash loop.
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Environment=CASM_MONITOR_CONFIG=%h/software/dev/casm_monitor/config/monitor.yaml
 ExecStart=/home/casm/software/dev/casm_venvs/casm_offline_env/bin/casm-monitor-web
-Restart=always
-RestartSec=5
+Restart=on-failure
+RestartSec=15
 MemoryMax=4G
 StandardOutput=journal
 StandardError=journal

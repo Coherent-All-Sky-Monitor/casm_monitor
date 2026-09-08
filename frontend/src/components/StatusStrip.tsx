@@ -1,7 +1,8 @@
 import { useStatus } from "../lib/useStatus";
 import type { ItemState, StatusItem } from "../lib/types";
 
-function formatAge(ageS: number): string {
+function formatAge(ageS: number | null): string {
+  if (ageS === null) return "—";
   if (ageS < 60) return `${Math.round(ageS)}s`;
   if (ageS < 3600) return `${Math.round(ageS / 60)}m`;
   if (ageS < 86400) return `${Math.round(ageS / 3600)}h`;
@@ -27,10 +28,11 @@ function Chip({ itemKey, item }: { itemKey: string; item: StatusItem | undefined
   }
   const state: ItemState = item.state;
   const icon = state === "error" ? "⚠ " : "";
+  const asOf = item.ts === null ? "never collected" : `as of ${item.ts}`;
   return (
     <span
       className={`chip state-${state}`}
-      title={`${item.label} (${itemKey}) — as of ${item.ts}`}
+      title={`${item.label} (${itemKey}) — ${asOf}`}
     >
       <span className="chip-label">{item.label}</span>
       <span className="chip-value">
