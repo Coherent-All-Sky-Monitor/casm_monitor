@@ -22,6 +22,12 @@ class JobKind:
     run: Callable[[dict[str, Any]], dict[str, Any]]
     timeout_s: float = 3600.0
     description: str = ""
+    # RLIMIT_AS (bytes) applied to the job subprocess before it runs, or None
+    # for no per-kind cap (see jobs/run_job.py). This is the guard on top of
+    # the memory-bounded renderer itself: a bug that regresses the bound still
+    # gets killed well under the worker's 256G cgroup instead of taking the
+    # whole service down.
+    address_space_limit_bytes: int | None = None
 
 
 def _noop(params: dict[str, Any]) -> dict[str, Any]:
@@ -38,6 +44,15 @@ def _noop(params: dict[str, Any]) -> dict[str, Any]:
     elapsed = time.time() - started
     print(f"noop: done in {elapsed:.3f} s", flush=True)
     return {"slept_s": seconds, "elapsed_s": round(elapsed, 3), "message": params.get("message")}
+
+
+def _render_figures(params: dict[str, Any]) -> dict[str, Any]:
+    """Render the Vis and SNAPs tab figures (moved off the collector, 2026-09-09:
+    it OOM'd ``casm-monitor-collect.service``, MemoryMax=8G).
+    """
+    from .render_figures import run as run_render_figures
+
+    return run_render_figures(params)
 
 
 def _snap_read(params: dict[str, Any]) -> dict[str, Any]:
@@ -67,6 +82,19 @@ KINDS: dict[str, JobKind] = {
         description=(
             "read-only SNAP board read via zapdos (spectra, ADC stats, EQ, PPS); "
             'params {"ips": [...]|null, "reason": "scheduled"|"manual"}'
+        ),
+    ),
+    "render_figures": JobKind(
+        name="render_figures",
+        run=_render_figures,
+        timeout_s=900.0,
+        # Belt and braces on top of the memory-bounded renderer itself (never
+        # reads vis_full, never concatenates a whole vis_avg8 window): 16 GB
+        # is generously above the ~3 GB/target peak RSS this renders at.
+        address_space_limit_bytes=16 * 1024 * 1024 * 1024,
+        description=(
+            "render the Vis + SNAPs tab figure PNGs and manifests; "
+            'params {"targets": ["vis", "snaps"], "reason": "scheduled"|"manual"|"board_read"}'
         ),
     ),
 }

@@ -4,6 +4,7 @@ import Segmented from "../components/Segmented";
 import TimeRangePicker from "../components/TimeRangePicker";
 import BoardSection, { type PanelData } from "../components/snaps/BoardSection";
 import InputDetail from "../components/snaps/InputDetail";
+import SnapFigureView, { type SnapFigureViewKind } from "../components/snaps/SnapFigureView";
 import { useUrlParam } from "../lib/useUrlParam";
 import { resolveSince } from "../lib/timeRange";
 import { formatAge } from "../lib/snapConstants";
@@ -48,6 +49,9 @@ export default function SnapsPage() {
   const [units] = useUrlParam("units", "dB");
   const [mode] = useUrlParam("mode", "live");
   const [inputSet] = useUrlParam("input_set", "beamforming");
+  // The server-rendered figure is the default view (operator, 2026-09-08);
+  // "interactive" is the pre-existing live/history Plotly-style page below.
+  const [view] = useUrlParam("view", "correlator");
   const [selected, setSelected] = useUrlParam("input", "");
 
   const [boards, setBoards] = useState<SnapBoardInfo[] | null>(null);
@@ -114,7 +118,7 @@ export default function SnapsPage() {
   // Live layer: the correlator bandpass, polled every 10 s. The board layer
   // is never polled — it changes hourly server-side or after a manual read.
   useEffect(() => {
-    if (mode !== "live" || antennaBoards.length === 0) return;
+    if (view !== "interactive" || mode !== "live" || antennaBoards.length === 0) return;
     let cancelled = false;
     function pollLive() {
       for (const board of antennaBoards) {
@@ -132,7 +136,7 @@ export default function SnapsPage() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [mode, antennaBoards, api]);
+  }, [view, mode, antennaBoards, api]);
 
   const fetchBoardReads = useCallback(
     (ips: string[]) => {
@@ -216,7 +220,7 @@ export default function SnapsPage() {
   const [histIdx, setHistIdx] = useUrlParam("hist_i", "0");
 
   useEffect(() => {
-    if (mode !== "history" || antennaBoards.length === 0) return;
+    if (view !== "interactive" || mode !== "history" || antennaBoards.length === 0) return;
     let cancelled = false;
     const t1 = new Date().toISOString();
     const t0 = resolveSince(histRange, histFrom) || new Date(Date.now() - 24 * 3600_000).toISOString();
@@ -243,7 +247,7 @@ export default function SnapsPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, antennaBoards, layer, histRange, histFrom]);
+  }, [view, mode, antennaBoards, layer, histRange, histFrom]);
 
   const histFrames = useMemo(() => Object.values(histByPacketIdx), [histByPacketIdx]);
   const sliderMax = histFrames.length ? Math.max(...histFrames.map((h) => h.t.length)) - 1 : 0;
@@ -307,31 +311,20 @@ export default function SnapsPage() {
     .filter((a): a is number => a !== null)
     .sort((a, b) => a - b)[0];
 
+  const figureInputSet = inputSet === "all" ? "all12" : "beamforming";
+
   return (
     <div>
       <div className="toolbar">
         <Segmented
-          paramKey="layer"
+          paramKey="view"
           defaultValue="correlator"
           options={[
-            { value: "correlator", label: "correlator" },
-            { value: "board", label: "board" },
-          ]}
-        />
-        <Segmented
-          paramKey="units"
-          defaultValue="dB"
-          options={[
-            { value: "dB", label: "dB" },
-            { value: "linear", label: "linear" },
-          ]}
-        />
-        <Segmented
-          paramKey="mode"
-          defaultValue="live"
-          options={[
-            { value: "live", label: "live" },
-            { value: "history", label: "history" },
+            { value: "correlator", label: "correlator spectra" },
+            { value: "board", label: "board spectra" },
+            { value: "waterfalls", label: "waterfalls" },
+            { value: "trend", label: "trend" },
+            { value: "interactive", label: "interactive" },
           ]}
         />
         <Segmented
@@ -342,6 +335,34 @@ export default function SnapsPage() {
             { value: "all", label: "all 12 ADCs" },
           ]}
         />
+        {view === "interactive" && (
+          <>
+            <Segmented
+              paramKey="layer"
+              defaultValue="correlator"
+              options={[
+                { value: "correlator", label: "correlator" },
+                { value: "board", label: "board" },
+              ]}
+            />
+            <Segmented
+              paramKey="units"
+              defaultValue="dB"
+              options={[
+                { value: "dB", label: "dB" },
+                { value: "linear", label: "linear" },
+              ]}
+            />
+            <Segmented
+              paramKey="mode"
+              defaultValue="live"
+              options={[
+                { value: "live", label: "live" },
+                { value: "history", label: "history" },
+              ]}
+            />
+          </>
+        )}
         <span>
           <button className="text-button" onClick={handleReadNow} disabled={reading || !!retryAfterS} type="button">
             {reading ? "reading boards" : "Read boards now"}
@@ -354,48 +375,59 @@ export default function SnapsPage() {
                 : "boards never read"}
           </span>
         </span>
-        {mode === "history" && <TimeRangePicker paramPrefix="hist_range" defaultRange="24h" />}
+        {view === "interactive" && mode === "history" && (
+          <TimeRangePicker paramPrefix="hist_range" defaultRange="24h" />
+        )}
       </div>
 
-      {mode === "history" && (
-        <div className="slider">
-          <input
-            type="range"
-            min={0}
-            max={Math.max(sliderMax, 0)}
-            value={sliderIdx}
-            onChange={(e) => setHistIdx(e.target.value)}
-            aria-label="history time"
-          />
-          <span>{sliderTime ?? "no frames in this window"}</span>
-        </div>
+      {view !== "interactive" && (
+        <SnapFigureView inputSet={figureInputSet} view={view as SnapFigureViewKind} />
       )}
 
-      {antennaBoards.map((board) => (
-        <BoardSection
-          key={board.ip}
-          board={board}
-          read={readByIp[board.ip] ?? null}
-          live={mode === "history" ? null : liveByIp[board.ip] ?? null}
-          panels={panelsFor(board)}
-          units={units as "dB" | "linear"}
-          layer={layer as "correlator" | "board"}
-          onSelect={(adc) => setSelected(`${board.ip}:${adc}`)}
-        />
-      ))}
+      {view === "interactive" && (
+        <>
+          {mode === "history" && (
+            <div className="slider">
+              <input
+                type="range"
+                min={0}
+                max={Math.max(sliderMax, 0)}
+                value={sliderIdx}
+                onChange={(e) => setHistIdx(e.target.value)}
+                aria-label="history time"
+              />
+              <span>{sliderTime ?? "no frames in this window"}</span>
+            </div>
+          )}
 
-      {relayBoards.length > 0 && (
-        <section className="board">
-          {relayBoards.map((board) => (
-            <p key={board.ip} className="board__line">
-              {relayLine(board, readByIp[board.ip] ?? null)}
-            </p>
+          {antennaBoards.map((board) => (
+            <BoardSection
+              key={board.ip}
+              board={board}
+              read={readByIp[board.ip] ?? null}
+              live={mode === "history" ? null : liveByIp[board.ip] ?? null}
+              panels={panelsFor(board)}
+              units={units as "dB" | "linear"}
+              layer={layer as "correlator" | "board"}
+              onSelect={(adc) => setSelected(`${board.ip}:${adc}`)}
+            />
           ))}
-          <p className="note">
-            Relay boards carry no antenna inputs and sit in the PPS timing path only; a board on the
-            golden image cannot report PPS at all, so silence here does not mean the chain skips the slot.
-          </p>
-        </section>
+
+          {relayBoards.length > 0 && (
+            <section className="board">
+              {relayBoards.map((board) => (
+                <p key={board.ip} className="board__line">
+                  {relayLine(board, readByIp[board.ip] ?? null)}
+                </p>
+              ))}
+              <p className="note">
+                Relay boards carry no antenna inputs and sit in the PPS timing path only; a board on
+                the golden image cannot report PPS at all, so silence here does not mean the chain
+                skips the slot.
+              </p>
+            </section>
+          )}
+        </>
       )}
     </div>
   );

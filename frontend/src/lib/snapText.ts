@@ -3,9 +3,11 @@
 // the old badges, chips and coloured strips.
 
 import { formatAge } from "./snapConstants";
+import { formatUnixUtc, formatUtcStamp } from "./statusSentence";
 import type {
   SnapBoardInfo,
   SnapBoardReadResponse,
+  SnapFigureManifest,
   SnapInputInfo,
   SnapLiveResponse,
 } from "./types";
@@ -155,4 +157,25 @@ export function boardProblems(
     out.push(`The row mapping for ${who} disagrees with the formula.`);
   }
   return out;
+}
+
+/** The one muted sentence under a server-rendered SNAPs figure: the window,
+ * when it was rendered, and how long ago the boards were last read, e.g.
+ * "last 24 h to 2026-09-09 02:10 UTC, rendered 02:12 UTC, boards read 43 min
+ * ago." (same phrasing convention as the Vis tab's ``figureSentence``). */
+export function snapFigureSentence(manifest: SnapFigureManifest | null): string {
+  if (!manifest) return "No figures rendered yet for this view.";
+  const rendered = formatUtcStamp(manifest.rendered_utc).replace(/^\d{4}-\d{2}-\d{2} /, "");
+  const parts: string[] = [];
+  if (manifest.t1 !== null) {
+    parts.push(`last 24 h to ${formatUnixUtc(manifest.t1)}`);
+  }
+  parts.push(`rendered ${rendered}`);
+  if (manifest.board_read_ts !== null) {
+    const ageS = Date.now() / 1000 - manifest.board_read_ts;
+    parts.push(`boards read ${formatAge(ageS)}`);
+  } else {
+    parts.push("boards never read");
+  }
+  return `${parts.join(", ")}.`;
 }

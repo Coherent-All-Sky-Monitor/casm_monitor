@@ -19,6 +19,37 @@ from pathlib import Path
 
 from .kinds import get_kind
 
+try:
+    import resource
+except ImportError:  # pragma: no cover - resource is POSIX-only
+    resource = None  # type: ignore[assignment]
+
+
+def _apply_address_space_limit(limit_bytes: int | None) -> None:
+    """Cap this subprocess's virtual address space at ``limit_bytes``.
+
+    Belt and braces on top of the memory-bounded renderer itself: if a kind
+    (currently only ``render_figures``) regresses back into loading something
+    unbounded, the subprocess is killed (``MemoryError``/SIGSEGV -> non-zero
+    exit, caught by the worker as a normal job failure) well under the job
+    worker's 256G cgroup, instead of taking the whole service down again.
+    Soft-fails (no-op, not an error) on platforms without ``resource`` (not
+    POSIX) or without ``RLIMIT_AS`` (documented, not silently skipped).
+    """
+    if limit_bytes is None or resource is None:
+        return
+    if not hasattr(resource, "RLIMIT_AS"):
+        print(
+            "run_job: RLIMIT_AS not available on this platform; "
+            "no per-kind address-space limit applied",
+            file=sys.stderr,
+        )
+        return
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
+    except (ValueError, OSError) as exc:
+        print(f"run_job: could not set RLIMIT_AS={limit_bytes}: {exc}", file=sys.stderr)
+
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else list(argv)
@@ -30,6 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     result_path = job_dir / "result.json"
     try:
         kind = get_kind(str(spec["kind"]))
+        _apply_address_space_limit(kind.address_space_limit_bytes)
         result = kind.run(dict(spec.get("params") or {}))
         result_path.write_text(json.dumps(result, default=str, indent=1))
         return 0

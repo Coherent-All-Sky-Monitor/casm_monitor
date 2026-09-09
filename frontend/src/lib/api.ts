@@ -19,6 +19,10 @@ import type {
   SearchSummaryResponse,
   SnapBoardReadResponse,
   SnapBoardsResponse,
+  SnapFigureInputSet,
+  SnapFigureKind,
+  SnapFigureListResponse,
+  SnapFigureManifest,
   SnapHistoryResponse,
   SnapHistorySource,
   SnapLiveResponse,
@@ -338,6 +342,29 @@ export function visFigureUrl(
 ): string {
   const v = renderedUtc ? `?v=${encodeURIComponent(renderedUtc)}` : "";
   return `/api/figures/vis/${set}/${ref}/${kind}@${suffix}.png${v}`;
+}
+
+// --- SNAPs server-rendered figures -----------------------------------------
+
+export function getSnapFigureManifest(set: SnapFigureInputSet): Promise<SnapFigureManifest> {
+  const params = new URLSearchParams({ set });
+  return request<SnapFigureManifest>(`/api/figures/snaps/manifest?${params.toString()}`);
+}
+
+export function getSnapFigureList(): Promise<SnapFigureListResponse> {
+  return request<SnapFigureListResponse>("/api/figures/snaps/list");
+}
+
+/** Same URL the <img> uses; ``v`` is the manifest's own rendered_utc so the
+ * browser cache is bookmarked to the render that actually produced it. */
+export function snapFigureUrl(
+  set: SnapFigureInputSet,
+  kind: SnapFigureKind,
+  suffix: "1x" | "2x",
+  renderedUtc?: string | null,
+): string {
+  const v = renderedUtc ? `?v=${encodeURIComponent(renderedUtc)}` : "";
+  return `/api/figures/snaps/${set}/${kind}@${suffix}.png${v}`;
 }
 
 // --- Search (M2b) ---------------------------------------------------------

@@ -1,234 +1,147 @@
-"""``FigureCollector`` (M2 figures): server-rendered Visibilities PNGs.
+"""``FigureScheduler`` (M2 figures, reworked 2026-09-09): submits, never renders.
 
-Every ``cadences.figures`` seconds (default 1800 s) it renders every
-``(kind, set, ref)`` combination :mod:`casm_monitor.figures.vis_figures`
-knows about -- ``matrix_<quantity>``/``spectra_<quantity>`` for the five
-quantities plus ``autos``, for input set ``live``/``wired``, for reference
-``raw``/``sun`` always and ``cal`` when the deployed cal resolves this pass --
-into ``store_root/figures/vis/<set>/<ref>/<kind>@{1x,2x}.png`` (atomic tmp +
-rename) plus one ``manifest.json`` per ``<set>/<ref>`` directory.
+The rendering that used to run in-process here (``FigureCollector``) put
+``casm-monitor-collect.service`` (``MemoryMax=8G``) in an OOM crash loop
+21:23-22:16 PDT: :func:`casm_monitor.figures.vis_figures.load_window` loaded a
+whole 24 h visibilities window into RAM (``vis_avg8`` ~580 MB/input set, with
+a ``vis_full`` fallback at ~4.6 GB/input set) and rendered 16 figures
+concurrently in a thread pool, and the long run also starved the other
+collectors (vis age climbed to 820 s).
 
-The 24 h window is set-only (the reference is applied afterwards), so it is
-loaded ONCE per set and reused across every ``ref``/``kind`` in that set,
-rather than re-reading the shards ``2 (sets) x 3 (refs) x 11 (kinds)`` times.
-That window load also gives a cheap skip test: when its newest timestamp and
-sample count match the last manifest written for this set, nothing in the
-cache has changed since the last render and the whole set is skipped (an
-event-free, scalar-recorded no-op, not a failure).
+The render now happens in :mod:`casm_monitor.jobs.render_figures`, a job kind
+run by ``casm-monitor-jobs.service`` (``MemoryMax=256G``, one job at a time),
+which also bounds its own memory (never reads ``vis_full``, reduces the
+``vis_avg8`` window shard by shard -- see that module and ``figures/
+vis_figures.py``'s docstrings).
 
-Rendering itself runs in a thread pool (default 16 workers, matching the
-plan's "16 threads" budget): :mod:`casm_monitor.figures.vis_figures` builds
-each figure with ``Figure``/``FigureCanvasAgg`` rather than ``pyplot``
-precisely so this is safe (no shared pyplot figure manager across threads).
+This collector is cheap and does no I/O beyond a couple of SQLite queries:
+
+* every :data:`CADENCE_S` (60 s) it submits a ``render_figures`` job for both
+  targets, but only every :data:`SUBMIT_INTERVAL_S` (30 min), refusing (via
+  ``Store.submit_job_atomic``'s ``refuse_if_pending``) while one is already
+  queued or running;
+* it additionally submits a ``snaps``-only job, independent of that 30 min
+  cadence, whenever a newer SNAP board read exists than the snaps manifest
+  already on disk -- so a "Read boards now" click's ``spectra_board`` panel
+  updates promptly without waiting for the next half hour.
 """
 
 from __future__ import annotations
 
-import concurrent.futures
 import json
 import logging
-import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:  # pragma: no cover
-    from ..figures import vis_figures as vf
-
-from ..store.shards import ensure_contained, safe_name
-from ..web.vis import load_deployed_cal
+from ..store.shards import ensure_contained
 from .base import Collector, CollectorContext
 
 log = logging.getLogger("casm_monitor.collect.figures")
 
-MAX_WORKERS = 16
-BASE_REFS = ("raw", "sun")
+RENDER_FIGURES_KIND = "render_figures"
+SUBMIT_INTERVAL_S = 1800.0  # 30 min
+LAST_SUBMIT_STREAM = "figures"
+LAST_SUBMIT_KEY = "last_submit_ts"
 
 
-def _vf():
-    """Lazy import: vis_figures imports web.vis which imports collectors."""
-    from ..figures import vis_figures
-    return vis_figures
-
-
-class FigureCollector(Collector):
-    """Renders the Visibilities tab's matplotlib figures."""
+class FigureScheduler(Collector):
+    """Submits ``render_figures`` jobs; never touches matplotlib itself."""
 
     name = "figures"
-    default_cadence_s = 1800.0
-    # Generous but bounded: the plan's budget is "the whole set under 5 min on
-    # 16 threads"; the runner isolates one slow pass without blocking others.
-    timeout_s = 280.0
+    default_cadence_s = 60.0
+    timeout_s = 30.0
 
     def collect(self, ctx: CollectorContext) -> None:
-        settings = ctx.settings
-        root = ensure_contained(
-            Path(settings.store_root) / "figures" / "vis", settings.store_root
+        now = time.time()
+        job_id, refusal = ctx.store.submit_job_atomic(
+            RENDER_FIGURES_KIND,
+            {"targets": ["vis", "snaps"], "reason": "scheduled"},
+            refuse_if_pending=True,
+            claim_slot=(LAST_SUBMIT_STREAM, LAST_SUBMIT_KEY, SUBMIT_INTERVAL_S),
+            require_slot=True,
+            now=now,
         )
-        refs = list(BASE_REFS)
-        try:
-            load_deployed_cal(settings)
-            refs.append("cal")
-        except Exception as exc:  # depends on the live ledger/cal file
-            log.info("figures: cal reference unavailable this pass: %s", exc)
+        if refusal is not None:
+            reason = refusal.get("reason")
+            ctx.scalar("figures.scheduled_skipped", 1, tags={"reason": str(reason)})
+            if reason == "slot_taken":
+                last = ctx.store.get_watermark(LAST_SUBMIT_STREAM, LAST_SUBMIT_KEY)
+                if last is not None:
+                    ctx.scalar("figures.last_submit_age_s", round(now - float(last), 1))
+        else:
+            ctx.event(
+                "job_submitted",
+                severity="info",
+                subject=f"job {job_id} ({RENDER_FIGURES_KIND})",
+                detail={"job_id": job_id, "kind": RENDER_FIGURES_KIND, "reason": "scheduled",
+                        "targets": ["vis", "snaps"]},
+            )
+            ctx.scalar("figures.scheduled_job_id", job_id)
+            ctx.scalar("figures.scheduled_skipped", 0)
 
-        started = time.time()
-        n_rendered = 0
-        n_skipped = 0
-        n_failed = 0
-        for set_name in _vf().SETS:
-            try:
-                window = _vf().load_window(ctx.store, settings, set_name)
-            except _vf().NoData as exc:
-                log.info("figures: no data for set=%s: %s", set_name, exc)
-                continue
-            watermark = self._read_manifest(root, set_name, refs[0])
-            if watermark is not None and self._unchanged(watermark, window):
-                ctx.scalar("figures.vis.skipped", 1, tags={"set": set_name})
-                n_skipped += len(_vf().KINDS) * len(refs)
-                continue
-            rendered, failed = self._render_set(ctx, root, set_name, refs, window)
-            n_rendered += rendered
-            n_failed += failed
-        total_s = time.time() - started
-        ctx.scalar("figures.vis.render_s", round(total_s, 3))
-        ctx.scalar("figures.vis.n_rendered", n_rendered)
-        ctx.scalar("figures.vis.n_skipped", n_skipped)
-        ctx.scalar("figures.vis.n_failed", n_failed)
+        self._maybe_submit_snaps_only(ctx, now)
 
-    # -- one set, every (kind, ref) ------------------------------------
-    def _render_set(
-        self,
-        ctx: CollectorContext,
-        root: Path,
-        set_name: str,
-        refs: list[str],
-        window: "vf.WindowData",
-    ) -> tuple[int, int]:
-        jobs = [(kind, ref) for ref in refs for kind in _vf().KINDS]
-        by_ref: dict[str, list[dict[str, Any]]] = {ref: [] for ref in refs}
-        failed = 0
-        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {
-                pool.submit(self._render_one, ctx, set_name, ref, kind, root, window): (kind, ref)
-                for kind, ref in jobs
-            }
-            for fut in concurrent.futures.as_completed(futures):
-                kind, ref = futures[fut]
-                try:
-                    entry = fut.result()
-                except Exception as exc:  # never let one figure kill the pass
-                    failed += 1
-                    log.exception(
-                        "figures: render failed for %s/%s/%s", set_name, ref, kind
-                    )
-                    ctx.event(
-                        "figures_render_failed",
-                        severity="warn",
-                        subject=f"{set_name}/{ref}/{kind}",
-                        detail={"error": str(exc)},
-                    )
-                    continue
-                by_ref[ref].append(entry)
-        rendered = sum(len(v) for v in by_ref.values())
-        for ref, entries in by_ref.items():
-            if entries:
-                self._write_manifest(root, set_name, ref, entries)
-        return rendered, failed
-
-    def _render_one(
-        self,
-        ctx: CollectorContext,
-        set_name: str,
-        ref: str,
-        kind: str,
-        root: Path,
-        window: "vf.WindowData",
-    ) -> dict[str, Any]:
-        started = time.time()
-        pngs, info = _vf().render_kind(ctx.store, ctx.settings, kind, set_name, ref, window=window)
-        render_s = time.time() - started
-        ctx.scalar(
-            "figures.vis.render_s",
-            round(render_s, 3),
-            tags={"kind": kind, "set": set_name, "ref": ref},
+    # -- "a board read just landed" fast path ----------------------------
+    def _maybe_submit_snaps_only(self, ctx: CollectorContext, now: float) -> None:
+        board_read_ts = self._latest_board_read_ts(ctx.store)
+        if board_read_ts is None:
+            return
+        manifest_ts = self._newest_snaps_manifest_board_read_ts(ctx.settings)
+        if manifest_ts is not None and float(board_read_ts) <= float(manifest_ts):
+            return
+        job_id, refusal = ctx.store.submit_job_atomic(
+            RENDER_FIGURES_KIND,
+            {"targets": ["snaps"], "reason": "board_read"},
+            refuse_if_pending=True,
+            now=now,
         )
-        outdir = ensure_contained(root / safe_name(set_name) / safe_name(ref), root)
-        outdir.mkdir(parents=True, exist_ok=True)
-        for suffix, data in pngs.items():
-            self._atomic_write(outdir / f"{kind}@{suffix}.png", data)
-        return {
-            "kind": kind,
-            "files": {suf: f"{kind}@{suf}.png" for suf in pngs},
-            "t0": info["t0"],
-            "t1": info["t1"],
-            "n_integrations": info["n_integrations"],
-            "stream": info["stream"],
-            "obs": info["obs"],
-            "render_s": round(render_s, 3),
-        }
+        if refusal is not None:
+            # A scheduled (or another board-read) render is already
+            # queued/running -- it will pick up this board read too (the job
+            # re-checks the watermark itself), nothing lost by not submitting
+            # a second one.
+            return
+        ctx.event(
+            "job_submitted",
+            severity="info",
+            subject=f"job {job_id} ({RENDER_FIGURES_KIND})",
+            detail={"job_id": job_id, "kind": RENDER_FIGURES_KIND, "reason": "board_read",
+                    "targets": ["snaps"], "board_read_ts": board_read_ts},
+        )
+        ctx.scalar("figures.board_read_job_id", job_id)
 
-    # -- atomic writes ---------------------------------------------------
     @staticmethod
-    def _atomic_write(path: Path, data: bytes) -> None:
-        tmp = path.with_name(f".tmp-{os.getpid()}-{path.name}")
-        with open(tmp, "wb") as fh:
-            fh.write(data)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, path)
-        dfd = os.open(str(path.parent), os.O_RDONLY)
-        try:
-            os.fsync(dfd)
-        finally:
-            os.close(dfd)
+    def _latest_board_read_ts(store) -> float | None:
+        from ..jobs.snap_read import latest_reads
 
-    def _write_manifest(
-        self, root: Path, set_name: str, ref: str, entries: list[dict[str, Any]]
-    ) -> None:
-        outdir = ensure_contained(root / safe_name(set_name) / safe_name(ref), root)
-        outdir.mkdir(parents=True, exist_ok=True)
-        rendered_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        manifest = {
-            "rendered_utc": rendered_utc,
-            "set": set_name,
-            "ref": ref,
-            "t0": min(e["t0"] for e in entries),
-            "t1": max(e["t1"] for e in entries),
-            "n_integrations": max(e["n_integrations"] for e in entries),
-            "stream": entries[0]["stream"],
-            "obs": entries[0]["obs"],
-            "files": {e["kind"]: e["files"] for e in entries},
-            "kinds": sorted(e["kind"] for e in entries),
-        }
-        path = outdir / "manifest.json"
-        tmp = outdir / f".tmp-{os.getpid()}-manifest.json"
-        tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True))
-        os.replace(tmp, path)
-
-    # -- skip-when-unchanged ----------------------------------------------
-    @staticmethod
-    def _read_manifest(root: Path, set_name: str, ref: str) -> dict[str, Any] | None:
-        path = root / set_name / ref / "manifest.json"
-        try:
-            return json.loads(path.read_text())
-        except (OSError, ValueError):
+        reads = latest_reads(store)
+        if not reads:
             return None
+        return max((float(s.get("ts") or 0.0) for s in reads.values()), default=None)
 
     @staticmethod
-    def _unchanged(manifest: dict[str, Any], window: "vf.WindowData") -> bool:
-        """True when the newest cached integration matches the last render.
-
-        Compares against ``window.times[-1]`` (the newest CACHED sample), not
-        ``window.t1`` (the query boundary, always ``~now``): the latter would
-        never repeat between passes and the skip would never fire.
-        """
-        if not len(window.times):
-            return False
-        return (
-            manifest.get("t1") == float(window.times[-1])
-            and manifest.get("n_integrations") == len(window.times)
+    def _newest_snaps_manifest_board_read_ts(settings) -> float | None:
+        """Newest ``board_read_ts`` across the snaps sets' manifests, if any."""
+        root = ensure_contained(
+            Path(settings.store_root) / "figures" / "snaps", settings.store_root
         )
+        newest: float | None = None
+        if not root.is_dir():
+            return None
+        for child in root.iterdir():
+            manifest_path = child / "manifest.json"
+            try:
+                manifest = json.loads(manifest_path.read_text())
+            except (OSError, ValueError):
+                continue
+            ts = manifest.get("board_read_ts")
+            if ts is None:
+                continue
+            ts = float(ts)
+            if newest is None or ts > newest:
+                newest = ts
+        return newest
 
 
-__all__ = ["FigureCollector"]
+__all__ = ["FigureScheduler"]

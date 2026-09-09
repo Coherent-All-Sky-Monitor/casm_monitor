@@ -60,10 +60,17 @@ from matplotlib.colors import Normalize
 from matplotlib.figure import Figure
 
 from .. import vis_ops
-from ..collectors.vis import STREAM_AVG8, STREAM_FULL, input_sets
+from ..collectors.vis import STREAM_AVG8, input_sets
 from ..config import Settings
 from ..store import Store
-from ..web.vis import Selection, VisStore, apply_reference, select_baselines
+from ..web.vis import (
+    Selection,
+    VisStore,
+    apply_reference,
+    freq_axis,
+    load_baseline_rows,
+    select_baselines,
+)
 
 # -- constants ------------------------------------------------------------
 SETS: tuple[str, ...] = ("live", "wired")
@@ -78,9 +85,19 @@ PANEL_IN = 1.6
 DPI_2X = 110
 DPI_1X = 55
 LOG_FLOOR = vis_ops.LOG_FLOOR
-# Below this many avg8 samples in the 24 h window, fall back to vis_full (the
-# operator's "falling back to vis_full when avg8 is thin").
-MIN_AVG8_SAMPLES = 20
+# Memory bound (2026-09-09 OOM fix): the figures job NEVER reads vis_full (4.6
+# GB/set) and never concatenates a whole vis_avg8 window (580 MB/set) either.
+# Every avg8 shard is loaded, channel-block-averaged down to NCHAN_FIG and
+# folded into at most MAX_TIME_BINS time bins (accumulated as running linear
+# sums, same recipe as ``VisStore.coherence_accumulate``), then dropped -- peak
+# memory is one shard's selected rows plus the small (bins x pairs x
+# NCHAN_FIG) accumulator, never the whole window.
+NCHAN_FIG = 96
+MAX_TIME_BINS = 288  # 24 h / 5 min
+# Below this many raw avg8 integrations in the window there is not enough
+# signal to render anything meaningful; render a placeholder instead (NEVER
+# fall back to vis_full to get more).
+MIN_INTEGRATIONS = 6
 
 PAPER = "#ffffff"
 INK = "#1f2937"
@@ -91,6 +108,14 @@ SIGNAL = "#2563eb"
 
 class NoData(RuntimeError):
     """Nothing cached yet for this (set, window) -- not a rendering error."""
+
+
+class NotEnoughData(RuntimeError):
+    """Cached, but fewer than :data:`MIN_INTEGRATIONS` avg8 samples exist.
+
+    NEVER handled by falling back to ``vis_full`` (that fallback was the 4.6
+    GB/set OOM path, 2026-09-09) -- the caller renders a placeholder instead.
+    """
 
 
 # -- data loading -----------------------------------------------------------
@@ -116,14 +141,30 @@ class WindowData:
         return [p + 1 for p in self.selection.inputs]
 
 
+def _shard_times(shard: dict[str, Any]) -> np.ndarray:
+    meta = shard.get("meta") or {}
+    times = [float(t) for t in (meta.get("t") or [])]
+    return np.asarray(times or [float(shard["t0"])], dtype=np.float64)
+
+
 def load_window(
     store: Store, settings: Settings, set_name: str, hours: float = WINDOW_HOURS
 ) -> WindowData:
     """Last ``hours`` of the wired/live sub-matrix, autos and crosses both.
 
-    Raises :class:`NoData` (never returns an empty/garbage figure's worth of
-    data) when the collector has not cached anything for this set yet.
+    Reads ``vis_avg8`` ONLY (never ``vis_full``, the 4.6 GB/set OOM path,
+    2026-09-09), one shard at a time, reduced immediately to at most
+    :data:`MAX_TIME_BINS` time bins x :data:`NCHAN_FIG` channels per baseline
+    (accumulated as running linear sums, converted once at the end) so peak
+    memory is one shard's selected rows, never the whole window.
+
+    Raises :class:`NoData` (nothing cached yet for this set) or
+    :class:`NotEnoughData` (cached, but fewer than :data:`MIN_INTEGRATIONS`
+    avg8 samples in the window) -- never returns an empty/garbage figure's
+    worth of data, and never falls back to ``vis_full`` to get more.
     """
+    from casm_io.correlator.baselines import triu_flat_index
+
     vis_store = VisStore(settings, store)
     newest = vis_store.latest()
     if newest is None:
@@ -137,19 +178,96 @@ def load_window(
     if not subset:
         raise NoData(f"no {set_name} inputs among the cached sub-matrix")
     selection = select_baselines(stored_inputs, subset, "all")
+    pair_ids = selection.pair_ids
+    n_pairs = len(pair_ids)
+
     t1 = time.time()
     t0 = t1 - float(hours) * 3600.0
-    z, times, freq, _inputs = vis_store.series(STREAM_AVG8, t0, t1, selection.pair_ids)
-    stream = STREAM_AVG8
-    if times.size < MIN_AVG8_SAMPLES:
-        z_full, times_full, freq_full, _ = vis_store.series(STREAM_FULL, t0, t1, selection.pair_ids)
-        if times_full.size > times.size:
-            z, times, freq, stream = z_full, times_full, freq_full, STREAM_FULL
-    if times.size == 0:
+    bin_width = float(hours) * 3600.0 / MAX_TIME_BINS
+
+    sum_re = np.zeros((MAX_TIME_BINS, n_pairs, NCHAN_FIG), dtype=np.float64)
+    sum_im = np.zeros((MAX_TIME_BINS, n_pairs, NCHAN_FIG), dtype=np.float64)
+    cnt = np.zeros((MAX_TIME_BINS, n_pairs), dtype=np.int64)
+    # Bin CENTRE timestamps are data-derived (the mean of the raw sample
+    # timestamps that landed in each bin), not ``t0 + idx*bin_width``: the
+    # latter depends on ``t0 = time.time() - hours*3600`` at query time, which
+    # ticks forward every call even when the cached data has not changed, so
+    # it would break the skip-when-unchanged watermark (``manifest.t1`` would
+    # never repeat) every single pass.
+    sum_t = np.zeros(MAX_TIME_BINS, dtype=np.float64)
+    n_bin_samples = np.zeros(MAX_TIME_BINS, dtype=np.int64)
+    freq_out: np.ndarray | None = None
+    n_integrations = 0
+
+    for shard in vis_store.shards.list(STREAM_AVG8, t0=t0, t1=t1):
+        meta = shard["meta"] or {}
+        shard_inputs = [int(i) for i in (meta.get("inputs") or [])]
+        if not shard_inputs:
+            continue
+        times = _shard_times(shard)
+        keep = (times >= t0) & (times <= t1)
+        if not keep.any():
+            continue
+        rank_of = {p: k for k, p in enumerate(shard_inputs)}
+        n_shard = len(shard_inputs)
+        flat: list[int] = []
+        missing: list[int] = []
+        for k, (pi, pj) in enumerate(pair_ids):
+            ri, rj = rank_of.get(pi), rank_of.get(pj)
+            if ri is None or rj is None:
+                flat.append(0)
+                missing.append(k)
+            else:
+                a, b = (ri, rj) if ri <= rj else (rj, ri)
+                flat.append(triu_flat_index(n_shard, a, b))
+        cube = load_baseline_rows(shard, flat)  # (T, n_pairs, F) -- this shard only
+        if times.size != cube.shape[0]:
+            times = np.linspace(shard["t0"], shard["t1"], cube.shape[0])
+            keep = (times >= t0) & (times <= t1)
+            if not keep.any():
+                continue
+        cube = np.asarray(cube[keep], dtype=np.complex64)
+        times_k = times[keep]
+        n_integrations += int(times_k.size)
+        if missing:
+            cube[:, missing, :] = np.nan
+        if freq_out is None:
+            freq_full = freq_axis(meta, cube.shape[-1])
+            freq_out = vis_ops.block_mean(freq_full, NCHAN_FIG)
+        reduced = vis_ops.block_mean(cube, NCHAN_FIG)  # (T, n_pairs, NCHAN_FIG)
+        good = np.isfinite(reduced.real) & np.isfinite(reduced.imag)
+        reduced = np.where(good, reduced, 0)
+        bin_idx = np.clip(((times_k - t0) / bin_width).astype(np.int64), 0, MAX_TIME_BINS - 1)
+        for local_t, b in enumerate(bin_idx):
+            sum_re[b] += reduced[local_t].real
+            sum_im[b] += reduced[local_t].imag
+            cnt[b] += good[local_t].any(axis=-1)
+            sum_t[b] += times_k[local_t]
+            n_bin_samples[b] += 1
+        del cube, reduced
+
+    if n_integrations == 0:
         raise NoData(f"no cached integrations for {set_name} in the last {hours:.0f} h")
+    if n_integrations < MIN_INTEGRATIONS:
+        raise NotEnoughData(
+            f"only {n_integrations} avg8 integration(s) cached for {set_name} in the "
+            f"last {hours:.0f} h (need {MIN_INTEGRATIONS})"
+        )
+
+    have_bin = cnt.max(axis=1) > 0
+    denom = np.maximum(cnt, 1)[..., None].astype(np.float64)
+    z = ((sum_re / denom) + 1j * (sum_im / denom)).astype(np.complex64)
+    z = np.where(cnt[..., None] > 0, z, np.nan)
+    bin_times = sum_t / np.maximum(n_bin_samples, 1)
     return WindowData(
-        times=times, freq_mhz=freq, z=z, selection=selection,
-        obs=newest.get("obs"), stream=stream, t0=t0, t1=t1,
+        times=bin_times[have_bin],
+        freq_mhz=freq_out if freq_out is not None else np.zeros(0),
+        z=z[have_bin],
+        selection=selection,
+        obs=newest.get("obs"),
+        stream=STREAM_AVG8,
+        t0=t0,
+        t1=t1,
     )
 
 
@@ -351,6 +469,24 @@ def render_autos(window: WindowData, set_name: str, ref: str) -> Figure:
     return fig
 
 
+# -- placeholder (not enough data yet) ------------------------------------
+def render_placeholder(message: str, set_name: str, kind: str) -> Figure:
+    """A plain "not enough data yet" figure -- never a crash, never a stale PNG."""
+    fig = Figure(figsize=(6.0, 3.0))
+    FigureCanvasAgg(fig)
+    ax = fig.subplots(1, 1)
+    ax.axis("off")
+    ax.text(
+        0.5, 0.6, "not enough data yet", ha="center", va="center",
+        fontsize=14, color=INK, transform=ax.transAxes,
+    )
+    ax.text(
+        0.5, 0.35, f"{set_name} / {kind}: {message}", ha="center", va="center",
+        fontsize=8, color=MUTED, wrap=True, transform=ax.transAxes,
+    )
+    return fig
+
+
 # -- PNG bytes ------------------------------------------------------------
 def figure_to_png(fig: Figure, dpi: float) -> bytes:
     buf = io.BytesIO()
@@ -413,13 +549,25 @@ def render_kind(
     return {"1x": png_1x, "2x": png_2x}, info
 
 
+def render_placeholder_kind(message: str, set_name: str, kind: str) -> dict[str, bytes]:
+    """PNG bytes for the "not enough data yet" placeholder, one kind."""
+    fig = render_placeholder(message, set_name, kind)
+    try:
+        return {"1x": figure_to_png(fig, DPI_1X), "2x": figure_to_png(fig, DPI_2X)}
+    finally:
+        fig.clear()
+
+
 __all__ = [
     "DPI_1X",
     "DPI_2X",
     "KINDS",
     "MATRIX_KINDS",
-    "MIN_AVG8_SAMPLES",
+    "MAX_TIME_BINS",
+    "MIN_INTEGRATIONS",
+    "NCHAN_FIG",
     "NoData",
+    "NotEnoughData",
     "PANEL_IN",
     "QuantityData",
     "REFS",
@@ -433,5 +581,7 @@ __all__ = [
     "render_autos",
     "render_kind",
     "render_matrix",
+    "render_placeholder",
+    "render_placeholder_kind",
     "render_spectra",
 ]

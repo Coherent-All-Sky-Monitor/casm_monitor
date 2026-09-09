@@ -345,3 +345,32 @@ export interface VisFigureListResponse {
   refs: VisRef[];
   combos: VisFigureListCombo[];
 }
+
+// SNAPs server-rendered figures.
+
+export type SnapFigureInputSet = "beamforming" | "all12";
+export type SnapFigureKind = "spectra_correlator" | "spectra_board" | "waterfall" | "trend";
+
+export interface SnapFigureManifest {
+  rendered_utc: string;
+  set: SnapFigureInputSet;
+  t0: number | null;
+  t1: number | null;
+  n_frames: number | null;
+  board_read_ts: number | null;
+  files: Record<string, { "1x": string; "2x": string }>;
+  kinds: string[];
+}
+
+export interface SnapFigureListCombo {
+  set: SnapFigureInputSet;
+  rendered_utc: string | null;
+  board_read_ts: number | null;
+  kinds: string[];
+}
+
+export interface SnapFigureListResponse {
+  kinds: string[];
+  sets: SnapFigureInputSet[];
+  combos: SnapFigureListCombo[];
+}

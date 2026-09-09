@@ -40,7 +40,7 @@ from .sky import SkyCollector
 from .snapread import SnapReadCollector
 from .vis import VisCollector
 from .search import SearchCollector
-from .figures import FigureCollector
+from .figures import FigureScheduler
 from .weights import WeightsCollector
 
 log = logging.getLogger("casm_monitor.collect")
@@ -65,7 +65,8 @@ def default_collectors(settings: Settings) -> list[Collector]:
         SnapReadCollector(settings),
         VisCollector(settings),
         SearchCollector(settings),
-        FigureCollector(settings),
+        # FigureCollector(settings),  # moved to the jobs worker (OOM in the 8G collector, 2026-09-09)
+        FigureScheduler(settings),  # light: submits render_figures jobs, never renders itself
         StoreCollector(settings),
     ]
 
