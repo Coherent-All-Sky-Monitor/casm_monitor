@@ -133,6 +133,10 @@ cal:
     - sun
   window_half_min: 30
   static_default: "03:00-03:30"
+  # IB (incoherent-beam) mask generator: gen_ib_from_cb.py, the only script
+  # allowed to build an IB companion from a CB weights file (casm-wiki
+  # weights-and-deploy.md step 6). cal_build calls its main() directly.
+  ib_generator_script: "/home/casm/scratch/bf_experiment_v1/scripts/gen_ib_from_cb.py"
   # M3 gate: the weights Upload button refuses unless this is true AND
   # CASM_MONITOR_ALLOW_UPLOAD=1 is set in the unit environment. Decision
   # record: casm-wiki decisions/2026-09-09-monitor-upload-button.md.

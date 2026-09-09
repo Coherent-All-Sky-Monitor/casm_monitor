@@ -26,6 +26,15 @@ Fixed by this job, not exposed as knobs:
 The driver prints its whole log to stdout, which the worker has already
 redirected into the job log; it is tee'd into ``<out_dir>/build.log`` as well so
 the build keeps its own log after the job row is pruned.
+
+After the driver produces the CB weights, this job ALSO generates the paired
+IB (incoherent-beam) mask for exactly this build's antenna set, calling
+``settings.cal_ib_generator_script``'s ``main()`` (``gen_ib_from_cb.py``, the
+only IB-mask generator this service is allowed to run — never hand-rolled
+here, casm-wiki ``weights-and-deploy.md`` step 6). The mask is saved as
+``ib_<tag>_<n_ant>ant.h5`` in the build directory and recorded at
+``summary["paths"]["ib_h5"]``; ``deploy_stage`` stages THAT file, not the
+deployed one, so a new antenna set never gets staged with a stale IB.
 """
 
 from __future__ import annotations
@@ -38,7 +47,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from ..cal_defaults import deployed_product, layout_info
 from ..config import Settings, load_settings
@@ -77,8 +86,68 @@ REPORT_NUMBER_KEYS = (
 )
 
 
+#: ``gen_ib_from_cb.py``'s ``bf_scale_factor`` argument only affects the
+#: metadata attrs it writes (the mask dataset is a pure 0/1 binary and does
+#: not depend on it); 127 matches the CB int8 ``scale_factor`` and the
+#: deployed 2026-09-04 pairing (``cb_int8_scale=127``), so the recorded
+#: provenance is not stale from the old bf_scale_factor=64 era
+#: (weights-and-deploy.md deploy step 3).
+IB_BF_SCALE_FACTOR = 127
+
+
 class ParamError(ValueError):
     """A build request that must be refused (400) rather than run."""
+
+
+class IBGenerationError(RuntimeError):
+    """The IB companion mask could not be built for a finished CB weights file."""
+
+
+def _load_ib_generator(script_path: str | Path) -> Any:
+    """Load ``gen_ib_from_cb.py`` (or whatever script is configured) as a
+    module, by path: it lives outside any installed package (a scratch
+    script, casm-wiki ``weights-and-deploy.md`` step 6), so it is imported by
+    file location rather than name.
+    """
+    import importlib.util
+
+    path = Path(script_path)
+    if not path.is_file():
+        raise IBGenerationError(
+            f"IB mask generator {path} does not exist; cal.ib_generator_script "
+            f"must point at gen_ib_from_cb.py (casm-wiki weights-and-deploy.md "
+            f"step 6 has its current location)"
+        )
+    spec = importlib.util.spec_from_file_location("_casm_monitor_gen_ib_from_cb", path)
+    if spec is None or spec.loader is None:
+        raise IBGenerationError(f"could not load the IB mask generator from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def generate_ib_mask(
+    cb_h5: str | Path,
+    out_dir: str | Path,
+    tag: str,
+    n_ant: int,
+    script_path: str | Path,
+) -> Path:
+    """Build this build's OWN IB companion from its OWN CB weights file.
+
+    Calls the generator's ``main(cb_h5, out_h5, bf_scale_factor)`` directly
+    (never hand-rolls the mask format/attrs): the function derives the active
+    antenna set from the CB file's ``array_config/active_mask``, so the mask
+    is guaranteed matched to this build, not the deployed one.
+    """
+    module = _load_ib_generator(script_path)
+    out_path = Path(out_dir) / f"ib_{tag}_{int(n_ant)}ant.h5"
+    if not hasattr(module, "main"):
+        raise IBGenerationError(f"{script_path} has no main(cb_h5, out_h5, bf_scale) function")
+    module.main(str(cb_h5), str(out_path), IB_BF_SCALE_FACTOR)
+    if not out_path.is_file():
+        raise IBGenerationError(f"{script_path} did not write {out_path}")
+    return out_path
 
 
 # ---------------------------------------------------------------------------
@@ -263,12 +332,6 @@ def _numbers(report: dict[str, Any]) -> dict[str, Any]:
     return {k: report[k] for k in REPORT_NUMBER_KEYS if k in report}
 
 
-def _first(paths: Iterable[Path]) -> str | None:
-    for p in sorted(paths):
-        return str(p)
-    return None
-
-
 def run(params: dict[str, Any]) -> dict[str, Any]:
     """Job entry point (runs in the job subprocess, see jobs/run_job.py)."""
     settings = load_settings(params.get("config"))
@@ -326,6 +389,32 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
             flush=True,
         )
         out = run_recipe(recipe)
+
+        # The canonical driver builds the CB product only; the IB mask is a
+        # companion this job generates itself, paired to THIS build's own CB
+        # file and antenna set (never the deployed one), from inside the same
+        # tee'd section so its own prints land in build.log too.
+        ib_file: str | None = None
+        weights_file_for_ib = out.get("weights_file")
+        if weights_file_for_ib and Path(weights_file_for_ib).is_file():
+            print(
+                f"[cal_build] generating IB mask from {weights_file_for_ib} via "
+                f"{settings.cal_ib_generator_script}",
+                flush=True,
+            )
+            ib_path = generate_ib_mask(
+                weights_file_for_ib,
+                out_dir,
+                tag,
+                len(p["antennas"]),
+                settings.cal_ib_generator_script,
+            )
+            ib_file = str(ib_path)
+        else:
+            print(
+                "[cal_build] no weights file produced; skipping IB mask generation",
+                flush=True,
+            )
     finally:
         sys.stdout = old_stdout
         tee.flush()
@@ -336,11 +425,6 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
     report = dict(out.get("report") or {})
     cal_file = out.get("cal_file")
     weights_file = out.get("weights_file")
-    # The canonical driver builds the CB product only; the IB mask is a
-    # companion file (gen_ib_from_cb.py, docs/ib_weights.md). If a matching one
-    # ever appears in the build directory it is picked up, otherwise the
-    # deployed mask is what deploy_stage pairs with (recorded below).
-    ib_file = _first(out_dir.glob("ib_*.h5"))
 
     summary: dict[str, Any] = {
         "tag": tag,

@@ -27,6 +27,7 @@ from casm_monitor import cal_defaults as cd
 from casm_monitor.config import Settings
 from casm_monitor.jobs import deploy as dep
 from casm_monitor.jobs import cal_build as cb
+from casm_monitor.jobs.deploy import casm_track_processes as dep_casm_track_processes
 from casm_monitor.jobs.cal_build import ParamError, build_dir, validate
 from casm_monitor.store import Store
 from casm_monitor.web.app import create_app
@@ -51,23 +52,33 @@ def write_layout(path: Path, antennas=ANTENNAS, wired_extra=(3, 7)) -> Path:
     return path
 
 
-def write_ledger(path: Path, notes: str = LEDGER_NOTES, cal_file: str = "/tmp/cal_prev.h5") -> Path:
+def write_ledger(
+    path: Path,
+    notes: str = LEDGER_NOTES,
+    cal_file: str = "/tmp/cal_prev.h5",
+    weights_file: str = "/tmp/w.h5",
+    ib_file: str | None = "ib_w.h5",
+) -> Path:
+    cell = weights_file if ib_file is None else f"{weights_file} (+ {ib_file})"
     path.write_text(
         "date_deployed,weights_file,cal_file,n_ant_set,notes\n"
-        f'2026-09-04 08:42:33 UTC,/tmp/w.h5 (+ ib_w.h5),{cal_file},4,"{notes}"\n'
+        f'2026-09-04 08:42:33 UTC,{cell},{cal_file},4,"{notes}"\n'
     )
     return path
 
 
 def write_cb_h5(path: Path, antennas=ANTENNAS, n_chan: int = 1501, fmt="int8_snap_weights") -> Path:
-    """A CB weights file with the real attrs/datasets the checks read."""
+    """A CB weights file with the real attrs/datasets the checks (and the real
+    gen_ib_from_cb.py IB generator) read."""
     w = np.zeros((2, n_chan, 1, 4, 64), dtype=np.int8)
     for ant in antennas:
         w[:, :, :, :, ant - 1] = 100
     with h5py.File(path, "w") as f:
         f.attrs["format_type"] = fmt
         f.attrs["n_beams"] = 4
+        f.attrs["n_channels"] = n_chan
         f.create_dataset("weights_int8", data=w)
+        f.create_dataset("frequencies_hz", data=np.linspace(484.375e6, 400e6, n_chan))
         f.create_dataset("array_config/antenna_ids", data=np.arange(1, 73))
         f.create_dataset(
             "array_config/active_mask",
@@ -75,6 +86,11 @@ def write_cb_h5(path: Path, antennas=ANTENNAS, n_chan: int = 1501, fmt="int8_sna
         )
         f.create_dataset("pointings/alt_deg", data=np.linspace(20, 80, 4))
         f.create_dataset("pointings/az_deg", data=np.linspace(0, 300, 4))
+        freq_grp = f.create_group("freq_config")
+        freq_grp.attrs["n_chan"] = n_chan
+        freq_grp.attrs["total_bw_mhz"] = 125.0
+        freq_grp.attrs["total_n_chan"] = 4096
+        freq_grp.attrs["freq_end_voltage_mhz"] = 400.0
     return path
 
 
@@ -91,7 +107,17 @@ def write_ib_h5(path: Path, antennas=ANTENNAS, fmt="int8_incoh_bf_weights") -> P
 @pytest.fixture
 def cal_settings(settings: Settings, tmp_path: Path, monkeypatch) -> Settings:
     layout = write_layout(tmp_path / "layout.csv")
-    ledger = write_ledger(tmp_path / "deployed_weights.csv", cal_file=str(tmp_path / "prev_cal.h5"))
+    # The "deployed" product cal_defaults reads antennas from: a real CB file
+    # (so deployed_cb_antennas() has something to load) paired with a real IB,
+    # both populated for the same ANTENNAS as the layout's bf set by default.
+    deployed_cb = write_cb_h5(tmp_path / "deployed_weights.h5")
+    deployed_ib = write_ib_h5(tmp_path / "deployed_ib.h5")
+    ledger = write_ledger(
+        tmp_path / "deployed_weights.csv",
+        cal_file=str(tmp_path / "prev_cal.h5"),
+        weights_file=str(deployed_cb),
+        ib_file=deployed_ib.name,
+    )
     (tmp_path / "prev_cal.h5").write_bytes(b"not really hdf5, only its existence is checked")
     cal_settings = dataclasses.replace(
         settings,
@@ -214,6 +240,48 @@ def test_defaults_window_static_and_tag(cal_settings: Settings):
     assert d["layout"]["n_bf"] == 4 and d["layout"]["n_wired"] == 6
     assert d["deployed"]["scale"] == 8064 and d["deployed"]["ib_scale"] == 32
     assert d["prev_cal_path"] == d["deployed"]["cal_file"]
+    # the default set comes from the DEPLOYED CB weights file, not the layout
+    # column directly (they agree here because the fixture built them that way)
+    assert d["antennas_source"] == "deployed"
+    assert d["layout_bf_antennas"] == ANTENNAS
+    assert d["deployed_antennas"] == ANTENNAS
+    assert d["antennas_mismatch_note"] is None
+
+
+def test_defaults_antennas_source_deployed_wins_over_layout_mismatch(cal_settings: Settings):
+    """2026-09-09 finding: the layout gate and the deployed CB set can differ
+    (layout adds/drops antennas without a rebuild). The default set must
+    still be what is actually live (deployed), with the mismatch surfaced."""
+    write_layout(Path(cal_settings.layout_csv), antennas=ANTENNAS + [22], wired_extra=(3, 7))
+    d = cd.cal_defaults("2026-09-08", cal_settings)
+    assert d["antennas_source"] == "deployed"
+    assert d["antennas"] == ANTENNAS  # the deployed set, unchanged by the layout edit
+    assert d["layout_bf_antennas"] == sorted(ANTENNAS + [22])
+    assert d["deployed_antennas"] == ANTENNAS
+    assert d["antennas_mismatch_note"] and "22" in d["antennas_mismatch_note"]
+
+
+def test_defaults_falls_back_to_layout_when_deployed_weights_unreadable(cal_settings: Settings):
+    write_ledger(
+        Path(cal_settings.deployed_weights_csv),
+        cal_file=str(Path(cal_settings.deployed_weights_csv).parent / "prev_cal.h5"),
+        weights_file="/nonexistent/deployed.h5",
+        ib_file=None,
+    )
+    d = cd.cal_defaults("2026-09-08", cal_settings)
+    assert d["antennas_source"] == "layout_fallback"
+    assert d["antennas"] == ANTENNAS == d["layout_bf_antennas"]
+    assert d["deployed_antennas"] == []
+    assert "does not exist" in d["antennas_note"]
+
+
+def test_deployed_cb_antennas_reads_populated_slots(cal_settings: Settings):
+    deployed = cd.deployed_product(cal_settings)
+    out = cd.deployed_cb_antennas(deployed["weights_file"])
+    assert out["antennas"] == ANTENNAS and out["error"] is None
+    assert cd.deployed_cb_antennas(None)["error"] == "no deployed weights file on record"
+    missing = cd.deployed_cb_antennas("/nonexistent/x.h5")
+    assert missing["antennas"] == [] and "does not exist" in missing["error"]
 
 
 def test_ref_ant_falls_back_to_lowest_when_9_absent(tmp_path: Path):
@@ -228,6 +296,58 @@ def test_scale_pairing_must_be_parsed_not_guessed(tmp_path: Path):
         cd.parse_scale_pairing(row)
     good = cd.parse_scale_pairing({"notes": LEDGER_NOTES})
     assert (good["scale"], good["ib_scale"]) == (8064, 32)
+
+
+# ---------------------------------------------------------------------------
+# 1b. IB mask generation (gen_ib_from_cb.py, never hand-rolled)
+# ---------------------------------------------------------------------------
+
+#: The real production script this service is configured to call by default
+#: (Settings.cal_ib_generator_script). Used directly rather than a fake
+#: stand-in so the "never hand-roll the mask format" rule is exercised for
+#: real: it also requires the real file present on this host.
+REAL_IB_GENERATOR = Path("/home/casm/scratch/bf_experiment_v1/scripts/gen_ib_from_cb.py")
+
+
+def test_generate_ib_mask_pairs_own_build(tmp_path: Path):
+    if not REAL_IB_GENERATOR.is_file():
+        pytest.skip(f"{REAL_IB_GENERATOR} not present on this host")
+    cb_h5 = write_cb_h5(tmp_path / "weights_x_4ant_512_int8.h5", antennas=ANTENNAS)
+    out = cb.generate_ib_mask(cb_h5, tmp_path, "cal_x", len(ANTENNAS), REAL_IB_GENERATOR)
+    assert out.name == f"ib_cal_x_{len(ANTENNAS)}ant.h5"
+    assert out.is_file()
+    with h5py.File(out) as f:
+        assert f.attrs["format_type"] == "int8_incoh_bf_weights"
+        w = f["weights_int8"][:]
+    populated = sorted(int(s) for s in np.where((w > 0).any(axis=0))[0])
+    assert populated == sorted(a - 1 for a in ANTENNAS)
+
+
+def test_generate_ib_mask_missing_script_raises(tmp_path: Path):
+    cb_h5 = write_cb_h5(tmp_path / "weights.h5")
+    with pytest.raises(cb.IBGenerationError, match="does not exist"):
+        cb.generate_ib_mask(cb_h5, tmp_path, "cal_x", 4, tmp_path / "no_such_script.py")
+
+
+def test_generated_ib_mask_matches_deployed_regression(tmp_path: Path):
+    """Regenerating the IB mask from the REAL deployed 17-ant CB file with the
+    REAL generator is byte-identical, in its ``weights_int8`` dataset, to the
+    REAL deployed IB file (md5). Read-only against the production files;
+    writes only to tmp_path. This is the check that matters: it is the exact
+    pairing casm_monitor now reproduces for every new build."""
+    cb_h5 = Path(
+        "/mnt/nvme3/vishnu/b0329_build_20260904/weights_b0329_20260904_17ant_512_int8.h5"
+    )
+    deployed_ib = Path("/mnt/nvme3/vishnu/b0329_build_20260904/ib_b0329_20260904_17ant.h5")
+    if not (REAL_IB_GENERATOR.is_file() and cb_h5.is_file() and deployed_ib.is_file()):
+        pytest.skip("real b0329 20260904 build products are not present on this host")
+    out = cb.generate_ib_mask(cb_h5, tmp_path, "regress", 17, REAL_IB_GENERATOR)
+    with h5py.File(out) as f:
+        got = np.asarray(f["weights_int8"][:])
+    with h5py.File(deployed_ib) as f:
+        want = np.asarray(f["weights_int8"][:])
+    assert got.shape == want.shape
+    assert hashlib.md5(got.tobytes()).hexdigest() == hashlib.md5(want.tobytes()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +515,65 @@ def staged(cal_settings: Settings, monkeypatch) -> tuple[Settings, str]:
 
 def allow(settings: Settings) -> Settings:
     return dataclasses.replace(settings, allow_upload=True)
+
+
+def test_casm_track_processes_matches_exactly(monkeypatch):
+    """A real casm-track invocation matches; a bash snapshot merely mentioning
+    the string, or ``grep casm-track``, must NOT (2026-09-09: the old
+    ``pgrep -af`` substring test flagged a
+    ``/bin/bash -c source .../shell-snapshots/...`` line and refused every
+    upload)."""
+    ps_lines = "\n".join(
+        [
+            "20001 casm-track spec.json --live",
+            "20002 /bin/bash -c source /home/casm/.claude/shell-snapshots/foo.sh casm-track",
+            "20003 grep casm-track",
+        ]
+    )
+
+    def fake_run_cmd(argv, timeout=10.0):
+        assert argv[0] == "ps"
+        return 0, ps_lines, ""
+
+    monkeypatch.setattr(dep, "run_cmd", fake_run_cmd)
+    procs = dep.casm_track_processes()
+    assert len(procs) == 1
+    assert procs[0].startswith("20001 casm-track")
+
+
+def test_casm_track_processes_matches_python_module_invocation(monkeypatch):
+    """``python -m casm_beam_scheduler...`` and ``python /path/to/casm-track``
+    both match (the console script wraps ``casm_beam_scheduler.cli:main``)."""
+    ps_lines = "\n".join(
+        [
+            "30001 /usr/bin/python3.13 -m casm_beam_scheduler.cli spec.json --live",
+            "30002 /usr/bin/python3 /home/casm/venv/bin/casm-track spec.json",
+            "30003 /usr/bin/python3 -c print('casm-track')",
+        ]
+    )
+
+    def fake_run_cmd(argv, timeout=10.0):
+        return 0, ps_lines, ""
+
+    monkeypatch.setattr(dep, "run_cmd", fake_run_cmd)
+    procs = dep.casm_track_processes()
+    pids = {p.split(" ", 1)[0] for p in procs}
+    assert pids == {"30001", "30002"}
+
+
+def test_upload_refusal_ignores_bash_snapshot_mentioning_casm_track(staged, monkeypatch):
+    """End-to-end: a bash shell-snapshot line containing the string
+    ``casm-track`` must not block an upload."""
+    settings, tag = staged
+    ps_lines = (
+        "40001 /bin/bash -c source /home/casm/.claude/shell-snapshots/x.sh casm-track\n"
+        "40002 grep casm-track"
+    )
+    # The ``staged`` fixture stubs casm_track_processes() -> [] outright;
+    # restore the real function so ``ps``/argv parsing is actually exercised.
+    monkeypatch.setattr(dep, "casm_track_processes", dep_casm_track_processes)
+    monkeypatch.setattr(dep, "run_cmd", lambda argv, timeout=10.0: (0, ps_lines, ""))
+    assert dep.upload_refusal(allow(settings), tag, tag) is None
 
 
 def test_upload_refused_when_flag_off(staged):

@@ -53,13 +53,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
-from ..cal_defaults import deployed_product, layout_info, parse_scale_pairing
+from ..cal_defaults import layout_info, parse_scale_pairing
 from ..collectors.weights import read_last_ledger_row
 from ..config import Settings, load_settings
 from ..store import Store
@@ -124,18 +126,68 @@ def dada_files(directory: Path) -> list[Path]:
     return sorted(p for p in directory.glob("direct*.dada.*") if p.is_file())
 
 
+#: The console script name (``casm_beam_scheduler/pyproject.toml``
+#: ``[project.scripts]``): ``casm-track = "casm_beam_scheduler.cli:main"``.
+CASM_TRACK_ENTRY = "casm-track"
+#: The module a ``python -m ...`` invocation of the same entry point names.
+CASM_TRACK_MODULE = "casm_beam_scheduler"
+_PYTHON_BASENAME_RE = re.compile(r"python3?(\.\d+)?")
+
+
+def _is_casm_track_argv(argv: list[str]) -> bool:
+    """Exact match, not substring: argv[0]'s basename is the console script,
+    or a python interpreter running it by path or by ``-m``.
+
+    A shell (``bash -c 'source .../shell-snapshots/... casm-track ...'``),
+    ``grep casm-track`` or an editor with the string in its command line must
+    NOT match (2026-09-09: the old ``pgrep -af`` substring test flagged a
+    bash snapshot process and refused every upload).
+    """
+    if not argv:
+        return False
+    base0 = Path(argv[0]).name
+    if base0 == CASM_TRACK_ENTRY:
+        return True
+    if not _PYTHON_BASENAME_RE.fullmatch(base0):
+        return False
+    rest = list(argv[1:])
+    if "-m" in rest:
+        i = rest.index("-m")
+        if i + 1 < len(rest) and (
+            rest[i + 1] == CASM_TRACK_MODULE or rest[i + 1].startswith(f"{CASM_TRACK_MODULE}.")
+        ):
+            return True
+    for tok in rest:
+        if tok.startswith("-"):
+            continue
+        return Path(tok).name == CASM_TRACK_ENTRY
+    return False
+
+
 def casm_track_processes() -> list[str]:
-    """``pgrep -af casm-track`` lines, minus this process's own match."""
-    code, out, _err = run_cmd(["pgrep", "-af", "casm-track"], timeout=10.0)
+    """Exact ``casm-track`` process lines from ``ps -eo pid,args``.
+
+    Every line is tokenised with :mod:`shlex` and matched with
+    :func:`_is_casm_track_argv`; nothing is matched as a bare substring.
+    """
+    code, out, _err = run_cmd(["ps", "-eo", "pid=,args="], timeout=10.0)
     if code != 0:
         return []
     mine = str(os.getpid())
-    lines = []
-    for line in out.splitlines():
-        line = line.strip()
-        if not line or line.split(" ", 1)[0] == mine or "pgrep" in line:
+    lines: list[str] = []
+    for raw in out.splitlines():
+        raw = raw.strip()
+        if not raw:
             continue
-        lines.append(line)
+        pid, _sep, args = raw.partition(" ")
+        if pid == mine or not args.strip():
+            continue
+        try:
+            argv = shlex.split(args)
+        except ValueError:
+            continue
+        if _is_casm_track_argv(argv):
+            lines.append(raw)
     return lines
 
 
@@ -236,15 +288,32 @@ def _checks(weights_h5: str, ib_h5: str | None, antennas: list[int]) -> list[dic
                 "data": ib,
             }
         )
+        # CB and IB compared to EACH OTHER, not just each to the requested
+        # set: cal_build generates the IB from this build's own CB file, so a
+        # disagreement here means the generator ran against the wrong file,
+        # not just a stale antenna list (slot = ant_id-1 = packet_idx, the
+        # vis-beamforming-conventions.md convention this array uses).
+        ib_as_antennas = sorted(s + 1 for s in ib["populated_slots"])
+        rows.append(
+            {
+                "name": "cb_ib_slot_agreement",
+                "ok": ib_as_antennas == cb["populated_antennas"],
+                "detail": (
+                    f"IB slots as antennas {ib_as_antennas} vs CB populated "
+                    f"antennas {cb['populated_antennas']}"
+                ),
+            }
+        )
     else:
         rows.append(
             {
                 "name": "ib_present",
                 "ok": False,
                 "detail": (
-                    "no IB mask paired with this build: the deployed ledger row names "
-                    "none and none was found. Build one with gen_ib_from_cb.py "
-                    "(bf_weights_generator/docs/ib_weights.md) before deploying."
+                    "no IB mask recorded for this build (summary.json "
+                    "paths.ib_h5 is empty): cal_build should have generated one "
+                    "with gen_ib_from_cb.py (bf_weights_generator/docs/ib_weights.md, "
+                    "casm-wiki weights-and-deploy.md step 6) — rebuild before staging."
                 ),
             }
         )
@@ -286,12 +355,18 @@ def run_stage(params: dict[str, Any]) -> dict[str, Any]:
     # Raises with its own message when the pairing cannot be read; the job
     # fails and says so rather than falling back to the documented 32/32.
     pairing = parse_scale_pairing(ledger)
-    deployed = deployed_product(settings)
-    # The driver builds the CB product only. The IB mask is the build's own if
-    # one exists, else the deployed companion named by the ledger row.
-    ib_h5 = (summary.get("paths") or {}).get("ib_h5") or deployed.get("ib_file")
+    # cal_build generates the IB companion itself, paired to THIS build's own
+    # CB file and antenna set (jobs/cal_build.py generate_ib_mask). The
+    # deployed IB is never substituted here: staging it against a different
+    # build's CB antenna set is exactly the near-empty-file mismatch this
+    # check exists to catch (casm-wiki incidents.md 2026-08-31).
+    ib_h5 = (summary.get("paths") or {}).get("ib_h5")
     if ib_h5 and not Path(ib_h5).is_file():
-        print(f"[stage] IB mask {ib_h5} does not exist; staging CB only", flush=True)
+        print(
+            f"[stage] IB mask {ib_h5} recorded in the build summary but missing "
+            f"on disk; staging CB only",
+            flush=True,
+        )
         ib_h5 = None
 
     sdir = stage_dir(settings, tag)

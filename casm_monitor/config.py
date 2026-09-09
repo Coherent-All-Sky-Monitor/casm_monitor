@@ -134,6 +134,13 @@ class Settings:
     # only a DEFAULT: the wiki wants the quiet window re-derived per epoch
     # (weights-verification.md, static-amplitude trap).
     cal_static_default: str = "03:00-03:30"
+    # The IB (incoherent-beam) mask generator: a binary mask over the 132-slot
+    # snap*12+adc vector, derived from a build's own CB weights. This is the
+    # only script that may build one (casm-wiki weights-and-deploy.md step 6);
+    # cal_build calls its ``main`` function, never hand-rolls the mask.
+    cal_ib_generator_script: Path = Path(
+        "/home/casm/scratch/bf_experiment_v1/scripts/gen_ib_from_cb.py"
+    )
     allow_upload: bool = False
     config_path: Path | None = None
 
@@ -276,6 +283,9 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         ),
         cal_window_half_min=float(cal.get("window_half_min", defaults.cal_window_half_min)),
         cal_static_default=str(cal.get("static_default", defaults.cal_static_default)),
+        cal_ib_generator_script=Path(
+            cal.get("ib_generator_script", defaults.cal_ib_generator_script)
+        ),
         # ``cal.allow_upload`` is the M3 spelling; the top-level key is the M0
         # one. Either being false is enough to keep the upload handler shut.
         allow_upload=_as_bool(

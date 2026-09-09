@@ -17,11 +17,19 @@ Everything the Calibration tab pre-fills, computed rather than remembered:
   was recorded invalidates it, and casm-wiki ``weights-verification.md`` wants
   the quiet window re-derived per epoch (``source_altaz`` over the candidates)
   rather than copied forward.
-* **antenna set** = the layout's ``include_in_beamforming=1`` column, read from
-  ``antenna_layouts/current`` at call time. The weights stage silently
-  intersects the requested antennas with that same column (casm-wiki
-  incidents.md 2026-08-31), so any other default would build a product with
-  fewer populated slots than the cal.
+* **antenna set** = the slots actually POPULATED in the deployed CB weights
+  file (``antennas_source: "deployed"``), read with
+  :func:`deployed_cb_antennas`. This is what is live, which is not always the
+  layout's ``include_in_beamforming=1`` column: that column can be edited
+  after the last build without a rebuild (2026-09-09 finding: layout gate =
+  18 antennas, adds 12 and 33, lacks 18; deployed product = the 17-antenna
+  set). The layout gate set is exposed separately as ``layout_bf_antennas``
+  with a note when the two differ, and the weights stage still silently
+  intersects any REQUESTED antenna list with the layout column (casm-wiki
+  incidents.md 2026-08-31), so a build only ever gets fewer populated slots
+  than requested, never more. Falls back to ``layout_bf_antennas``
+  (``antennas_source: "layout_fallback"``) when the deployed CB file cannot be
+  read.
 * **ref ant** = 9 when it is in the set (the reference every deployed cal since
   Aug-15 used), else the lowest antenna in the set.
 * **deployed product** = the LAST ROW of ``deployed_weights.csv``, which is the
@@ -190,6 +198,52 @@ def layout_info(path: str | Path) -> dict[str, Any]:
     }
 
 
+#: Channel the populated-slot check reads (mid-band; matches the same check
+#: ``jobs/deploy.py`` runs at stage time, ``_weights_slots``).
+DEPLOYED_CB_CHECK_CHAN = 1500
+
+
+def deployed_cb_antennas(weights_h5: str | Path | None) -> dict[str, Any]:
+    """Antennas actually populated in the DEPLOYED CB weights file.
+
+    Reads ``array_config/antenna_ids`` (the slot -> antenna map the driver
+    baked in from the layout at build time, i.e. "slot -> packet_idx ->
+    antenna via the layout" already resolved) and ``weights_int8`` at
+    :data:`DEPLOYED_CB_CHECK_CHAN`, the same check ``jobs/deploy.py``'s
+    ``_weights_slots`` runs at stage time. This is what is actually LIVE,
+    which is not always the layout's ``include_in_beamforming`` column (that
+    column can be edited after the last build without a rebuild — 2026-09-09
+    finding: the layout gate lists 18 antennas, adds 12 and 33, lacks 18,
+    while the deployed product is the 17-antenna set).
+
+    Returns ``{"antennas": [...], "error": None}`` or ``{"antennas": [],
+    "error": "..."}`` when the file is missing or unreadable; callers fall
+    back to the layout set in that case, never guess.
+    """
+    result: dict[str, Any] = {"antennas": [], "error": None, "path": str(weights_h5) if weights_h5 else None}
+    if not weights_h5:
+        result["error"] = "no deployed weights file on record"
+        return result
+    path = Path(weights_h5)
+    if not path.is_file():
+        result["error"] = f"deployed weights file {weights_h5} does not exist"
+        return result
+    try:
+        import h5py
+        import numpy as np
+
+        with h5py.File(path, "r") as f:
+            ids = np.asarray(f["array_config/antenna_ids"][:], dtype=int)
+            n_chan = int(f["weights_int8"].shape[1])
+            chan = min(DEPLOYED_CB_CHECK_CHAN, n_chan - 1)
+            sl = np.abs(np.asarray(f["weights_int8"][:, chan, :, :, :], dtype=np.int32))
+        populated = np.where(sl.max(axis=(0, 1, 2)) > 0)[0]
+        result["antennas"] = sorted(int(ids[i]) for i in populated)
+    except Exception as exc:  # noqa: BLE001 - surfaced as a note, not fatal
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    return result
+
+
 def default_ref_ant(antennas: list[int]) -> int | None:
     if not antennas:
         return None
@@ -313,8 +367,19 @@ def cal_defaults(date: str, settings: Settings | None = None) -> dict[str, Any]:
     source = (settings.cal_sources_enabled or ("sun",))[0]
     window = solve_window(source, date, settings.cal_window_half_min)
     layout = layout_info(settings.layout_csv)
-    antennas = layout["antennas"]
+    layout_bf_antennas = layout["antennas"]
     deployed = deployed_product(settings)
+    deployed_cb = deployed_cb_antennas(deployed.get("weights_file"))
+    deployed_antennas = deployed_cb["antennas"]
+    if deployed_antennas:
+        antennas = deployed_antennas
+        antennas_source = "deployed"
+    else:
+        # No readable deployed CB file (fresh store, bad path, ...): fall
+        # back to the layout gate rather than defaulting to an empty form.
+        antennas = layout_bf_antennas
+        antennas_source = "layout_fallback"
+    layout_mismatch = sorted(set(layout_bf_antennas) ^ set(deployed_antennas)) if deployed_antennas else []
     return {
         "date": str(date),
         "source": source,
@@ -338,9 +403,28 @@ def cal_defaults(date: str, settings: Settings | None = None) -> dict[str, Any]:
         ),
         "antennas": antennas,
         "n_ant": len(antennas),
+        "antennas_source": antennas_source,
         "antennas_note": (
-            f"{len(antennas)} antennas with include_in_beamforming=1 in "
-            f"{layout['path']}"
+            f"{len(antennas)} antennas populated in the deployed CB weights file "
+            f"{deployed.get('weights_file')}"
+            if antennas_source == "deployed"
+            else (
+                f"deployed CB weights unreadable ({deployed_cb['error']}); falling "
+                f"back to the {len(antennas)} antennas with include_in_beamforming=1 "
+                f"in {layout['path']}"
+            )
+        ),
+        "layout_bf_antennas": layout_bf_antennas,
+        "deployed_antennas": deployed_antennas,
+        "antennas_mismatch_note": (
+            None
+            if not layout_mismatch
+            else (
+                f"the layout's include_in_beamforming set and the deployed CB "
+                f"weights' antenna set differ: {layout_mismatch} "
+                f"(2026-09-09 finding: the layout gate can drift from what was "
+                f"last built without a rebuild)"
+            )
         ),
         "ref_ant": default_ref_ant(antennas),
         "grid_mode": "exact",

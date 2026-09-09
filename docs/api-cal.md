@@ -267,7 +267,14 @@ existing `/api/jobs/{id}` poll for any in-flight cal job).
   observation using the currently deployed weights (medusa-lmc-control);
   when true the frontend shows an alert sentence
   ("casm-track is running; wait before uploading new weights.") and disables
-  the upload button regardless of `allow_upload`/staged state.
+  the upload button regardless of `allow_upload`/staged state. Detection
+  (2026-09-09 fix) is an EXACT process match, not a substring: `ps -eo
+  pid,args`, each line's argv tokenised with `shlex`, matched only when
+  argv[0]'s basename is `casm-track` (the console script,
+  `casm_beam_scheduler/pyproject.toml`) or a python interpreter running it by
+  path or by `-m casm_beam_scheduler...`. A shell, `grep casm-track`, an
+  editor, or a bash `shell-snapshots` line that merely mentions the string do
+  not match. `deploy_upload`'s refusal gate uses the same function.
 - `active_job` is `null` when nothing cal-related is queued/running; when
   present the frontend polls `GET /api/jobs/{id}` with that id to drive any
   inline "state:" sentence on the New solve section if the user reloaded
@@ -321,6 +328,23 @@ The routes above are live. Differences from the contract, all deliberate:
   fixed), `n_beams` (512, fixed) and `deployed.ib_file` are additions. Source
   names are the catalog spellings `sun`, `cyg-a`, `cas-a`, `tau-a`, `vir-a`
   (hyphens, not `cyga`).
+- **`antennas` default (2026-09-09).** `antennas` is the slots actually
+  POPULATED in the deployed CB weights file (`deployed.weights_file`), read
+  with `cal_defaults.deployed_cb_antennas` (the HDF5's own
+  `array_config/antenna_ids`, which already resolves slot -> packet_idx ->
+  antenna via the layout that was in force when it was built) — `antennas_source: "deployed"`.
+  This is what is actually LIVE, which is not always the layout's
+  `include_in_beamforming=1` column: that column can be edited after the last
+  build without a rebuild (2026-09-09 finding: the layout gate listed 18
+  antennas, added 12 and 33, lacked 18, while the deployed product was the
+  17-antenna set — the weights stage correctly refused to build against the
+  mismatch). The layout gate set is exposed separately as
+  `layout_bf_antennas`, the raw deployed set as `deployed_antennas`, and
+  `antennas_mismatch_note` is non-null (naming the symmetric-difference
+  antennas) whenever the two disagree. If the deployed CB file cannot be read
+  (missing path, bad HDF5, ...), `antennas` falls back to the layout set and
+  `antennas_source` reads `"layout_fallback"`, with `antennas_note` saying
+  why.
 - **`deployed.scale` / `ib_scale`** are parsed out of the last row of
   `deployed_weights.csv` (today 8064 and 32, the Route Z pairing), never
   defaulted. A row whose pairing cannot be read fails the stage job with that
@@ -337,16 +361,26 @@ The routes above are live. Differences from the contract, all deliberate:
   diagnostics keep their relative path (`fringe_<tag>/fringe_diag_snap0_to_1.png`)
   as their name. `GET .../figs/{name}.png` accepts either the stem or the
   recorded filename.
-- **`ib_h5` is null on a fresh build.** The canonical driver builds the CB
-  product only; the IB mask is a companion file (`gen_ib_from_cb.py`). The
-  stage pairs the build with the IB mask named by the ledger row and REJECTS
-  the pair when its populated slot count differs from the CB antenna set, so a
-  new antenna set needs a new IB mask before it can be deployed.
+- **`ib_h5` (2026-09-09).** The canonical driver builds the CB product only;
+  `cal_build` generates the paired IB (incoherent-beam) mask itself
+  immediately afterwards, for exactly THIS build's own CB file and antenna
+  set, by calling `gen_ib_from_cb.py`'s `main()` (the only IB-mask generator
+  this service runs — never hand-rolled; script path is
+  `cal.ib_generator_script` in `config/monitor.yaml`, default
+  `/home/casm/scratch/bf_experiment_v1/scripts/gen_ib_from_cb.py`). It is
+  saved as `ib_<tag>_<n_ant>ant.h5` in the build directory and recorded at
+  `summary.ib_h5`; it is never null once a build has weights. `deploy_stage`
+  stages THAT file, never the deployed one, so a new antenna set is never
+  staged against a stale IB.
 - **`stage`** is `stage.json` plus `files[]` and `command`. `checks[]` includes
   `dry_run_exit_code`, `cb_dada_files`, `cb_format_type`, `cb_populated_slots`,
-  `ib_format_type`, `ib_populated_slots`. When any check fails the stage JOB
-  fails (the tab should show `stage.checks` and treat `checks_ok: false` as
-  "not staged"): `staged` in the build list is true only when the checks passed.
+  `ib_format_type`, `ib_populated_slots`, `cb_ib_slot_agreement` (the CB's own
+  populated antennas vs the IB's own populated antennas, compared to EACH
+  OTHER, not just each to the requested set — catches a generator run against
+  the wrong CB file even when both individually match the request). When any
+  check fails the stage JOB fails (the tab should show `stage.checks` and
+  treat `checks_ok: false` as "not staged"): `staged` in the build list is
+  true only when the checks passed.
 - **`save_defaults`** adds `--save-defaults` to the deploy command, which
   refreshes `/data/casm/default_weights_64ant_512beam/` on both nodes. It does
   NOT edit `deployed_weights.csv`: that ledger lives in casm-wiki and is a
