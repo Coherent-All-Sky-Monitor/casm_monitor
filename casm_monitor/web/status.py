@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from ..util import iso
 
-GROUP_ORDER = ("obs", "weights", "search", "services", "sky", "node", "store")
+GROUP_ORDER = ("obs", "weights", "vis", "search", "services", "sky", "node", "store")
 
 _RANK = {"ok": 0, "warn": 1, "stale": 2, "error": 3}
 
@@ -69,6 +69,10 @@ class StatusItem:
     cadence_key: str
     unit: str | None = None
     warn_if: Callable[[Any], bool] | None = None
+    # A predicate on the VALUE that grades the item "stale" — for items whose
+    # value is itself an age (vis.age_s), where the row is fresh every cadence
+    # but the data behind it is not.
+    stale_if: Callable[[Any], bool] | None = None
     error_if: Callable[[Any], bool] | None = None
 
 
@@ -99,6 +103,30 @@ ITEMS: tuple[StatusItem, ...] = (
         "weights",
         "weights",
         warn_if=_is_one,
+    ),
+    # -- visibilities ---------------------------------------------------
+    # vis.age_s is the age of the newest CACHED integration, so its thresholds
+    # are on the value (one integration is 137.44 s): amber past ~4
+    # integrations, stale past ~13. Both items are graded for freshness against
+    # ``vis_integration`` (3 integrations) rather than the 30 s poll, because
+    # vis.subbands_dark carries the INTEGRATION's timestamp, not the poll's.
+    StatusItem(
+        "vis_age_s",
+        "vis.age_s",
+        "newest cached integration",
+        "vis",
+        "vis_integration",
+        unit="s",
+        warn_if=_above(600.0),
+        stale_if=_above(1800.0),
+    ),
+    StatusItem(
+        "vis_subbands_dark",
+        "vis.subbands_dark",
+        "dark subbands (all inputs)",
+        "vis",
+        "vis_integration",
+        warn_if=_above(0.0),
     ),
     # -- search (hella thresholds) --------------------------------------
     StatusItem("hella_corr1_snr", "hella.corr1.snr", "hella SNR (corr1)", "search", "hella"),
@@ -166,6 +194,8 @@ def _grade(item: StatusItem, value: Any, age_s: float | None, cadence_s: float) 
         state = "warn"
     if item.warn_if is not None and item.warn_if(value):
         state = state if _RANK[state] > _RANK["warn"] else "warn"
+    if item.stale_if is not None and item.stale_if(value):
+        state = state if _RANK[state] > _RANK["stale"] else "stale"
     if item.error_if is not None and item.error_if(value):
         state = "error"
     return state

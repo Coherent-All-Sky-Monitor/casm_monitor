@@ -256,6 +256,8 @@ def test_default_collector_set_names(settings):
         "weights",
         "sky",
         "snapread",
+        "vis",
+        "search",
         "store",
     ]
 

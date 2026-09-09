@@ -176,7 +176,7 @@ export default function InputDetail({ board, input, units, layer, useMock, onBac
       <button className="detail__back" onClick={onBack} type="button">
         back to all inputs
       </button>
-      <h2 className="detail__title">{panelTitle(input)}</h2>
+      <h2 className="detail__title">{panelTitle(board, input)}</h2>
       <p className="board__line">
         SNAP {board.feng_id ?? "?"}, {board.ip}, adc {input.adc}.
       </p>

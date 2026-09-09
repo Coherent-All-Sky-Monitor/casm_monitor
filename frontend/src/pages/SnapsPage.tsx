@@ -8,6 +8,7 @@ import { useUrlParam } from "../lib/useUrlParam";
 import { resolveSince } from "../lib/timeRange";
 import { formatAge } from "../lib/snapConstants";
 import { orderInputs, relayLine } from "../lib/snapText";
+import type { SnapInputSetMode } from "../lib/snapText";
 import { formatUnixUtc } from "../lib/statusSentence";
 import {
   getJob,
@@ -46,7 +47,7 @@ export default function SnapsPage() {
   const [layer] = useUrlParam("layer", "correlator");
   const [units] = useUrlParam("units", "dB");
   const [mode] = useUrlParam("mode", "live");
-  const [showUnwired, setShowUnwired] = useUrlParam("unwired", "0");
+  const [inputSet] = useUrlParam("input_set", "beamforming");
   const [selected, setSelected] = useUrlParam("input", "");
 
   const [boards, setBoards] = useState<SnapBoardInfo[] | null>(null);
@@ -255,7 +256,7 @@ export default function SnapsPage() {
   // --- panel data --------------------------------------------------------
   const panelsFor = useCallback(
     (board: SnapBoardInfo): PanelData[] => {
-      const inputs = orderInputs(board.inputs ?? [], showUnwired === "1");
+      const inputs = orderInputs(board.inputs ?? [], (inputSet === "all" ? "all" : "beamforming") as SnapInputSetMode);
       const read = readByIp[board.ip];
       const live = liveByIp[board.ip];
       return inputs.map((input) => {
@@ -272,7 +273,7 @@ export default function SnapsPage() {
         return { input, freqMhz: live?.freq_mhz ?? [], values: li?.bp ?? null, rms };
       });
     },
-    [showUnwired, readByIp, liveByIp, layer, mode, histByPacketIdx, sliderIdx],
+    [inputSet, readByIp, liveByIp, layer, mode, histByPacketIdx, sliderIdx],
   );
 
   // --- selection ---------------------------------------------------------
@@ -333,14 +334,14 @@ export default function SnapsPage() {
             { value: "history", label: "history" },
           ]}
         />
-        <label className="checkbox">
-          <input
-            type="checkbox"
-            checked={showUnwired === "1"}
-            onChange={(e) => setShowUnwired(e.target.checked ? "1" : "0")}
-          />
-          show unwired inputs
-        </label>
+        <Segmented
+          paramKey="input_set"
+          defaultValue="beamforming"
+          options={[
+            { value: "beamforming", label: "beamforming" },
+            { value: "all", label: "all 12 ADCs" },
+          ]}
+        />
         <span>
           <button className="text-button" onClick={handleReadNow} disabled={reading || !!retryAfterS} type="button">
             {reading ? "reading boards" : "Read boards now"}

@@ -35,10 +35,28 @@ DEFAULT_CADENCES: dict[str, float] = {
     "gpus": 60.0,
     "weights": 120.0,
     "sky": 60.0,
+    "vis": 30.0,
+    # Not a collector cadence: the spacing the status strip grades the
+    # visibility ITEMS against. One integration is 137.44 s and the newest one
+    # is normally 2-3 integrations old (accumulation + the guard band + the
+    # size/mtime stability poll), so three integrations is "fresh".
+    "vis_integration": 3 * 137.438953472,
     "kafka_bp": 1.0,        # one poll per second inside the runner
     "kafka_bp_frame": 30.0,  # frame cadence used to grade the status strip
     "snapread": 60.0,
     "store": 300.0,
+}
+
+
+# Per-stream shard TTLs in days. These are the PRODUCTION values, so a service
+# started without a YAML file (or with one written before a stream existed) still
+# expires its shards instead of keeping them for ever; the YAML's
+# ``shard_ttl_days`` is merged on top, key by key.
+DEFAULT_SHARD_TTL_DAYS: dict[str, float] = {
+    "kafka_bp_full": 14.0,
+    "kafka_bp_sub": 90.0,
+    "vis_full": 3.0,
+    "vis_avg8": 60.0,
 }
 
 
@@ -88,7 +106,14 @@ class Settings:
     snap_read_interval_s: float = 3600.0
     snap_manual_min_interval_s: float = 300.0
     snap_per_board_timeout_s: float = 60.0
-    shard_ttl_days: dict[str, float] = field(default_factory=dict)
+    # Visibilities (M2). ``vis_dir`` above is the data directory; these two bound
+    # the collector: how far back a first start backfills, and how many
+    # integrations one pass may read (0.12 s each at 24 inputs / 300 baselines).
+    vis_backfill_hours: float = 12.0
+    vis_max_per_pass: int = 64
+    shard_ttl_days: dict[str, float] = field(
+        default_factory=lambda: dict(DEFAULT_SHARD_TTL_DAYS)
+    )
     allow_upload: bool = False
     config_path: Path | None = None
 
@@ -140,6 +165,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
     kafka = raw.get("kafka") or {}
     hosts = raw.get("hosts") or {}
     snap = raw.get("snap") or {}
+    vis = raw.get("vis") or {}
     # ``antenna_boards`` is either ``{from_csv: <path>}`` (the normal case: the
     # boards come from the SNAP map at runtime) or an explicit list of IPs used
     # to override it. Only the second form ends up in ``snap_antenna_boards``.
@@ -153,13 +179,19 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         snap_antenna_boards = ()
     cadences = dict(DEFAULT_CADENCES)
     cadences.update({str(k): float(v) for k, v in (raw.get("cadences") or {}).items()})
+    # ``vis.cadence`` is the Visibilities section's own spelling of
+    # ``cadences.vis``; whichever is present wins, the section last.
+    if vis.get("cadence") is not None:
+        cadences["vis"] = float(vis["cadence"])
 
     defaults = Settings()
     kw: dict[str, Any] = dict(
         store_root=Path(raw.get("store_root", defaults.store_root)),
         web_host=str(web.get("host", defaults.web_host)),
         web_port=int(web.get("port", defaults.web_port)),
-        vis_dir=Path(paths.get("vis_dir", defaults.vis_dir)),
+        # ``vis.dir`` wins over ``paths.vis_dir``: the Visibilities section is
+        # where that tab's keys live, the paths block is the older spelling.
+        vis_dir=Path(vis.get("dir", paths.get("vis_dir", defaults.vis_dir))),
         hella_cands_dir=Path(paths.get("hella_cands_dir", defaults.hella_cands_dir)),
         t2_db=Path(paths.get("t2_db", defaults.t2_db)),
         registry_dir=Path(paths.get("registry_dir", defaults.registry_dir)),
@@ -196,7 +228,14 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         snap_per_board_timeout_s=float(
             snap.get("per_board_timeout_s", defaults.snap_per_board_timeout_s)
         ),
-        shard_ttl_days={str(k): float(v) for k, v in (raw.get("shard_ttl_days") or {}).items()},
+        vis_backfill_hours=max(0.0, float(vis.get("backfill_hours", defaults.vis_backfill_hours))),
+        vis_max_per_pass=max(
+            1, int(vis.get("max_integrations_per_pass", defaults.vis_max_per_pass))
+        ),
+        shard_ttl_days={
+            **DEFAULT_SHARD_TTL_DAYS,
+            **{str(k): float(v) for k, v in (raw.get("shard_ttl_days") or {}).items()},
+        },
         allow_upload=_as_bool(raw.get("allow_upload", defaults.allow_upload)),
         config_path=p if p.is_file() else None,
     )

@@ -41,7 +41,7 @@ Tabs:
    contact) is the live layer; (b) the board-side read via zapdos (4096 ch,
    375-500 MHz with the correlator's 390.6-484.4 MHz shaded, ADC RMS vs the
    5-30 LSB healthy band, EQ epoch, feng_id from the packetizer BRAM) is taken
-   **once per hour** by the collector and otherwise **only when a user clicks
+   **once every two hours** by the collector (operator 2026-09-08 evening: "once an hour or two is plenty"; config `snap.read_interval_s: 7200`) and otherwise **only when a user clicks
    "Read boards now"**; the card shows the last read with its timestamp until
    then. Board reads are serialized (one ssh session, boards in sequence,
    a lock so two clicks cannot overlap, minimum 5 min between manual reads)
@@ -255,7 +255,7 @@ are idle if needed later, but do not plan on them.
   3072-channel spectra and images; can be added later on top of the SQLite
   scalars if wanted).
 - **SNAP source: both** Kafka bandpass (10 s, live) and zapdos board reads
-  (hourly + on-click only, never continuous; operator instruction 2026-09-08).
+  (every 2 h + on-click only, never continuous; operator instruction 2026-09-08).
 - **Order:** M0 scaffold, M1 SNAPs, M2 Vis, M3 Cal, M4 Imaging, M5 Cands.
 - **Roles:** Fable orchestrates; Opus 5 (xhigh) implements the collectors,
   store and cal job runner; Sonnet 5 (medium) does templates, tests, docs;

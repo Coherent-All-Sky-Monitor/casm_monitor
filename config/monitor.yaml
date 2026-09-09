@@ -58,9 +58,15 @@ cadences:
   kafka_bp_frame: 30
   # cheap tick: one SQLite query; the hourly gate is inside the collector
   snapread: 60
+  # visibilities: polled 30 s against a 137.44 s integration (see vis: below)
+  vis: 30
+  search: 20
+  # Not a collector: the spacing the status strip grades the visibility items
+  # against (3 x 137.438953472 s, i.e. accumulation + guard band + stability poll).
+  vis_integration: 412.32
   store: 300
 
-zapdos_min_interval_s: 3600
+zapdos_min_interval_s: 7200
 
 # SNAP board reads over zapdos. Strictly sequential, one ssh session, at most
 # once an hour from the scheduler (read_interval_s is clamped to >= 3600 in
@@ -79,9 +85,25 @@ snap:
   # Same file the /api/snaps/boards table reads (rowmap.LAYOUT_CSV): the
   # ``current`` symlink, so casm-layout apply is picked up everywhere at once.
   layout_csv: /home/casm/software/dev/antenna_layouts/current
-  read_interval_s: 3600
+  read_interval_s: 7200
   manual_min_interval_s: 300
   per_board_timeout_s: 60
+
+# Visibilities (M2). The cached sub-matrix is every WIRED input of the layout
+# (functional=1, re-read at every integration so the set grows by itself);
+# include_in_beamforming=1 is the default DISPLAY set. Only those two sets exist
+# (operator decision 2026-09-08). The collector reads each COMPLETE integration
+# once, keeps one integration as a guard band behind the growing file's end, and
+# never crosses a file boundary in one read.
+vis:
+  dir: /mnt/nvme4/data/casm/visibilities_64ant
+  cadence: 30
+  # First start (and any gap) backfills at most this many hours of complete
+  # integrations, oldest first, under the same watermark.
+  backfill_hours: 12
+  # Integrations one pass may read (0.12 s each at 24 inputs / 300 baselines),
+  # so a 12 h backfill spreads over a few passes instead of one long one.
+  max_integrations_per_pass: 64
 
 # Per-stream shard time-to-live in days, used by the retention helper. Every
 # shard stream and its TTL (a stream with no key here is kept forever):
@@ -89,11 +111,13 @@ snap:
 #   kafka_bp_sub    90 d    10 s frames reduced to 96 channels
 #   kafka_bp_night  none    the 02:00-05:00 PT nightly median
 #   snap_read       none    board-side reads over zapdos (never expires)
+#   vis_full         3 d    one shard per integration, 3072 ch, wired inputs
+#   vis_avg8        60 d    eight integrations per shard, 8x chan-averaged
 shard_ttl_days:
   kafka_bp_full: 14
   kafka_bp_sub: 90
-  vis_reduced: 3
-  vis_reduced_chanavg: 60
+  vis_full: 3
+  vis_avg8: 60
 
 # M3 gate: the weights upload button stays disabled unless this is true AND
 # CASM_MONITOR_ALLOW_UPLOAD=1 is set in the unit environment.

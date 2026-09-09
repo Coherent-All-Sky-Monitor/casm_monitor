@@ -56,7 +56,7 @@ export default function BoardSection({
         {panels.map((panel, i) => (
           <SpectrumPanel
             key={panel.input.adc}
-            title={panelTitle(panel.input, panel.rms)}
+            title={panelTitle(board, panel.input, panel.rms)}
             inBf={panel.input.in_bf}
             freqMhz={panel.freqMhz}
             values={panel.values}

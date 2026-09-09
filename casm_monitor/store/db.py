@@ -103,6 +103,21 @@ class Store:
             self._conn.commit()
             return cur
 
+    def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> int:
+        """One statement over many rows in ONE transaction; returns the count.
+
+        A collector that ingests a batch (the search tailer inserts a whole
+        gulp of candidate rows per tick) must not pay a commit per row: at 40k
+        rows that is 40k fsyncs. Empty input is a no-op, not an empty commit.
+        """
+        payload = [tuple(row) for row in rows]
+        if not payload:
+            return 0
+        with self._lock:
+            self._conn.executemany(sql, payload)
+            self._conn.commit()
+        return len(payload)
+
     # -- scalars --------------------------------------------------------
     def put_scalar(
         self,

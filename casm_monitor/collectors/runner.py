@@ -38,6 +38,8 @@ from .obs import ObsCollector
 from .services import ServicesCollector, ZapdosCollector
 from .sky import SkyCollector
 from .snapread import SnapReadCollector
+from .vis import VisCollector
+from .search import SearchCollector
 from .weights import WeightsCollector
 
 log = logging.getLogger("casm_monitor.collect")
@@ -60,6 +62,8 @@ def default_collectors(settings: Settings) -> list[Collector]:
         WeightsCollector(settings),
         SkyCollector(settings),
         SnapReadCollector(settings),
+        VisCollector(settings),
+        SearchCollector(settings),
         StoreCollector(settings),
     ]
 

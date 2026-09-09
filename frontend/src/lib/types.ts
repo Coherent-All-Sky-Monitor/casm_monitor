@@ -179,3 +179,134 @@ export interface SnapTrendResponse {
 export interface JobDetail extends JobRecord {
   detail?: Record<string, unknown>;
 }
+
+// Visibilities tab (M2). Kept in sync by hand with docs/api-vis.md.
+
+export type VisSet = "live" | "wired";
+export type VisPairs = "auto" | "cross" | "all";
+export type VisQuantity = "amp" | "phase" | "real" | "imag" | "coh";
+export type VisUnits = "linear" | "db" | "log10" | "deg" | "rad";
+export type VisRef = "raw" | "sun" | "cal";
+
+export interface VisInputInfo {
+  packet_idx: number;
+  antenna: number | null;
+  station: string | null;
+  in_bf: boolean;
+}
+
+export interface VisObsInfo {
+  utc_start: string | null;
+  latest_ts: string | null;
+  n_cached: number;
+  oldest_ts: string | null;
+}
+
+export interface VisInputsResponse {
+  sets: { live: number[]; wired: number[] };
+  inputs: VisInputInfo[];
+  obs: VisObsInfo;
+}
+
+export interface VisTimesResponse {
+  t: number[];
+}
+
+export interface VisBaseline {
+  i: number;
+  j: number;
+  ant_i: number | null;
+  ant_j: number | null;
+  y: (number | null)[];
+}
+
+export interface VisSpectraResponse {
+  ts: number | null;
+  freq_mhz: number[];
+  baselines: VisBaseline[];
+  flags: Record<string, unknown>;
+}
+
+export interface VisMatrixResponse {
+  inputs: number[];
+  m: number[][];
+}
+
+export type VisWaterfallRes = "10s" | "60s" | "10min" | "1h" | string;
+
+export interface VisWaterfallResponse {
+  t: number[];
+  freq_mhz: number[];
+  z: number[][];
+  res: VisWaterfallRes;
+}
+
+export interface VisCoherenceResponse {
+  inputs: number[];
+  m: number[][];
+}
+
+// Search tab (M2b). Kept in sync by hand with docs/api-search.md.
+
+export interface SearchJobStat {
+  job: number;
+  node: string;
+  n: number;
+  rate_per_min: number;
+  last_ts: number | null;
+}
+
+export interface SearchThreshold {
+  snr: number;
+  dm_min: number;
+}
+
+export interface SearchFunnelTotals {
+  n_cands: number;
+  n_clusters: number;
+  n_stored: number;
+  n_vetoed: number;
+  n_triggers: number;
+}
+
+export interface SearchSummaryResponse {
+  t0: string;
+  t1: string;
+  n_cands: number;
+  per_job: SearchJobStat[];
+  thresholds: Record<string, SearchThreshold>;
+  funnel: SearchFunnelTotals;
+}
+
+export type SearchHistField = "snr" | "dm" | "width" | "beam";
+
+export interface SearchHistResponse {
+  edges: number[];
+  counts: number[];
+}
+
+export type SearchScatterField = "snr" | "dm" | "width" | "beam" | "time";
+
+export interface SearchScatterResponse {
+  x: number[];
+  y: number[];
+  n_total: number;
+}
+
+export interface SearchBeamMapResponse {
+  counts: number[];
+}
+
+export interface SearchRateResponse {
+  t: number[];
+  per_job: Record<string, number[]>;
+  total: number[];
+}
+
+export interface SearchFunnelResponse {
+  t: number[];
+  n_cands: number[];
+  n_clusters: number[];
+  n_stored: number[];
+  n_vetoed: number[];
+}

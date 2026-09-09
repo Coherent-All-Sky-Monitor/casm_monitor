@@ -5,8 +5,10 @@ from .hella import HellaCollector
 from .nodes import DisksCollector, GpusCollector, StoreCollector
 from .obs import ObsCollector
 from .runner import CollectorRunner, default_collectors
+from .search import SearchCollector
 from .services import ServicesCollector, ZapdosCollector
 from .sky import SkyCollector
+from .vis import VisCollector
 from .weights import WeightsCollector
 
 __all__ = [
@@ -22,5 +24,7 @@ __all__ = [
     "GpusCollector",
     "WeightsCollector",
     "SkyCollector",
+    "SearchCollector",
+    "VisCollector",
     "StoreCollector",
 ]

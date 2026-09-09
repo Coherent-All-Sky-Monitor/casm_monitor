@@ -10,31 +10,37 @@ import type {
   SnapLiveResponse,
 } from "./types";
 
-/** `ant 26  N16E1  (pkt 25)`, the panel title of the house figures. Inputs
- * with no antenna fall back to their ADC channel so the panel is still
- * identifiable. */
-export function panelTitle(input: SnapInputInfo, rms?: number | null): string {
+/** `ant 26  N16E1  (S2 A1, pkt 25)`: antenna, station, then the board's
+ * feng_id + ADC index and the packet index, so the tile always names its
+ * hardware identity as well as its beamforming identity (operator,
+ * 2026-09-08). Inputs with no antenna (unwired, or a gated/dead feed that
+ * kept its layout row) fall back to `S2 A7  unwired`. */
+export function panelTitle(board: SnapBoardInfo, input: SnapInputInfo, rms?: number | null): string {
   const suffix = rms === null || rms === undefined ? "" : `  rms ${rms.toFixed(1)}`;
+  const boardAdc = `S${board.feng_id ?? "?"} A${input.adc}`;
   if (input.antenna !== null) {
     const station = input.station ? `  ${input.station}` : "";
-    return `ant ${input.antenna}${station}  (pkt ${input.packet_idx})${suffix}`;
+    return `ant ${input.antenna}${station}  (${boardAdc}, pkt ${input.packet_idx})${suffix}`;
   }
-  if (input.packet_idx !== null) {
-    return `adc ${input.adc}  (pkt ${input.packet_idx})${suffix}`;
-  }
-  return `adc ${input.adc}  (unwired)${suffix}`;
+  return `${boardAdc}  unwired${suffix}`;
 }
 
-/** Inputs worth showing by default: those carrying an antenna, ordered by
- * antenna number. The rest (unwired or gated feeds) come after, by ADC, and
- * only when the operator asks for them. */
-export function orderInputs(inputs: SnapInputInfo[], showUnwired: boolean): SnapInputInfo[] {
-  const wired = inputs
-    .filter((i) => i.antenna !== null)
+/** The "input set" control's two choices (operator, 2026-09-08): the default
+ * beamforming set, or every ADC of the board regardless of wiring. */
+export type SnapInputSetMode = "beamforming" | "all";
+
+/** `beamforming`: only inputs included in the live beamforming set,
+ * ordered by antenna number. `all`: every ADC 0..11 of the board, wired or
+ * not, in ADC order (the unwired ones get the `S2 A7  unwired` title from
+ * `panelTitle` above, and an empty-axes panel — there is no spectrum for
+ * them). */
+export function orderInputs(inputs: SnapInputInfo[], mode: SnapInputSetMode): SnapInputInfo[] {
+  if (mode === "all") {
+    return [...inputs].sort((a, b) => a.adc - b.adc);
+  }
+  return inputs
+    .filter((i) => i.in_bf)
     .sort((a, b) => (a.antenna as number) - (b.antenna as number));
-  if (!showUnwired) return wired;
-  const rest = inputs.filter((i) => i.antenna === null).sort((a, b) => a.adc - b.adc);
-  return [...wired, ...rest];
 }
 
 function median(values: number[]): number {

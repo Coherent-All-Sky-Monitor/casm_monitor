@@ -29,7 +29,7 @@ export function formatDuration(seconds: number | null): string {
 }
 
 /** "2026-09-04-16:43:47" (the medusa UTC_START form) -> "2026-09-04 16:43". */
-function formatUtcStart(value: unknown): string | null {
+export function formatUtcStart(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const m = value.match(/^(\d{4}-\d{2}-\d{2})[-T ](\d{2}):(\d{2})/);
   return m ? `${m[1]} ${m[2]}:${m[3]}` : value;

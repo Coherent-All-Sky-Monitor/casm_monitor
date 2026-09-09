@@ -427,3 +427,94 @@ select {
 .events .kind-error {
   color: var(--alert);
 }
+
+/* --- generic plain panels (Visibilities / Search) ----------------------- */
+
+.panel-plain {
+  margin: 0;
+}
+
+.panel-plain__title {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.grid-2col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--panel-gap);
+}
+
+@media (max-width: 900px) {
+  .grid-2col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.legend-text {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 4px 0 0;
+}
+
+/* --- Visibilities: cross triangle --------------------------------------- */
+
+.cross-grid-wrap {
+  overflow-x: auto;
+  margin-bottom: var(--section-gap);
+}
+
+.cross-grid {
+  display: grid;
+  gap: 3px;
+  align-items: center;
+}
+
+.cross-grid__label {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
+  padding: 0 2px;
+}
+
+.cross-cell {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  display: block;
+  min-width: 46px;
+}
+
+.cross-cell__empty {
+  color: var(--faint);
+  font-size: 10px;
+  text-align: center;
+}
+
+/* --- Visibilities: band range picker ------------------------------------ */
+
+.band-range {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--muted);
+  margin-bottom: var(--panel-gap);
+}
+
+.band-range input {
+  width: 6em;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  padding: 0 0 2px;
+  color: var(--ink);
+}
+
+.band-range input:focus {
+  outline: none;
+  border-bottom-color: var(--signal);
+}

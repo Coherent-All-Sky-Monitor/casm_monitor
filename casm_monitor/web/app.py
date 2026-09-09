@@ -33,6 +33,8 @@ from ..util import iso, parse_iso
 from .snaps import build_router as build_snaps_router
 from .snapread import build_router as build_snapread_router
 from .status import build_status, collect_age_s
+from .vis import build_router as build_vis_router
+from .search import build_router as build_search_router
 
 log = logging.getLogger("casm_monitor.web")
 
@@ -126,6 +128,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # below is the only one ever mounted.
     app.include_router(build_snaps_router(settings, reader))
     app.include_router(build_snapread_router(reader, writer, settings))
+
+    # Visibilities tab (M2): the wired-input sub-matrix the vis collector caches
+    # (spectra, matrices, waterfalls, coherence). Read-only handle.
+    app.include_router(build_vis_router(settings, reader))
+    app.include_router(build_search_router(reader, settings))
 
     def status_payload() -> dict[str, Any]:
         return build_status(reader.latest_scalars(), settings.cadences)

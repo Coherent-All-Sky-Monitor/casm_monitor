@@ -9,6 +9,14 @@ import type {
   JobDetail,
   JobsResponse,
   ScalarsResponse,
+  SearchBeamMapResponse,
+  SearchFunnelResponse,
+  SearchHistField,
+  SearchHistResponse,
+  SearchRateResponse,
+  SearchScatterField,
+  SearchScatterResponse,
+  SearchSummaryResponse,
   SnapBoardReadResponse,
   SnapBoardsResponse,
   SnapHistoryResponse,
@@ -17,6 +25,17 @@ import type {
   SnapReadJobResponse,
   SnapTrendResponse,
   StatusResponse,
+  VisCoherenceResponse,
+  VisInputsResponse,
+  VisMatrixResponse,
+  VisPairs,
+  VisQuantity,
+  VisRef,
+  VisSet,
+  VisSpectraResponse,
+  VisTimesResponse,
+  VisUnits,
+  VisWaterfallResponse,
 } from "./types";
 
 export class ApiError extends Error {
@@ -206,6 +225,150 @@ export function getSnapTrend(query: SnapTrendQuery): Promise<SnapTrendResponse> 
   params.set("t0", query.t0);
   params.set("t1", query.t1);
   return request<SnapTrendResponse>(`/api/snaps/trend?${params.toString()}`);
+}
+
+// --- Visibilities (M2) --------------------------------------------------
+// See docs/api-vis.md for the full contract.
+
+export function getVisInputs(): Promise<VisInputsResponse> {
+  return request<VisInputsResponse>("/api/vis/inputs");
+}
+
+export function getVisTimes(t0: string, t1: string): Promise<VisTimesResponse> {
+  const params = new URLSearchParams({ t0, t1 });
+  return request<VisTimesResponse>(`/api/vis/times?${params.toString()}`);
+}
+
+export interface VisSpectraQuery {
+  ts: "latest" | number;
+  set: VisSet;
+  pairs: VisPairs;
+  quantity: VisQuantity;
+  units: VisUnits;
+  ref: VisRef;
+  nchan?: number;
+}
+
+export function getVisSpectra(query: VisSpectraQuery): Promise<VisSpectraResponse> {
+  const params = new URLSearchParams({
+    ts: String(query.ts),
+    set: query.set,
+    pairs: query.pairs,
+    quantity: query.quantity,
+    units: query.units,
+    ref: query.ref,
+  });
+  if (query.nchan !== undefined) params.set("nchan", String(query.nchan));
+  return request<VisSpectraResponse>(`/api/vis/spectra?${params.toString()}`);
+}
+
+export interface VisMatrixQuery {
+  ts: "latest" | number;
+  set: VisSet;
+  quantity: VisQuantity;
+  units: VisUnits;
+  fmin?: number;
+  fmax?: number;
+}
+
+export function getVisMatrix(query: VisMatrixQuery): Promise<VisMatrixResponse> {
+  const params = new URLSearchParams({
+    ts: String(query.ts),
+    set: query.set,
+    quantity: query.quantity,
+    units: query.units,
+  });
+  if (query.fmin !== undefined) params.set("fmin", String(query.fmin));
+  if (query.fmax !== undefined) params.set("fmax", String(query.fmax));
+  return request<VisMatrixResponse>(`/api/vis/matrix?${params.toString()}`);
+}
+
+export interface VisWaterfallQuery {
+  i: number;
+  j: number;
+  t0: string;
+  t1: string;
+  quantity: VisQuantity;
+  units: VisUnits;
+  ref: VisRef;
+  max_cells?: number;
+}
+
+export function getVisWaterfall(query: VisWaterfallQuery): Promise<VisWaterfallResponse> {
+  const params = new URLSearchParams({
+    i: String(query.i),
+    j: String(query.j),
+    t0: query.t0,
+    t1: query.t1,
+    quantity: query.quantity,
+    units: query.units,
+    ref: query.ref,
+  });
+  if (query.max_cells !== undefined) params.set("max_cells", String(query.max_cells));
+  return request<VisWaterfallResponse>(`/api/vis/waterfall?${params.toString()}`);
+}
+
+export function getVisCoherence(t0: string, t1: string, set: VisSet): Promise<VisCoherenceResponse> {
+  const params = new URLSearchParams({ t0, t1, set });
+  return request<VisCoherenceResponse>(`/api/vis/coherence?${params.toString()}`);
+}
+
+// --- Search (M2b) ---------------------------------------------------------
+// See docs/api-search.md for the full contract.
+
+export function getSearchSummary(t0: string, t1: string): Promise<SearchSummaryResponse> {
+  const params = new URLSearchParams({ t0, t1 });
+  return request<SearchSummaryResponse>(`/api/search/summary?${params.toString()}`);
+}
+
+export interface SearchHistQuery {
+  field: SearchHistField;
+  t0: string;
+  t1: string;
+  bins?: number;
+  log?: boolean;
+}
+
+export function getSearchHist(query: SearchHistQuery): Promise<SearchHistResponse> {
+  const params = new URLSearchParams({
+    field: query.field,
+    t0: query.t0,
+    t1: query.t1,
+    log: query.log ? "1" : "0",
+  });
+  if (query.bins !== undefined) params.set("bins", String(query.bins));
+  return request<SearchHistResponse>(`/api/search/hist?${params.toString()}`);
+}
+
+export interface SearchScatterQuery {
+  x: SearchScatterField;
+  y: SearchScatterField;
+  t0: string;
+  t1: string;
+  max_points?: number;
+}
+
+export function getSearchScatter(query: SearchScatterQuery): Promise<SearchScatterResponse> {
+  const params = new URLSearchParams({ x: query.x, y: query.y, t0: query.t0, t1: query.t1 });
+  if (query.max_points !== undefined) params.set("max_points", String(query.max_points));
+  return request<SearchScatterResponse>(`/api/search/scatter?${params.toString()}`);
+}
+
+export function getSearchBeamMap(t0: string, t1: string): Promise<SearchBeamMapResponse> {
+  const params = new URLSearchParams({ t0, t1 });
+  return request<SearchBeamMapResponse>(`/api/search/beam-map?${params.toString()}`);
+}
+
+export function getSearchRate(t0: string, t1: string, stepS?: number): Promise<SearchRateResponse> {
+  const params = new URLSearchParams({ t0, t1 });
+  if (stepS !== undefined) params.set("step_s", String(stepS));
+  return request<SearchRateResponse>(`/api/search/rate?${params.toString()}`);
+}
+
+export function getSearchFunnel(t0: string, t1: string, stepS?: number): Promise<SearchFunnelResponse> {
+  const params = new URLSearchParams({ t0, t1 });
+  if (stepS !== undefined) params.set("step_s", String(stepS));
+  return request<SearchFunnelResponse>(`/api/search/funnel?${params.toString()}`);
 }
 
 export function statusWebSocketUrl(): string {
