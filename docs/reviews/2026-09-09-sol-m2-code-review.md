@@ -1,0 +1,21 @@
+Verdict: **needs fixes**.
+
+Hard-rule audit: no direct violations found. Visibility reads use `casm_io`, remain file-bounded with a live guard band, preserve descending frequency order, use packet-index mapping and fringe sign `-1`; calibration conjugation/indexing is correct. T2 opens read-only, forbidden ports are untouched, corr2 receives at most one SSH call/tick, and routes are read-only with response/span clamps.
+
+Ranked findings:
+
+1. **P0 – Candidate loss on crash.** [collectors/search.py:862](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/collectors/search.py:862), [collectors/search.py:713](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/collectors/search.py:713): byte watermarks commit before candidate/bin inserts; failure afterward permanently skips rows. **Fix:** insert candidates/bins and advance each watermark in one transaction.
+
+2. **P0 – Corr2 partial-tail framing corrupts offsets/data.** [collectors/search.py:331](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/collectors/search.py:331), [collectors/search.py:367](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/collectors/search.py:367): when a payload lacks its final newline, the next marker is concatenated to it; normal tails are also not capped by `max_tick_bytes`. **Fix:** use explicit byte-length framing and cap every per-job payload remotely.
+
+3. **P1 – `vis_avg8` loses data across process restarts.** [collectors/vis.py:627](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/collectors/vis.py:627), [collectors/vis.py:654](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/collectors/vis.py:654), [collectors/vis.py:724](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/collectors/vis.py:724): the full watermark advances while up to seven averaged integrations exist only in RAM. **Fix:** persist each reduced integration or maintain a separate durable avg watermark/buffer.
+
+4. **P1 – Calibrated coherence is mathematically wrong.** [web/vis.py:598](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/web/vis.py:598), [web/vis.py:756](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/web/vis.py:756), [web/vis.py:837](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/web/vis.py:837): calibrated crosses are divided by gains, but denominators remain raw autos; ordinary `mean` also lets one flagged channel null an entire result. **Fix:** transform autos consistently and use valid-count/NaN-aware reductions.
+
+5. **P1 – Historical baselines can be wrong after wired-set changes.** [web/vis.py:447](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/web/vis.py:447): indices computed from the newest layout are applied to the first historical shard, whose input list may differ. **Fix:** validate against the requested layout before reading, or remap indices per shard.
+
+6. **P1 – Long coherence requests are effectively unbounded.** [web/vis.py:821](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/web/vis.py:821): a 90-day request materializes all baselines/channels before averaging—roughly 50 GB at 24 inputs. **Fix:** aggregate shard-by-shard under a strict sample/cell budget.
+
+7. **P2 – Avg8 frequencies are shifted.** [collectors/vis.py:739](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/collectors/vis.py:739): averaged values use block centers, but metadata retains the first native-channel frequency. **Fix:** store the mean frequency of the first eight-channel block.
+
+8. **P2 – Distribution sampling is biased.** [web/search.py:215](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/web/search.py:215), [web/search.py:340](/home/casm/software/dev/casm_monitor/.claude/worktrees/m0-scaffold/casm_monitor/web/search.py:340): histograms use the earliest two million rows and scatter uses deterministic stride, allowing temporal/job aliasing. **Fix:** use stratified/reservoir sampling or SQL/per-gulp aggregates.

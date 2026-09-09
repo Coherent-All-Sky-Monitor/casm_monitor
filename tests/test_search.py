@@ -44,6 +44,7 @@ from casm_monitor.collectors.search import (
 from casm_monitor.config import Settings
 from casm_monitor.store import ShardWriter, Store
 from casm_monitor.util import parse_iso, utc_start_to_unix
+from casm_monitor.web import search as search_web
 from casm_monitor.web.search import build_router, field_edges, step_and_bins, window
 
 OBS = "2026-09-04-16:42:39"
@@ -89,23 +90,36 @@ def write_file(settings: Settings, obs: str, job: int, text: str, *, mode: str =
 
 
 def fake_ssh(files: dict[int, Path], *, fail: bool = False):
-    """A stand-in for ssh: serves local files with the real marker protocol."""
+    """A stand-in for ssh: serves local files with the real byte-length protocol.
+
+    Reads the ``(job, offset)`` pairs off the inert ``: 'job:offset'`` tokens
+    ``corr2_command`` embeds in the real shell command (see its docstring) and
+    replays the same size/start/cap arithmetic the remote script performs, so
+    the fake exercises exactly what the parser (``split_job_blocks``) has to
+    handle: an exact byte count, never a marker search.
+    """
     calls: list[str] = []
 
     def runner(host: str, command: str, timeout: float):
         calls.append(command)
         if fail:
             return 255, b"", b"ssh: connect to host casm-corr2 port 22: No route to host"
+        cap_match = re.search(r'-gt (\d+) \]', command)
+        cap = int(cap_match.group(1)) if cap_match else 1 << 30
         out = bytearray()
-        for job_s, off_s in re.findall(r'"(\d+):(-?\d+)"', command):
+        for job_s, off_s in re.findall(r": '(\d+):(-?\d+)'", command):
             job, offset = int(job_s), int(off_s)
             path = files.get(job)
             if path is None or not path.is_file():
-                out += f"=== {job} -1\n".encode()
+                out += f"=== {job} -1 0\n".encode()
                 continue
             data = path.read_bytes()
-            out += f"=== {job} {len(data)}\n".encode()
-            out += data[-abs(offset):] if offset < 0 else data[offset:]
+            size = len(data)
+            start = max(0, size - abs(offset)) if offset < 0 else offset
+            avail = max(0, size - start)
+            send = min(avail, cap)
+            out += f"=== {job} {size} {send}\n".encode()
+            out += data[start : start + send]
         return 0, bytes(out), b""
 
     runner.calls = calls  # type: ignore[attr-defined]
@@ -178,10 +192,12 @@ def test_parse_chunk_drops_first_partial_line_on_backfill() -> None:
 
 
 def test_split_job_blocks_marker_protocol() -> None:
+    payload4 = row(16.0, 0, 3, 4, 50.0, 256).encode()
+    payload6 = row(20.0, 8192, 4, 5, 60.0, 400).encode()
     stream = (
-        b"=== 4 120\n" + row(16.0, 0, 3, 4, 50.0, 256).encode()
-        + b"=== 5 -1\n"
-        + b"=== 6 40\n" + row(20.0, 8192, 4, 5, 60.0, 400).encode()
+        f"=== 4 120 {len(payload4)}\n".encode() + payload4
+        + b"=== 5 -1 0\n"
+        + f"=== 6 40 {len(payload6)}\n".encode() + payload6
     )
     blocks = split_job_blocks(stream)
     assert set(blocks) == {4, 5, 6}
@@ -190,12 +206,40 @@ def test_split_job_blocks_marker_protocol() -> None:
     assert blocks[6][1].split()[6] == b"400"
 
 
+def test_split_job_blocks_byte_exact_never_scans_payload() -> None:
+    """A payload with no trailing newline and a marker-like line embedded in
+    candidate data must not corrupt the framing: the length in the marker is
+    authoritative, never a search for the next ``=== ``."""
+    tricky = b"16.0 0 0.000000 3 4 50.0 1\n=== 9 999 0\nno trailing newline here"
+    stream = f"=== 4 999 {len(tricky)}\n".encode() + tricky + b"=== 5 5 3\nabc"
+    blocks = split_job_blocks(stream)
+    assert blocks[4] == (999, tricky)
+    assert blocks[5] == (5, b"abc")
+
+
 def test_corr2_command_shape() -> None:
-    cmd = corr2_command("/mnt/nvme4/data/casm/hella_cands", OBS, {4: 100, 5: 0, 6: -16, 7: 12})
-    assert cmd.count("=== $j") == 2  # the size marker and the absent-file marker
-    assert '"4:100"' in cmd and '"6:-16"' in cmd
-    assert "tail -c +$((o+1))" in cmd and 'tail -c "${o#-}"' in cmd
+    cmd = corr2_command(
+        "/mnt/nvme4/data/casm/hella_cands", OBS, {4: 100, 5: 0, 6: -16, 7: 12}, 1 << 20
+    )
+    assert cmd.count("=== ") >= 8  # the absent-file marker plus the size marker, per job
+    assert ": '4:100'" in cmd and ": '6:-16'" in cmd
+    assert "tail -c +$((start+1))" in cmd and "head -c" in cmd
     assert f"cands_{OBS}.dat." in cmd
+    assert "1048576" in cmd  # the max_tick_bytes cap, embedded per job
+    # every remote path is quoted
+    assert shlex_quote_used(cmd)
+
+
+def shlex_quote_used(cmd: str) -> bool:
+    import shlex as _shlex
+
+    quoted = _shlex.quote(f"/mnt/nvme4/data/casm/hella_cands/cands_{OBS}.dat.4")
+    return quoted in cmd
+
+
+def test_corr2_command_rejects_unsafe_obs() -> None:
+    with pytest.raises(ValueError):
+        corr2_command("/mnt/nvme4/data/casm/hella_cands", "2026-09-04-16:42:39; rm -rf /", {4: 0}, 1024)
 
 
 # -- binning ---------------------------------------------------------------
@@ -305,6 +349,39 @@ def test_partial_last_line_is_completed_next_tick(settings, store, ctx) -> None:
     collector.collect(ctx)
     snrs = sorted(float(r["snr"]) for r in store.query("SELECT snr FROM cands"))
     assert snrs == [16.0, 17.5]
+
+
+def test_failing_insert_leaves_watermark_unchanged(settings, store, ctx) -> None:
+    """A candidate/bin insert failure must not advance the byte watermark
+    (review P0): the whole chunk commit is one transaction."""
+    write_file(settings, OBS, 0, HEADER + row(16.0, 100, 3, 4, 50.0, 1))
+    collector = make_collector(settings, fake_ssh({}))
+    # Fail the cand_bins write, which happens AFTER the cands insert inside the
+    # same transaction: if the commit is atomic, that earlier insert must be
+    # rolled back too, and the watermark (the last statement) must never run.
+    real_dumps = search_mod.json.dumps
+
+    def boom(obj, *a, **kw):
+        raise ValueError("boom (injected)")
+
+    search_mod.json.dumps = boom  # type: ignore[assignment]
+    try:
+        with pytest.raises(ValueError, match="boom"):
+            collector.collect(ctx)
+    finally:
+        search_mod.json.dumps = real_dumps  # type: ignore[assignment]
+
+    assert store.query("SELECT COUNT(*) AS n FROM cands")[0]["n"] == 0
+    assert store.query("SELECT COUNT(*) AS n FROM cand_bins")[0]["n"] == 0
+    assert store.get_watermark("search", "file.0") is None
+
+    # A clean retry (no fault injected) then ingests the same bytes exactly
+    # once -- nothing was skipped by the failed attempt.
+    collector.collect(ctx)
+    assert store.query("SELECT COUNT(*) AS n FROM cands")[0]["n"] == 1
+    assert store.get_watermark("search", "file.0")["offset"] == Path(
+        cands_path(settings.hella_cands_dir, OBS, 0)
+    ).stat().st_size
 
 
 def test_obs_rollover_resets_watermarks_and_emits_event(settings, store, ctx) -> None:
@@ -555,6 +632,94 @@ def test_scatter_subsamples(client: TestClient) -> None:
     assert capped["n_total"] == 200 and len(capped["x"]) == 20
     assert capped["x"][0] < capped["x"][-1]  # still time-ordered
     assert client.get("/api/search/scatter", params={"x": "nope"}).status_code == 400
+
+
+def test_hist_counts_are_exact_over_the_whole_window_not_a_capped_sample(
+    settings, store
+) -> None:
+    """The 2026-09-09 review bug: histograms used to read only the earliest
+    2M rows (``ORDER BY ts_unix ASC LIMIT``), biasing every histogram toward
+    the start of a busy window. Build a skewed distribution (all the high-SNR
+    rows LATE in the window) and check the SQL histogram counts them exactly,
+    matching a full in-Python histogram over every row, with nothing capped."""
+    search_mod.ensure_tables(store)
+    now = time.time()
+    n = 4000
+    rows = []
+    for i in range(n):
+        # Low SNR early, high SNR late: an earliest-N cap would undercount the
+        # high tail badly.
+        snr = 15.0 + 80.0 * (i / n)
+        rows.append((now - 3600.0 + i * 0.5, i % 8, "corr1", snr, 3, 50.0, 4, i % 512, i))
+    store.executemany(
+        "INSERT INTO cands (ts_unix, job, node, snr, width, dm, dm_idx, beam, samp) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    start, end = now - 3700.0, now
+    all_values = [r[3] for r in rows]
+    edges = field_edges("snr", all_values, 20, False)
+    expected = search_mod.histogram(all_values, edges)
+    got = search_web.hist_counts_sql(store, "snr", start, end, edges, False)
+    assert got == expected
+    assert sum(got) == n
+
+
+def test_hist_route_counts_every_row_at_storm_scale(settings) -> None:
+    store = Store(settings.db_path, store_root=settings.store_root)
+    search_mod.ensure_tables(store)
+    now = time.time()
+    n = 5000
+    rows = [
+        (now - 1800.0 + i * 0.1, i % 8, "corr1", 15.0 + 5.0 * (i % 20), i % 7, 20.0 + i % 500,
+         i % 30, i % 512, i)
+        for i in range(n)
+    ]
+    store.executemany(
+        "INSERT INTO cands (ts_unix, job, node, snr, width, dm, dm_idx, beam, samp) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    store.close()
+    reader = Store(settings.db_path, read_only=True, store_root=settings.store_root)
+    app = FastAPI()
+    app.include_router(build_router(reader, settings))
+    with TestClient(app) as client:
+        body = client.get(
+            "/api/search/hist", params={"field": "dm", "bins": 30, "t0": now - 1900.0, "t1": now}
+        ).json()
+    assert body["n_total"] == n
+    assert sum(body["counts"]) == body["n_used"] == n
+    reader.close()
+
+
+def test_balanced_allocation_is_proportional_and_exact() -> None:
+    alloc = search_web._balanced_allocation({0: 800, 1: 100, 2: 100}, 100)
+    assert sum(alloc.values()) == 100
+    assert alloc[0] > alloc[1] and alloc[0] > alloc[2]
+    # never allocate more than a job actually has
+    small = search_web._balanced_allocation({0: 3, 1: 3}, 100)
+    assert small == {0: 3, 1: 3}
+    assert search_web._balanced_allocation({}, 50) == {}
+
+
+def test_scatter_balances_across_jobs_at_scale(client: TestClient, monkeypatch) -> None:
+    """Force the storm-scale branch (200 rows, 25 per job, is already over a
+    lowered threshold) and check every job contributes roughly its share
+    instead of one job's rows crowding out the rest."""
+    monkeypatch.setattr(search_web, "SCATTER_RANDOM_MAX_ROWS", 10)
+    body = client.get(
+        "/api/search/scatter", params={"x": "time", "y": "beam", "max_points": 64}
+    ).json()
+    assert body["n_total"] == 200
+    assert len(body["x"]) <= 64
+    # Time-ordered even when built job-by-job and merged.
+    assert body["x"] == sorted(body["x"])
+    # 8 jobs contributed evenly (25 cands each): with 64 points requested and
+    # 200 total, each job's share is close to 64/8 = 8, never zero.
+    beams = body["y"]
+    jobs_represented = {int(b) // 64 for b in beams}
+    assert jobs_represented == set(range(8))
 
 
 def test_beam_map(client: TestClient) -> None:

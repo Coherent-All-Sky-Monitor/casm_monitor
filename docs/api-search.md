@@ -52,6 +52,11 @@ A histogram of raw (T1) candidates over the window.
   edges (meaningful for `snr`/`dm`, which span decades); the frontend passes
   `log=1` whenever the page's axis-scale control is set to `log`.
 - `bins` defaults to a reasonable server-side value (30-ish) if omitted.
+- `n_total`/`n_used` are exact counts over the WHOLE window (one SQL
+  `GROUP BY`, not a capped sample of rows read into Python), and always equal
+  each other: every candidate lands in exactly one bin (out-of-range values
+  clip into the first/last bin), so a storm gulp cannot bias the shape of the
+  histogram toward whichever rows happened to be read first.
 
 ## `GET /api/search/scatter?x=<field>&y=<field>&t0=<iso>&t1=<iso>&max_points=20000`
 
@@ -67,6 +72,13 @@ rate-style views).
   most `max_points` rows from the `n_total` candidates in the window (the
   frontend does not assume any particular sampling order — it plots as
   unconnected points only, alpha 0.4, never lines).
+- Sampling: every row is returned when `n_total <= max_points`; below 1e6
+  rows a uniform random sample is drawn in SQL (`ORDER BY random()`, one
+  pass); at or above 1e6 rows the budget is split proportionally across the
+  jobs present and each job is strided independently, so one job's storm
+  cannot crowd out the others' points. Either way the returned points are
+  re-sorted by time before being sent, so `x`/`y` are never in a surprising
+  order when `x=time`. `n_total` is always the exact row count.
 
 ## `GET /api/search/beam-map?t0=<iso>&t1=<iso>`
 

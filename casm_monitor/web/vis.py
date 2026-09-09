@@ -60,6 +60,11 @@ FULL_SPAN_S = 6 * 3600.0
 # Longest span any route will consider, so a bookmarked t0=0 cannot ask the
 # store for everything it has.
 MAX_SPAN_S = 90 * 86400.0
+# /api/vis/coherence accumulates vis_avg8 shard-by-shard rather than
+# materialising the window; 7 d bounds how many shards (and how long) one
+# request walks, rejected with a 400 rather than silently clamped (unlike
+# ``_span``) so a huge accidental window is visible to the caller.
+COHERENCE_MAX_SPAN_S = 7 * 86400.0
 MAX_TIMES = 50_000
 # How close a requested timestamp must be to a cached integration.
 TS_TOLERANCE_S = DT_S / 2.0
@@ -135,6 +140,28 @@ class Selection:
     @property
     def n_baselines(self) -> int:
         return len(self.pairs)
+
+    @property
+    def pair_ids(self) -> list[tuple[int, int]]:
+        """``pairs`` as real ``(packet_i, packet_j)`` identities, not ranks.
+
+        What :meth:`VisStore.series`/``coherence_accumulate`` need: a rank is
+        only meaningful within THIS selection's own ``inputs`` list, but a
+        historical shard may have a different (typically shorter) input list
+        and needs to resolve each requested baseline against its own ranks.
+        """
+        return [(self.inputs[a], self.inputs[b]) for a, b in self.pairs]
+
+
+@dataclass(frozen=True)
+class CoherenceAccum:
+    """Running shard-by-shard result of :meth:`VisStore.coherence_accumulate`."""
+
+    mean_v: np.ndarray  # complex128 (n_pairs,) -- time+freq mean of V_ij
+    mean_a: np.ndarray  # float64 (n_inputs,) -- time+freq mean of A_i
+    n_samples: int
+    n_channels: int
+    ref_meta: dict[str, Any]
 
 
 def select_baselines(
@@ -301,6 +328,31 @@ def apply_reference(
     }
 
 
+def scaled_autos(
+    autos: np.ndarray,
+    ref: str,
+    *,
+    settings: Settings,
+    inputs: Sequence[int],
+    freq_mhz: np.ndarray,
+) -> np.ndarray:
+    """Autocorrelation POWER under the same ``ref`` the crosses were given.
+
+    ``coh = |V_ij| / sqrt(A_i A_j)`` only makes sense when the numerator and
+    the denominator were calibrated the same way: ``ref=raw``/``sun`` never
+    touch a real, positive auto (a fringe stop is a phase rotation), but
+    ``ref=cal`` divides every cross by ``g_i conj(g_j)`` and must divide each
+    auto by ``|g_i|^2`` to match (2026-09-09 review). ``autos``' leading axis
+    is aligned to ``inputs``, in that order; NaN where the input has no cal.
+    """
+    if ref != "cal":
+        return autos
+    cal, _path = load_deployed_cal(settings)
+    gains, have = vis_ops.cal_gains_on_axis(cal, inputs, freq_mhz)
+    scale = vis_ops.cal_auto_power_scale(gains, have)
+    return np.asarray(autos, dtype=np.float64) * scale
+
+
 # -- shard access -------------------------------------------------------
 def response_flags(
     frame_flags: dict[str, Any] | None, ref_meta: dict[str, Any]
@@ -432,40 +484,69 @@ class VisStore:
         return out
 
     def series(
-        self, stream: str, t0: float, t1: float, flat: Sequence[int]
+        self, stream: str, t0: float, t1: float, pairs: Sequence[tuple[int, int]]
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int]]:
         """Stack one baseline set over time from ``stream``.
 
-        Returns ``(z (T, n_sel, F), times, freq_mhz, inputs)``; a shard whose
-        stored input list differs from the newest one is skipped rather than
-        stacked into a ragged array (the wired set grows as antennas are wired).
+        ``pairs`` is ``(packet_i, packet_j)`` -- REAL input identities, not
+        ranks into any one shard's own triangle -- so the flat triu index is
+        resolved separately for every shard against that shard's OWN stored
+        input list (``meta["inputs"]``). The wired set only grows, so an older
+        shard commonly carries fewer inputs than the newest one; a baseline
+        whose input(s) are simply absent from a given shard comes back NaN
+        for exactly that shard's time steps, and the shard's OTHER baselines
+        and time steps are still stacked in (2026-09-09 review: a shard used
+        to be skipped outright the moment its input list did not match the
+        first one seen, silently dropping history for every baseline the
+        moment one antenna was added).
+
+        Returns ``(z (T, n_sel, F), times, freq_mhz, inputs)``; ``inputs`` is
+        the input list of the first shard actually used (informational only).
         """
+        from casm_io.correlator.baselines import triu_flat_index
+
         chunks: list[np.ndarray] = []
         stamps: list[float] = []
         freq: np.ndarray | None = None
         inputs: list[int] = []
+        n_sel = len(pairs)
         for shard in self.shards.list(stream, t0=t0, t1=t1):
             meta = shard["meta"] or {}
             shard_inputs = [int(i) for i in (meta.get("inputs") or [])]
-            if inputs and shard_inputs != inputs:
+            if not shard_inputs:
                 continue
             times = np.asarray(_shard_meta_times(shard), dtype=np.float64)
             keep_any = ((times >= t0) & (times <= t1)).any()
             if not keep_any:
                 continue
+            rank_of = {p: k for k, p in enumerate(shard_inputs)}
+            n_shard = len(shard_inputs)
+            flat: list[int] = []
+            missing: list[int] = []
+            for k, (pi, pj) in enumerate(pairs):
+                ri, rj = rank_of.get(int(pi)), rank_of.get(int(pj))
+                if ri is None or rj is None:
+                    flat.append(0)
+                    missing.append(k)
+                else:
+                    a, b = (ri, rj) if ri <= rj else (rj, ri)
+                    flat.append(triu_flat_index(n_shard, a, b))
             cube = load_baseline_rows(shard, flat)
             if times.size != cube.shape[0]:
                 times = np.linspace(shard["t0"], shard["t1"], cube.shape[0])
             keep = (times >= t0) & (times <= t1)
             if not keep.any():
                 continue
+            cube = np.array(cube[keep], dtype=np.complex64)
+            if missing:
+                cube[:, missing, :] = np.nan
             inputs = inputs or shard_inputs
             freq = freq if freq is not None else freq_axis(meta, cube.shape[-1])
-            chunks.append(np.asarray(cube[keep], dtype=np.complex64))
+            chunks.append(cube)
             stamps.extend(float(v) for v in times[keep])
         if not chunks:
             return (
-                np.zeros((0, len(flat), 0), dtype=np.complex64),
+                np.zeros((0, n_sel, 0), dtype=np.complex64),
                 np.zeros(0),
                 np.zeros(0),
                 [],
@@ -474,6 +555,117 @@ class VisStore:
         stamp_arr = np.asarray(stamps, dtype=np.float64)
         order = np.argsort(stamp_arr)
         return z[order], stamp_arr[order], np.asarray(freq), inputs
+
+    # -- coherence: shard-by-shard accumulation -----------------------
+    def coherence_accumulate(
+        self,
+        stream: str,
+        t0: float,
+        t1: float,
+        selection: Selection,
+        *,
+        ref: str,
+        settings: Settings,
+    ) -> "CoherenceAccum":
+        """``sum V_ij``, ``sum A_i`` over the whole band, ONE shard at a time.
+
+        Never concatenates the window into one cube (a 7 d span at 24 inputs
+        is tens of GB): each shard is loaded, reduced to a running complex sum
+        + valid-sample count per baseline (and per input for the autos), and
+        then dropped, so peak memory is one shard's selected rows, not the
+        window (2026-09-09 review).
+        """
+        from casm_io.correlator.baselines import triu_flat_index
+
+        n_pairs = selection.n_baselines
+        n_inputs = len(selection.inputs)
+        sum_v = np.zeros(n_pairs, dtype=np.complex128)
+        cnt_v = np.zeros(n_pairs, dtype=np.int64)
+        sum_a = np.zeros(n_inputs, dtype=np.float64)
+        cnt_a = np.zeros(n_inputs, dtype=np.int64)
+        n_samples = 0
+        n_channels = 0
+        ref_meta: dict[str, Any] = {"ref": ref}
+        for shard in self.shards.list(stream, t0=t0, t1=t1):
+            meta = shard["meta"] or {}
+            shard_inputs = [int(i) for i in (meta.get("inputs") or [])]
+            if not shard_inputs:
+                continue
+            times = np.asarray(_shard_meta_times(shard), dtype=np.float64)
+            keep = (times >= t0) & (times <= t1)
+            if not keep.any():
+                continue
+            rank_of = {p: k for k, p in enumerate(shard_inputs)}
+            n_shard = len(shard_inputs)
+
+            pair_flat: list[int] = []
+            pair_ok: list[bool] = []
+            for a, b in selection.pairs:
+                ra = rank_of.get(selection.inputs[a])
+                rb = rank_of.get(selection.inputs[b])
+                if ra is None or rb is None:
+                    pair_flat.append(0)
+                    pair_ok.append(False)
+                else:
+                    lo_r, hi_r = (ra, rb) if ra <= rb else (rb, ra)
+                    pair_flat.append(triu_flat_index(n_shard, lo_r, hi_r))
+                    pair_ok.append(True)
+            auto_flat: list[int] = []
+            auto_ok: list[bool] = []
+            for p in selection.inputs:
+                rp = rank_of.get(p)
+                if rp is None:
+                    auto_flat.append(0)
+                    auto_ok.append(False)
+                else:
+                    auto_flat.append(triu_flat_index(n_shard, rp, rp))
+                    auto_ok.append(True)
+
+            cross_cube = load_baseline_rows(shard, pair_flat)
+            auto_cube = load_baseline_rows(shard, auto_flat)
+            if times.size != cross_cube.shape[0]:
+                times = np.linspace(shard["t0"], shard["t1"], cross_cube.shape[0])
+                keep = (times >= t0) & (times <= t1)
+                if not keep.any():
+                    continue
+            cross_cube = np.asarray(cross_cube[keep], dtype=np.complex64)
+            auto_cube = np.asarray(auto_cube[keep], dtype=np.complex64)
+            t_local = times[keep]
+            freq = freq_axis(meta, cross_cube.shape[-1])
+            n_channels = cross_cube.shape[-1]
+
+            v, chunk_meta = apply_reference(
+                cross_cube, ref, settings=settings, selection=selection,
+                freq_mhz=freq, times_unix=t_local,
+            )
+            ref_meta = chunk_meta
+            auto_power = scaled_autos(
+                np.abs(auto_cube).astype(np.float64), ref,
+                settings=settings, inputs=selection.inputs, freq_mhz=freq,
+            )
+
+            for k, ok in enumerate(pair_ok):
+                if not ok:
+                    continue
+                vals = v[:, k, :]
+                good = np.isfinite(vals.real) & np.isfinite(vals.imag)
+                sum_v[k] += complex(np.sum(np.where(good, vals, 0)))
+                cnt_v[k] += int(good.sum())
+            for a in range(n_inputs):
+                if not auto_ok[a]:
+                    continue
+                vals = auto_power[:, a, :]
+                good = np.isfinite(vals)
+                sum_a[a] += float(np.sum(np.where(good, vals, 0.0)))
+                cnt_a[a] += int(good.sum())
+            n_samples += int(t_local.size)
+
+        mean_v = np.where(cnt_v > 0, sum_v / np.maximum(cnt_v, 1), np.nan + 0j)
+        mean_a = np.where(cnt_a > 0, sum_a / np.maximum(cnt_a, 1), np.nan)
+        return CoherenceAccum(
+            mean_v=mean_v, mean_a=mean_a, n_samples=n_samples,
+            n_channels=n_channels, ref_meta=ref_meta,
+        )
 
 
 # -- router -------------------------------------------------------------
@@ -598,6 +790,9 @@ def build_router(settings: Settings, reader: Store) -> APIRouter:
         auto_i = auto_j = None
         if q == "coh":
             autos = np.abs(np.asarray(frame["vis"])[selection.auto_flat])
+            autos = scaled_autos(
+                autos, r, settings=settings, inputs=selection.inputs, freq_mhz=freq
+            )
             auto_i = np.stack([autos[a] for a, _ in selection.pairs])
             auto_j = np.stack([autos[b] for _, b in selection.pairs])
         started = time.time()
@@ -672,6 +867,9 @@ def build_router(settings: Settings, reader: Store) -> APIRouter:
         auto_i = auto_j = None
         if q == "coh":
             autos = np.abs(np.asarray(frame["vis"])[selection.auto_flat][:, mask])
+            autos = scaled_autos(
+                autos, r, settings=settings, inputs=selection.inputs, freq_mhz=freq[mask]
+            )
             auto_i = np.stack([autos[a] for a, _ in selection.pairs])
             auto_j = np.stack([autos[b] for _, b in selection.pairs])
         started = time.time()
@@ -732,10 +930,10 @@ def build_router(settings: Settings, reader: Store) -> APIRouter:
         # middle of the three combinations ((lo,lo), (lo,hi), (hi,hi)).
         cross = [k for k, (a, b) in enumerate(selection.pairs) if a != b]
         want = cross[0] if cross else 0
-        z, times, freq, _inputs = data.series(stream, start, end, selection.flat)
+        z, times, freq, _inputs = data.series(stream, start, end, selection.pair_ids)
         if z.shape[0] == 0 and stream == STREAM_FULL:
             stream = STREAM_AVG8
-            z, times, freq, _inputs = data.series(stream, start, end, selection.flat)
+            z, times, freq, _inputs = data.series(stream, start, end, selection.pair_ids)
         if z.shape[0] == 0:
             return {
                 "i": lo, "j": hi, "ant_i": antenna_of(lo), "ant_j": antenna_of(hi),
@@ -754,12 +952,24 @@ def build_router(settings: Settings, reader: Store) -> APIRouter:
             power = vis_ops.decimate_axes(np.abs(picked) ** 2, target_t, target_f)
             values = vis_ops.apply_units(np.sqrt(np.maximum(power, 0.0)), q, u)
         elif q == "coh":
-            auto_i = vis_ops.decimate_axes(
-                np.abs(z[:, selection.pairs.index((0, 0)), :]), target_t, target_f
-            )
             last = len(selection.inputs) - 1
+            # scaled_autos wants a (n_inputs, F) power array; a waterfall only
+            # ever selects two inputs (rank 0 = lo, rank ``last`` = hi), so a
+            # ones-array stand-in just becomes the per-input |g|^2 scale.
+            auto_scale = scaled_autos(
+                np.ones((len(selection.inputs), freq.size)),
+                r,
+                settings=settings,
+                inputs=selection.inputs,
+                freq_mhz=freq,
+            )
+            auto_i = vis_ops.decimate_axes(
+                np.abs(z[:, selection.pairs.index((0, 0)), :]) * auto_scale[0],
+                target_t, target_f,
+            )
             auto_j = vis_ops.decimate_axes(
-                np.abs(z[:, selection.pairs.index((last, last)), :]), target_t, target_f
+                np.abs(z[:, selection.pairs.index((last, last)), :]) * auto_scale[last],
+                target_t, target_f,
             )
             v_avg = vis_ops.decimate_axes(picked, target_t, target_f)
             values = vis_ops.apply_units(
@@ -812,38 +1022,41 @@ def build_router(settings: Settings, reader: Store) -> APIRouter:
                 start, end = start - 86400.0, end - 86400.0
         else:
             start, end = _span(t0, t1, 3 * 3600.0)
+        if end - start > COHERENCE_MAX_SPAN_S:
+            raise HTTPException(
+                status_code=400,
+                detail=f"coherence span is at most {COHERENCE_MAX_SPAN_S / 86400.0:.0f} d "
+                "(it accumulates vis_avg8, not the full-resolution stream)",
+            )
         newest = data.latest()
         if newest is None:
             raise HTTPException(status_code=404, detail="nothing cached yet")
         selection = select_baselines(
             [int(x) for x in newest["inputs"]], subset_for(set, newest["inputs"]), "all"
         )
-        z, times, freq, _inputs = data.series(STREAM_AVG8, start, end, selection.flat)
-        if z.shape[0] == 0:
-            z, times, freq, _inputs = data.series(STREAM_FULL, start, end, selection.flat)
         n = len(selection.inputs)
-        if z.shape[0] == 0:
+        # Shard-by-shard: sum V_ij, A_i, A_j over the whole band as each shard
+        # is loaded and dropped, so a multi-day window never materialises more
+        # than one shard's worth of baselines in memory at a time.
+        accum = data.coherence_accumulate(
+            STREAM_AVG8, start, end, selection, ref=r, settings=settings
+        )
+        if accum.n_samples == 0:
+            accum = data.coherence_accumulate(
+                STREAM_FULL, start, end, selection, ref=r, settings=settings
+            )
+        if accum.n_samples == 0:
             return {
                 "t0": start, "t1": end, "t0_iso": iso(start), "t1_iso": iso(end),
                 "set": set, "ref": r, "inputs": selection.inputs,
                 "antennas": [antenna_of(p) for p in selection.inputs],
                 "m": [[None] * n for _ in range(n)], "n_samples": 0,
             }
-        v, ref_meta = apply_reference(
-            z, r, settings=settings, selection=selection, freq_mhz=freq, times_unix=times
-        )
-        # Coherent average over time AND frequency (the vector mean is the
-        # point: an uncalibrated fringe averages away); A_i = |V_ii|.
-        mean_v = v.mean(axis=(0, 2))
-        autos = np.abs(z).astype(np.float64)
-        auto_mean = np.zeros(n, dtype=np.float64)
-        for a in range(n):
-            auto_mean[a] = autos[:, selection.pairs.index((a, a)), :].mean()
         m = np.full((n, n), np.nan, dtype=np.float64)
         for k, (a, b) in enumerate(selection.pairs):
             value = float(
                 vis_ops.quantity_values(
-                    mean_v[k], "coh", auto_i=auto_mean[a], auto_j=auto_mean[b]
+                    accum.mean_v[k], "coh", auto_i=accum.mean_a[a], auto_j=accum.mean_a[b]
                 )
             )
             m[a, b] = m[b, a] = value
@@ -854,12 +1067,12 @@ def build_router(settings: Settings, reader: Store) -> APIRouter:
             "t1_iso": iso(end),
             "set": set,
             "ref": r,
-            "ref_meta": ref_meta,
+            "ref_meta": accum.ref_meta,
             "inputs": selection.inputs,
             "antennas": [antenna_of(p) for p in selection.inputs],
             "m": [_round(row, 5) for row in m],
-            "n_samples": int(z.shape[0]),
-            "n_channels": int(z.shape[2]),
+            "n_samples": accum.n_samples,
+            "n_channels": accum.n_channels,
             "chan_avg": CHAN_AVG,
         }
 

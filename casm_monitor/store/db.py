@@ -18,8 +18,9 @@ import socket
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
 from .schema import SCHEMA, SCHEMA_VERSION
 
@@ -117,6 +118,29 @@ class Store:
             self._conn.executemany(sql, payload)
             self._conn.commit()
         return len(payload)
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """One ``BEGIN IMMEDIATE`` transaction spanning several statements.
+
+        Yields the raw connection (already holding ``self._lock``, which is
+        not reentrant, so the body must call ``conn.execute``/``executemany``
+        directly rather than going back through ``Store.execute`` et al.).
+        Commits on a clean exit, rolls back and re-raises on any exception --
+        the caller's writes (e.g. candidate rows, a binned histogram upsert
+        and the byte watermark that made them possible) either all land or
+        none do, so a failure never leaves the watermark ahead of what is
+        actually stored.
+        """
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._conn
+            except Exception:
+                self._conn.rollback()
+                raise
+            else:
+                self._conn.commit()
 
     # -- scalars --------------------------------------------------------
     def put_scalar(

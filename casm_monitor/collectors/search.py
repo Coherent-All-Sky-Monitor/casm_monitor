@@ -74,6 +74,7 @@ import json
 import math
 import os
 import re
+import shlex
 import sqlite3
 import subprocess
 import time
@@ -103,6 +104,9 @@ WIDTH_INDEX_MAX = 8
 
 MARKER = b"=== "
 _NAME_RE = re.compile(r"^cands_(?P<obs>[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9:]{8})\.dat\.(?P<job>\d+)$")
+# The obs string is interpolated into a remote shell command (corr2_command);
+# this is the one gate that keeps it a harmless filename fragment.
+OBS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}:\d{2}:\d{2}$")
 
 WATERMARK_STREAM = "search"
 OBS_KEY = "obs"
@@ -320,55 +324,79 @@ def find_current_obs(cands_dir: Path | str, jobs: Sequence[int] = JOBS_CORR1) ->
 def split_job_blocks(data: bytes) -> dict[int, tuple[int, bytes]]:
     """Split the corr2 stream into ``{job: (size, payload)}``.
 
-    The stream is ``=== <job> <size>\\n`` marker lines followed by that job's
-    new bytes. Splitting on the marker (never on a token inside the data) is the
-    same rule as the hella cfg reader: candidate rows start with a digit, so a
-    line beginning ``=== `` is unambiguous. A ``size`` of -1 means the file did
-    not exist on the remote node.
+    Explicit byte-length framing: each marker line is ``=== <job> <size>
+    <nbytes>\\n`` and is followed by EXACTLY ``nbytes`` raw bytes, whatever they
+    contain. The next marker starts immediately after those bytes, so parsing
+    slices by the declared length and never searches the payload for the next
+    ``=== `` -- a candidate row that happens to start with those four
+    characters, or a payload with no trailing newline, cannot merge into the
+    next job's block or corrupt its offset. A ``size`` of -1 means the file did
+    not exist on the remote node (``nbytes`` is then 0).
     """
-    blocks: dict[int, tuple[int, list[bytes]]] = {}
-    current: int | None = None
-    for line in data.splitlines(keepends=True):
-        if line.startswith(MARKER):
-            parts = line[len(MARKER) :].split()
-            if len(parts) < 2:
-                current = None
-                continue
-            try:
-                job, size = int(parts[0]), int(parts[1])
-            except ValueError:
-                current = None
-                continue
-            current = job
-            blocks[job] = (size, [])
-            continue
-        if current is None or current not in blocks:
-            continue
-        blocks[current][1].append(line)
-    return {job: (size, b"".join(chunks)) for job, (size, chunks) in blocks.items()}
+    blocks: dict[int, tuple[int, bytes]] = {}
+    pos = 0
+    n = len(data)
+    while pos < n:
+        eol = data.find(b"\n", pos)
+        if eol < 0:
+            break  # a truncated marker line: nothing more to parse safely
+        line = data[pos:eol]
+        pos = eol + 1
+        if not line.startswith(MARKER):
+            break  # protocol desync: stop rather than guess
+        parts = line[len(MARKER):].split()
+        if len(parts) < 3:
+            break
+        try:
+            job, size, nbytes = int(parts[0]), int(parts[1]), int(parts[2])
+        except ValueError:
+            break
+        if nbytes < 0 or pos + nbytes > n:
+            break  # short read (ssh cut off mid-stream): drop the partial tail
+        blocks[job] = (size, data[pos : pos + nbytes])
+        pos += nbytes
+    return blocks
 
 
-def corr2_command(cands_dir: Path | str, obs: str, offsets: dict[int, int]) -> str:
+def corr2_command(
+    cands_dir: Path | str, obs: str, offsets: dict[int, int], max_tick_bytes: int
+) -> str:
     """The single shell command sent to corr2.
 
-    One ssh per tick for all four jobs; each job is tailed from ``tail -c
-    +<offset+1>`` so only bytes we have never seen cross the wire, and its
-    current size is echoed in the marker so a truncation or a rollover is
-    detected without a second round trip.
+    One ssh per tick for all four jobs. Every job's payload is capped remotely
+    at ``max_tick_bytes`` -- normal tails as well as backfill -- so neither a
+    storm gulp nor a first-start backfill can ship more than that over the
+    wire; whatever is left is picked up on the following ticks because the
+    byte watermark only advances by what was actually consumed. Each job's
+    remote path is ``shlex.quote``-d, and ``obs`` is validated by the caller
+    before it ever reaches this function.
 
-    A NEGATIVE offset means "the last ``|offset|`` bytes" (``tail -c N``): that
-    is the first-start backfill, where we do not know the remote size yet and
-    still want the payload bounded. The reply's first line is then partial and
-    the caller drops it (``size - len(payload) > 0``).
+    A NEGATIVE offset means "the last ``|offset|`` bytes counted back from the
+    CURRENT size" (the first-start backfill, where the local watermark does
+    not know the remote size yet); the actual starting offset is computed
+    remotely from the freshly stat-ed size and reported back in the ``size``
+    field of the marker so the caller can derive it (``size - len(payload)``
+    when the payload was not truncated by the cap).
     """
-    pairs = " ".join(f'"{job}:{int(offsets.get(job, 0))}"' for job in sorted(offsets))
-    prefix = f"{Path(cands_dir)}/cands_{obs}.dat."
-    return (
-        f"for jo in {pairs}; do j=${{jo%%:*}}; o=${{jo#*:}}; f={prefix}$j; "
-        'if [ ! -f "$f" ]; then echo "=== $j -1"; continue; fi; '
-        'echo "=== $j $(stat -c %s "$f")"; '
-        'if [ "$o" -lt 0 ]; then tail -c "${o#-}" "$f"; else tail -c +$((o+1)) "$f"; fi; done'
-    )
+    if not OBS_RE.match(str(obs)):
+        raise ValueError(f"unsafe obs string for a remote command: {obs!r}")
+    cap = max(0, int(max_tick_bytes))
+    stmts: list[str] = []
+    for job in sorted(offsets):
+        offset = int(offsets[job])
+        path = shlex.quote(cands_path(cands_dir, obs, job))
+        start_expr = f"sz - {abs(offset)}" if offset < 0 else str(offset)
+        stmts.append(
+            f'if [ ! -f {path} ]; then echo "=== {job} -1 0"; else '
+            f": '{job}:{offset}'; "  # no-op, keeps the (job, offset) pair greppable
+            f"sz=$(stat -c %s {path}); "
+            f"start=$(( {start_expr} )); [ \"$start\" -lt 0 ] && start=0; "
+            f"avail=$((sz - start)); [ \"$avail\" -lt 0 ] && avail=0; "
+            f'send=$avail; [ "$send" -gt {cap} ] && send={cap}; '
+            f'echo "=== {job} $sz $send"; '
+            f'tail -c +$((start+1)) {path} | head -c "$send"; fi'
+        )
+    return "; ".join(stmts)
 
 
 @dataclass(frozen=True)
@@ -695,10 +723,12 @@ class SearchCollector(Collector):
                 )
         ctx.scalar("search.obs", obs)
 
-        cands: list[Cand] = []
-        cands.extend(self._read_corr1(ctx, obs, utc_start_unix))
+        # Each job's candidates/bins are inserted and its byte watermark
+        # advanced together, one transaction per chunk (see ``_commit_chunk``):
+        # nothing here needs a further store write once these return.
+        self._read_corr1(ctx, obs, utc_start_unix)
         self._corr2_detail = {}
-        corr2_ok = self._read_corr2(ctx, obs, utc_start_unix, cands)
+        corr2_ok = self._read_corr2(ctx, obs, utc_start_unix)
         # One event per transition, in both directions (the strip needs to see
         # corr2 come back, not only go away).
         ctx.on_change(
@@ -710,9 +740,6 @@ class SearchCollector(Collector):
             detail=self._corr2_detail,
         )
 
-        if cands:
-            self._store_cands(ctx, cands, utc_start_unix)
-
         self._mirror_gulp_stats(ctx)
         self._rate_scalars(ctx, now)
         if now - self._last_retention >= cfg.retention_interval_s:
@@ -720,9 +747,8 @@ class SearchCollector(Collector):
             self._last_retention = now
 
     # -- corr1 (local files) -------------------------------------------
-    def _read_corr1(self, ctx: CollectorContext, obs: str, utc_start_unix: float) -> list[Cand]:
+    def _read_corr1(self, ctx: CollectorContext, obs: str, utc_start_unix: float) -> None:
         cfg = self.config
-        out: list[Cand] = []
         for job in JOBS_CORR1:
             path = Path(cands_path(cfg.cands_dir, obs, job))
             try:
@@ -752,19 +778,16 @@ class SearchCollector(Collector):
                     detail={"job": job, "error": str(exc)},
                 )
                 continue
-            out.extend(
-                self._ingest_chunk(
-                    ctx,
-                    chunk,
-                    job=job,
-                    node="corr1",
-                    obs=obs,
-                    offset=offset,
-                    utc_start_unix=utc_start_unix,
-                    backfill=backfill,
-                )
+            self._ingest_chunk(
+                ctx,
+                chunk,
+                job=job,
+                node="corr1",
+                obs=obs,
+                offset=offset,
+                utc_start_unix=utc_start_unix,
+                backfill=backfill,
             )
-        return out
 
     # -- corr2 (one ssh) -----------------------------------------------
     def _read_corr2(
@@ -772,7 +795,6 @@ class SearchCollector(Collector):
         ctx: CollectorContext,
         obs: str,
         utc_start_unix: float,
-        sink: list[Cand],
     ) -> bool:
         cfg = self.config
         offsets: dict[int, int] = {}
@@ -787,7 +809,7 @@ class SearchCollector(Collector):
                 offsets[job] = -max(1, cfg.max_backfill_bytes)
             else:
                 offsets[job] = offset
-        command = corr2_command(cfg.cands_dir, obs, offsets)
+        command = corr2_command(cfg.cands_dir, obs, offsets, cfg.max_tick_bytes)
         rc, stdout, stderr = self._ssh(cfg.corr2_ssh, command, cfg.ssh_timeout_s)
         ctx.scalar("search.corr2_bytes_per_tick", len(stdout))
         if rc != 0:
@@ -806,26 +828,27 @@ class SearchCollector(Collector):
             if size < 0:
                 continue  # file absent on corr2 (obs not started there yet)
             if job in backfilling:
-                # Where the reply actually started: the tail we asked for was
-                # capped, so this is size minus what came back.
-                offset = max(0, size - len(payload))
+                # Where the reply actually started: recomputed the same way
+                # corr2_command's remote arithmetic does (from ``size`` and the
+                # requested backfill depth), NEVER from ``len(payload)`` -- a
+                # payload capped by ``max_tick_bytes`` is shorter than
+                # ``size - start`` and would otherwise derive the wrong offset.
+                offset = max(0, size - abs(offsets[job]))
             else:
                 offset = max(0, offsets.get(job, 0))
                 if size < offset:
                     self._on_truncated(ctx, job, "corr2", offset, size)
                     self._set_offset(ctx.store, job, obs, max(0, size - cfg.max_tick_bytes))
                     continue
-            sink.extend(
-                self._ingest_chunk(
-                    ctx,
-                    payload,
-                    job=job,
-                    node="corr2",
-                    obs=obs,
-                    offset=offset,
-                    utc_start_unix=utc_start_unix,
-                    backfill=job in backfilling,
-                )
+            self._ingest_chunk(
+                ctx,
+                payload,
+                job=job,
+                node="corr2",
+                obs=obs,
+                offset=offset,
+                utc_start_unix=utc_start_unix,
+                backfill=job in backfilling,
             )
         return True
 
@@ -850,8 +873,10 @@ class SearchCollector(Collector):
         offset: int,
         utc_start_unix: float,
         backfill: bool,
-    ) -> list[Cand]:
-        """Parse one chunk, advance the watermark by the consumed bytes only."""
+    ) -> None:
+        """Parse one chunk and commit it -- rows, bins and the byte watermark
+        it took to produce them -- as one transaction (see ``_commit_chunk``).
+        """
         cands, consumed, n_bad = parse_chunk(
             chunk,
             job=job,
@@ -859,63 +884,87 @@ class SearchCollector(Collector):
             utc_start_unix=utc_start_unix,
             drop_first_partial=backfill and offset > 0,
         )
-        self._set_offset(ctx.store, job, obs, offset + consumed)
         if backfill and self.config.backfill_hours > 0:
             floor = time.time() - self.config.backfill_hours * 3600.0
             cands = [c for c in cands if c.ts_unix >= floor]
         if n_bad:
             ctx.scalar("search.bad_lines", n_bad, tags={"job": job, "node": node})
-        return cands
+        self._commit_chunk(ctx, obs, job, offset + consumed, cands, utc_start_unix)
 
     # -- writes --------------------------------------------------------
-    def _store_cands(
-        self, ctx: CollectorContext, cands: Sequence[Cand], utc_start_unix: float
+    def _commit_chunk(
+        self,
+        ctx: CollectorContext,
+        obs: str,
+        job: int,
+        new_offset: int,
+        cands: Sequence[Cand],
+        utc_start_unix: float,
     ) -> None:
-        ctx.store.executemany(
-            "INSERT INTO cands (ts_unix, job, node, snr, width, dm, dm_idx, beam, samp) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [c.row() for c in cands],
-        )
-        for (bin_ts, job), fresh in sorted(bin_cands(cands, utc_start_unix).items()):
-            existing = ctx.store.query(
-                "SELECT n, snr_hist, dm_hist, width_hist, beam_counts, snr_max, dm_at_snr_max "
-                "FROM cand_bins WHERE gulp_ts = ? AND job = ?",
-                (bin_ts, job),
-            )
-            if existing:
-                # A gulp's rows can arrive over more than one tick (hella
-                # flushes in blocks and the last line of a tick is partial), so
-                # a bin is merged into, never overwritten.
-                row = existing[0]
-                merged = Bin(
-                    n=int(row["n"]),
-                    snr_hist=json.loads(row["snr_hist"]),
-                    dm_hist=json.loads(row["dm_hist"]),
-                    width_hist=json.loads(row["width_hist"]),
-                    beam_counts=json.loads(row["beam_counts"]),
-                    snr_max=row["snr_max"],
-                    dm_at_snr_max=row["dm_at_snr_max"],
+        """Insert ``cands``, merge their bins and advance this job's byte
+        watermark to ``new_offset`` in ONE transaction.
+
+        A failure partway through (a bad row, a full disk) rolls the whole
+        thing back, including the watermark: the next tick re-reads and
+        re-parses the same bytes rather than skipping candidates a half-failed
+        write never actually stored (P0 in the 2026-09-09 review).
+        """
+        bins = bin_cands(cands, utc_start_unix)
+        with ctx.store.transaction() as conn:
+            if cands:
+                conn.executemany(
+                    "INSERT INTO cands (ts_unix, job, node, snr, width, dm, dm_idx, beam, samp) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [c.row() for c in cands],
                 )
-                merged.merge(fresh)
-            else:
-                merged = fresh
-            ctx.store.execute(
-                "INSERT INTO cand_bins (gulp_ts, job, n, snr_hist, dm_hist, width_hist, "
-                "beam_counts, snr_max, dm_at_snr_max) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(gulp_ts, job) DO UPDATE SET n = excluded.n, "
-                "snr_hist = excluded.snr_hist, dm_hist = excluded.dm_hist, "
-                "width_hist = excluded.width_hist, beam_counts = excluded.beam_counts, "
-                "snr_max = excluded.snr_max, dm_at_snr_max = excluded.dm_at_snr_max",
+            for (bin_ts, bin_job), fresh in sorted(bins.items()):
+                existing = conn.execute(
+                    "SELECT n, snr_hist, dm_hist, width_hist, beam_counts, snr_max, dm_at_snr_max "
+                    "FROM cand_bins WHERE gulp_ts = ? AND job = ?",
+                    (bin_ts, bin_job),
+                ).fetchone()
+                if existing is not None:
+                    # A gulp's rows can arrive over more than one tick (hella
+                    # flushes in blocks and the last line of a tick is
+                    # partial), so a bin is merged into, never overwritten.
+                    merged = Bin(
+                        n=int(existing["n"]),
+                        snr_hist=json.loads(existing["snr_hist"]),
+                        dm_hist=json.loads(existing["dm_hist"]),
+                        width_hist=json.loads(existing["width_hist"]),
+                        beam_counts=json.loads(existing["beam_counts"]),
+                        snr_max=existing["snr_max"],
+                        dm_at_snr_max=existing["dm_at_snr_max"],
+                    )
+                    merged.merge(fresh)
+                else:
+                    merged = fresh
+                conn.execute(
+                    "INSERT INTO cand_bins (gulp_ts, job, n, snr_hist, dm_hist, width_hist, "
+                    "beam_counts, snr_max, dm_at_snr_max) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(gulp_ts, job) DO UPDATE SET n = excluded.n, "
+                    "snr_hist = excluded.snr_hist, dm_hist = excluded.dm_hist, "
+                    "width_hist = excluded.width_hist, beam_counts = excluded.beam_counts, "
+                    "snr_max = excluded.snr_max, dm_at_snr_max = excluded.dm_at_snr_max",
+                    (
+                        bin_ts,
+                        bin_job,
+                        merged.n,
+                        json.dumps(merged.snr_hist),
+                        json.dumps(merged.dm_hist),
+                        json.dumps(merged.width_hist),
+                        json.dumps(merged.beam_counts),
+                        merged.snr_max,
+                        merged.dm_at_snr_max,
+                    ),
+                )
+            conn.execute(
+                "INSERT INTO watermarks (stream, key, value) VALUES (?, ?, ?) "
+                "ON CONFLICT(stream, key) DO UPDATE SET value = excluded.value",
                 (
-                    bin_ts,
-                    job,
-                    merged.n,
-                    json.dumps(merged.snr_hist),
-                    json.dumps(merged.dm_hist),
-                    json.dumps(merged.width_hist),
-                    json.dumps(merged.beam_counts),
-                    merged.snr_max,
-                    merged.dm_at_snr_max,
+                    WATERMARK_STREAM,
+                    self._file_key(job),
+                    json.dumps({"obs": obs, "offset": int(new_offset)}),
                 ),
             )
 

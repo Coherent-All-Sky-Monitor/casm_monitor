@@ -414,6 +414,84 @@ def write_latest_vis(
         tmp.unlink(missing_ok=True)
 
 
+def avg8_staging_path(settings: Settings, obs: str) -> Path:
+    """Where the not-yet-published ``vis_avg8`` buffer for ``obs`` is staged."""
+    return Path(settings.store_root) / "staging" / f"vis_avg8_{obs}.npz"
+
+
+def write_avg8_staging(
+    settings: Settings, obs: str, inputs: Sequence[int], samples: Sequence["BufferedIntegration"]
+) -> None:
+    """Durably persist the CURRENT ``vis_avg8`` buffer (rewritten whole).
+
+    Called after every integration is added to the in-memory buffer, so a
+    crash between two ``vis_avg8`` shard flushes (up to :data:`AVG_BUFFER`
+    integrations, ~18 min) loses nothing: the next process recovers the
+    buffer from this file (:func:`read_avg8_staging`) instead of silently
+    dropping it, which the ``vis`` stream's byte/integration watermark already
+    treats as read. The file stays small (at most ``AVG_BUFFER`` reduced
+    integrations) and short-lived (cleared the moment the buffer is actually
+    published), so there is nothing here that needs a separate hourly
+    compaction pass.
+    """
+    path = avg8_staging_path(settings, obs)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".tmp-{os.getpid()}.npz")
+    try:
+        values = (
+            np.stack([s.values for s in samples]).astype(np.complex64)
+            if samples
+            else np.zeros((0, 0, 0), dtype=np.complex64)
+        )
+        np.savez(
+            tmp,
+            obs=np.array(obs),
+            inputs=np.asarray(inputs, dtype=np.int32),
+            values=values,
+            ts=np.asarray([s.ts for s in samples], dtype=np.float64),
+            file_idx=np.asarray([s.file_idx for s in samples], dtype=np.int64),
+            int_idx=np.asarray([s.int_idx for s in samples], dtype=np.int64),
+            first_of_file=np.asarray([s.first_of_file for s in samples], dtype=bool),
+        )
+        os.replace(tmp, path)
+    except Exception:
+        log.exception("vis: could not write the vis_avg8 staging file for %s", obs)
+        tmp.unlink(missing_ok=True)
+
+
+def read_avg8_staging(settings: Settings, obs: str) -> dict[str, Any] | None:
+    """The staged ``vis_avg8`` buffer for ``obs``, or None if there is none."""
+    path = avg8_staging_path(settings, obs)
+    if not path.is_file():
+        return None
+    try:
+        with np.load(path, allow_pickle=False) as npz:
+            n = int(npz["ts"].shape[0])
+            samples = [
+                BufferedIntegration(
+                    ts=float(npz["ts"][k]),
+                    values=np.asarray(npz["values"][k], dtype=np.complex64),
+                    file_idx=int(npz["file_idx"][k]),
+                    int_idx=int(npz["int_idx"][k]),
+                    first_of_file=bool(npz["first_of_file"][k]),
+                )
+                for k in range(n)
+            ]
+            return {"samples": samples, "inputs": [int(i) for i in npz["inputs"]]}
+    except Exception:
+        log.warning("vis: vis_avg8 staging file unreadable for %s", obs, exc_info=True)
+        return None
+
+
+def clear_avg8_staging(settings: Settings, obs: str) -> None:
+    """Remove the staging file for ``obs``: its contents are now in a shard."""
+    path = avg8_staging_path(settings, obs)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        log.warning("vis: could not remove the vis_avg8 staging file for %s", obs, exc_info=True)
+
+
 def read_latest_vis(settings: Settings) -> dict[str, Any] | None:
     """The newest mirrored integration, or None before the first read."""
     path = latest_vis_path(settings)
@@ -492,6 +570,13 @@ class VisCollector(Collector):
             self._flush_buffer(ctx, force=True)
             self._seen = {}
             self._seen_obs = obs
+            # This also fires on every process start (``self._seen_obs`` is
+            # None until the first tick): recover any ``vis_avg8`` integrations
+            # a previous process staged but never got to publish, so the
+            # ``vis`` watermark having already moved past them (they were read
+            # and full-resolution-published before the crash) does not mean
+            # they are lost from the channel-averaged stream too.
+            self._recover_avg8_staging(ctx, obs)
 
         sets = input_sets()
         inputs = sets["wired"]
@@ -718,8 +803,31 @@ class VisCollector(Collector):
                 first_of_file=item.first_of_file,
             )
         )
+        # Persist the WHOLE buffer (small: at most AVG_BUFFER reduced
+        # integrations) before returning, so a crash right after this call
+        # loses nothing -- the ``vis`` watermark this integration also just
+        # advanced treats it as already read, so RAM is the only other copy.
+        write_avg8_staging(ctx.settings, obs, self._buffer_inputs, self._buffer)
+        ctx.store.set_watermark(
+            STREAM_AVG8, obs, [self._buffer[-1].file_idx, self._buffer[-1].int_idx]
+        )
         if len(self._buffer) >= AVG_BUFFER:
             self._flush_buffer(ctx, force=True)
+
+    def _recover_avg8_staging(self, ctx: CollectorContext, obs: str) -> None:
+        """Reload a staged ``vis_avg8`` buffer left behind by a crashed run."""
+        if self._buffer:
+            return
+        recovered = read_avg8_staging(ctx.settings, obs)
+        if not recovered or not recovered["samples"]:
+            return
+        self._buffer = recovered["samples"]
+        self._buffer_obs = obs
+        self._buffer_inputs = recovered["inputs"]
+        log.info(
+            "vis: recovered %d staged vis_avg8 integration(s) for %s after a restart",
+            len(self._buffer), obs,
+        )
 
     def _flush_buffer(self, ctx: CollectorContext, *, force: bool = False) -> None:
         """Publish the buffered ``vis_avg8`` samples as one shard."""
@@ -729,14 +837,21 @@ class VisCollector(Collector):
         if not force and (time.time() - oldest) < AVG_MAX_AGE_S:
             return
         samples = self._buffer
+        obs = self._buffer_obs
         array = np.stack([s.values for s in samples]).astype(np.complex64)
         meta = {
-            "obs": self._buffer_obs,
+            "obs": obs,
             "inputs": list(self._buffer_inputs),
             "t": [float(s.ts) for s in samples],
             "nchan": int(array.shape[-1]),
             "chan_avg": CHAN_AVG,
-            "freq_top_mhz": rowmap.FREQ_TOP_MHZ,
+            # The MEAN frequency of the first 8-channel block, not the raw
+            # native-channel top: ``web/vis.py``'s ``freq_axis`` reads this as
+            # channel 0's own frequency and steps down by ``chan_bw_mhz`` per
+            # channel, so leaving this at the native top would report every
+            # avg8 channel 3.5 native channels (14 kHz) higher than the block
+            # it is actually the average of (docs/api-vis.md).
+            "freq_top_mhz": rowmap.FREQ_TOP_MHZ - 0.5 * (CHAN_AVG - 1) * rowmap.CHAN_BW_MHZ,
             "chan_bw_mhz": rowmap.CHAN_BW_MHZ * CHAN_AVG,
             "freq_order": "descending",
             "file_idx": [s.file_idx for s in samples],
@@ -756,6 +871,12 @@ class VisCollector(Collector):
             log.exception("vis: vis_avg8 shard write failed; keeping the buffer")
             return
         self._buffer = []
+        if obs is not None:
+            # Its contents are now durable in the committed shard; the staging
+            # copy would otherwise be replayed into a duplicate shard next
+            # startup (harmless -- ``ShardWriter.write`` is idempotent by
+            # ``t0`` -- but pointless to keep around).
+            clear_avg8_staging(ctx.settings, obs)
 
     def close(self, ctx: CollectorContext) -> None:
         """Flush the channel-averaged buffer so an orderly stop loses nothing."""
@@ -793,4 +914,8 @@ __all__ = [
     "scan_observation_files",
     "subband_medians",
     "write_latest_vis",
+    "avg8_staging_path",
+    "write_avg8_staging",
+    "read_avg8_staging",
+    "clear_avg8_staging",
 ]

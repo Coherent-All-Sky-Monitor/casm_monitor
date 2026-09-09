@@ -76,6 +76,11 @@ the per-input facts needed for panel titles.
   `vis.age_s`: amber past 600 s, stale past 1800 s); `n_cached` counts
   full-resolution `vis_full` shards (3 d retention) and `n_cached_avg8` the
   8x channel-averaged `vis_avg8` shards (60 d, eight integrations each).
+- Each `vis_avg8` channel is the MEAN of its 8 native channels, and its
+  frequency axis reports the mean frequency of that block (channel 0 is the
+  mean of native channels 0-7, not native channel 0's own frequency) --
+  `freq_top_mhz` in the shard's meta is already offset by half a block so
+  `freq_axis()`'s `top - k * chan_bw_mhz` lands on each block's centre.
 - `sets.live`/`sets.wired` are packet indices, ascending, matching the keys
   used everywhere else (`spectra.baselines[].i/j`, `matrix.inputs`).
 - `inputs` covers the union of both sets; a packet index absent from
@@ -250,6 +255,17 @@ such).
 - Served from `vis_avg8` (falling back to `vis_full`); also returns `t0`/`t1`
   (+ `_iso`), `antennas`, `n_samples`, `n_channels`, `chan_avg`. A span with no
   data returns an all-`null` matrix of the right shape, never a 404.
+- `t1 - t0` is capped at **7 d**; a longer span is a **400**, not a silent
+  clamp (unlike most other spans in this API), because this route accumulates
+  `vis_avg8` shard-by-shard rather than materialising the window, and a
+  request that walks weeks of shards deserves to be visible to the caller.
+- The accumulation is `sum V_ij` / `sum A_i` per baseline over the whole band,
+  one shard loaded (and then dropped) at a time, so memory stays bounded by a
+  single shard regardless of the span; each shard's baselines are resolved
+  against ITS OWN stored input list (an older shard may carry fewer wired
+  inputs), and a baseline absent from a given shard simply does not
+  contribute samples from it rather than being NaN-poisoned or dropping the
+  shard's other baselines.
 
 ## Errors
 

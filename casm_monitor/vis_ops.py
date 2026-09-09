@@ -30,6 +30,7 @@ coh          ``linear`` (dimensionless; no other unit is accepted)
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Sequence
 
 import numpy as np
@@ -105,12 +106,30 @@ def units_label(quantity: str, units: str) -> str:
 
 
 # -- channel averaging --------------------------------------------------
+def _nanmean(arr: np.ndarray, *, axis: int, dtype: Any, keepdims: bool = False) -> np.ndarray:
+    """``np.nanmean`` with the "all-NaN slice" RuntimeWarning silenced.
+
+    A block that is entirely flagged (every channel of it NaN, e.g. a whole
+    ``cal`` gap) legitimately averages to NaN; that is not a bug to warn
+    about, it is exactly what a flagged block should report.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        return np.nanmean(arr, axis=axis, dtype=dtype, keepdims=keepdims)
+
+
 def block_mean(x: np.ndarray, nchan: int | None) -> np.ndarray:
     """Block-average the LAST axis down to at most ``nchan`` points.
 
     Works for real and complex input (the complex mean is what phase and
     coherence need). A ragged tail becomes one shorter final block rather than
     being dropped, so the band edge is never silently lost.
+
+    The reduction is NaN-aware (``nanmean``, not ``mean``): a reference like
+    ``cal`` flags individual channels/baselines as NaN (a missing gain, a
+    flagged cal channel), and a plain mean would let that ONE bad channel null
+    the entire averaged block instead of just being excluded from it. A block
+    that is entirely flagged still (correctly) averages to NaN.
 
     The accumulation is always in 64-bit: the shards are complex64, and summing
     3072 of them in single precision costs ~1e-5 of relative accuracy, which is
@@ -123,14 +142,12 @@ def block_mean(x: np.ndarray, nchan: int | None) -> np.ndarray:
         return arr
     block = int(np.ceil(n / nchan))
     keep = (n // block) * block
-    head = (
-        arr[..., :keep]
-        .reshape(*arr.shape[:-1], keep // block, block)
-        .mean(axis=-1, dtype=acc)
+    head = _nanmean(
+        arr[..., :keep].reshape(*arr.shape[:-1], keep // block, block), axis=-1, dtype=acc
     )
     if keep == n:
         return head
-    tail = arr[..., keep:].mean(axis=-1, keepdims=True, dtype=acc)
+    tail = _nanmean(arr[..., keep:], axis=-1, dtype=acc, keepdims=True)
     return np.concatenate([head, tail], axis=-1)
 
 
@@ -342,6 +359,24 @@ def cal_gains_on_axis(
     return gains, have
 
 
+def cal_auto_power_scale(gains: np.ndarray, have: np.ndarray) -> np.ndarray:
+    """``1 / |g_i|^2`` per input, aligned to ``gains``' rows.
+
+    An autocorrelation IS a power (``A_i = |V_ii|``), and a calibrated cross
+    is the raw one divided by ``g_i conj(g_j)``; the matching calibrated auto
+    is therefore ``A_i / |g_i|^2``, never the raw ``A_i`` (a coherence built
+    from a calibrated numerator and a raw denominator is not a coherence of
+    anything -- 2026-09-09 review). NaN where the input has no cal gain or a
+    flagged (zero) channel, the same convention :func:`apply_cal` uses for a
+    missing baseline end.
+    """
+    power = np.abs(np.asarray(gains)) ** 2
+    with np.errstate(divide="ignore", invalid="ignore"):
+        scale = 1.0 / power
+    ok = np.asarray(have, dtype=bool)[:, None] & (power > 0)
+    return np.where(ok, scale, np.nan)
+
+
 def apply_cal(
     v: np.ndarray,
     gains: np.ndarray,
@@ -441,6 +476,7 @@ __all__ = [
     "average_for_quantity",
     "baseline_vectors",
     "block_mean",
+    "cal_auto_power_scale",
     "cal_gains_on_axis",
     "check_params",
     "decimate_axes",

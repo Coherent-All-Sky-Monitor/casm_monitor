@@ -258,6 +258,10 @@ def test_publish_writes_both_streams_and_flags_the_first_integration(settings, l
     assert avg8[0]["shape"] == [visc.AVG_BUFFER, n_bl, visc.AVG_NCHAN]
     assert len(avg8[0]["meta"]["t"]) == visc.AVG_BUFFER
     assert avg8[0]["meta"]["chan_avg"] == visc.CHAN_AVG
+    # The avg8 frequency axis is the mean of each 8-channel block, not the raw
+    # native top: channel 0's frequency is the mean of native channels 0-7.
+    expected_block0_freq = float(freq[:visc.CHAN_AVG].mean())
+    assert avg8[0]["meta"]["freq_top_mhz"] == pytest.approx(expected_block0_freq, abs=1e-6)
 
     # the channel-averaged shard really is the block mean of the full one
     from casm_monitor.store import ShardReader
@@ -295,6 +299,48 @@ def test_buffer_is_flushed_on_close_and_on_an_obs_change(settings, layout) -> No
     collector.close(ctx)
     assert len(store.list_shards(visc.STREAM_AVG8)) == 1
     assert store.list_shards(visc.STREAM_AVG8)[0]["shape"] == [1, n_bl, visc.AVG_NCHAN]
+    store.close()
+
+
+def test_vis_avg8_survives_a_restart_with_no_gap(settings, layout) -> None:
+    """Stop after 3 (< AVG_BUFFER) buffered integrations, start a brand new
+    collector against the same store, and the eventual vis_avg8 shard must
+    still cover all of them -- nothing lost to the crash (review P1)."""
+    store = Store(settings.db_path, store_root=settings.store_root)
+    ctx = CollectorContext(
+        settings=settings, store=store, shards=ShardWriter(store, settings.shards_root)
+    )
+    inputs = [0, 2]
+    n_bl = 3
+    freq = rowmap.freq_axis_mhz()
+    frame = np.ones((visc.NCHAN, n_bl), dtype=np.complex64)
+    t0 = visc.obs_start_unix(OBS)
+
+    collector_a = visc.VisCollector(settings)
+    for k in range(3):
+        item = visc.PendingIntegration(0, k, visc.integration_time(t0, 0, k), k == 0)
+        collector_a._publish(ctx, OBS, item, item.ts, frame * (k + 1), inputs, freq)
+
+    # "Crash": no close(), no flush -- only the staging file and the full-res
+    # watermark (already advanced past these 3 integrations) exist.
+    assert store.list_shards(visc.STREAM_AVG8) == []
+    staged = visc.read_avg8_staging(settings, OBS)
+    assert staged is not None and len(staged["samples"]) == 3
+
+    # A brand new collector (fresh process) recovers the buffer on its first
+    # tick for this obs, then a 4th integration pushes it over AVG_BUFFER? No
+    # -- AVG_BUFFER is 8, so force a flush directly to check the recovered
+    # content publishes without a gap.
+    collector_b = visc.VisCollector(settings)
+    collector_b._recover_avg8_staging(ctx, OBS)
+    assert len(collector_b._buffer) == 3
+    collector_b.close(ctx)  # orderly flush, as the runner does on SIGTERM
+
+    avg8 = store.list_shards(visc.STREAM_AVG8)
+    assert len(avg8) == 1
+    assert avg8[0]["shape"] == [3, n_bl, visc.AVG_NCHAN]
+    assert avg8[0]["meta"]["int_idx"] == [0, 1, 2]
+    assert visc.read_avg8_staging(settings, OBS) is None  # cleared once durable
     store.close()
 
 

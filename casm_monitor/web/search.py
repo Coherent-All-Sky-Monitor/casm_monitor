@@ -23,6 +23,7 @@ Conventions shared by every route:
 
 from __future__ import annotations
 
+import math
 import sqlite3
 import time
 from pathlib import Path
@@ -40,7 +41,6 @@ from ..collectors.search import (
     TSAMP_S,
     WIDTH_EDGES,
     WIDTH_INDEX_MAX,
-    histogram,
 )
 from ..config import Settings
 from ..store import Store
@@ -48,13 +48,19 @@ from ..util import iso, parse_iso
 
 MAX_SPAN_S = 30 * 86400.0
 DEFAULT_SPAN_S = 3600.0
-# Guards on one response. Rows are read into Python for the histogram/scatter
-# routes, so both are bounded; a storm hour can hold millions of trials.
-HIST_MAX_ROWS = 2_000_000
+# Guards on one response. The histogram is one SQL GROUP BY over the whole
+# window (never a capped row sample -- a storm hour can hold tens of millions
+# of trials and every one of them has to count); the scatter route is the one
+# that reads rows into Python, so IT stays bounded.
 MAX_HIST_BINS = 2048
 MAX_SCATTER_POINTS = 200_000
 DEFAULT_SCATTER_POINTS = 20_000
 MAX_SERIES_BINS = 5000
+# Below this row count, a uniform random sample (``ORDER BY random()``) is
+# cheap enough to draw directly in SQL; at or above it, an even STRIDE per job
+# is used instead (still one pass, no full materialisation) so a storm that
+# floods one job cannot make the scatter look like it came from just that job.
+SCATTER_RANDOM_MAX_ROWS = 1_000_000
 
 FIELDS = ("snr", "dm", "width", "beam")
 AXES = {"dm": "dm", "snr": "snr", "width": "width", "time": "ts_unix", "beam": "beam"}
@@ -147,6 +153,126 @@ def field_edges(field: str, values: Sequence[float], n_bins: int, log: bool) -> 
     return linspace(lo, hi, n_bins)
 
 
+def _field_minmax(reader: Store, column: str, start: float, end: float) -> tuple[float, float] | None:
+    """``(MIN(column), MAX(column))`` over the window, or None with no rows.
+
+    One aggregate query, never a row scan: the histogram's data-driven edges
+    (``snr``/``dm``) need the TRUE range of the window, not the range of
+    whatever earliest-N rows a capped read happened to pull in.
+    """
+    row = reader.query(
+        f"SELECT MIN({column}) AS lo, MAX({column}) AS hi FROM cands "
+        "WHERE ts_unix >= ? AND ts_unix <= ?",
+        (start, end),
+    )
+    if not row or row[0]["lo"] is None:
+        return None
+    return float(row[0]["lo"]), float(row[0]["hi"])
+
+
+def hist_counts_sql(
+    reader: Store, column: str, start: float, end: float, edges: Sequence[float], log: bool
+) -> list[int]:
+    """Exact per-bin counts over the FULL window, one SQL ``GROUP BY``.
+
+    ``edges`` is always uniformly spaced (linear or log -- see
+    :func:`field_edges`: ``linspace``/``log_edges``/the fixed width and beam
+    edges are all uniform), so each row's bin is a closed-form expression
+    SQLite can evaluate itself; a storm gulp with tens of millions of trials
+    is one aggregate pass, not tens of millions of Python floats (2026-09-09
+    review: the old code capped at 2M rows ORDER BY ts_unix ASC, silently
+    biasing every histogram toward the START of a busy window).
+    """
+    n = len(edges) - 1
+    if n <= 0:
+        return []
+    lo, hi = float(edges[0]), float(edges[-1])
+    if log:
+        loglo = math.log(lo)
+        step = (math.log(hi) - loglo) / n
+        bucket_expr = f"CAST((LN(MAX({column}, {lo!r})) - ({loglo!r})) / ({step!r}) AS INTEGER)"
+    else:
+        step = (hi - lo) / n
+        bucket_expr = f"CAST(({column} - ({lo!r})) / ({step!r}) AS INTEGER)"
+    sql = (
+        "SELECT CASE "
+        f"WHEN {column} <= {lo!r} THEN 0 "
+        f"WHEN {column} >= {hi!r} THEN {n - 1} "
+        f"ELSE MIN(MAX({bucket_expr}, 0), {n - 1}) "
+        "END AS b, COUNT(*) AS c "
+        f"FROM cands WHERE ts_unix >= ? AND ts_unix <= ? GROUP BY b"
+    )
+    counts = [0] * n
+    for row in reader.query(sql, (start, end)):
+        if row["b"] is None:
+            continue
+        idx = int(row["b"])
+        if 0 <= idx < n:
+            counts[idx] += int(row["c"])
+    return counts
+
+
+def _balanced_allocation(counts: dict[int, int], cap: int) -> dict[int, int]:
+    """Split ``cap`` points across ``counts`` proportional to each key's share.
+
+    Largest-remainder method: floor each proportional share, then hand the
+    leftover (from rounding) to the keys with the biggest fractional part, so
+    the total allocated is exactly ``min(cap, sum(counts.values()))``.
+    """
+    total = sum(counts.values())
+    if total <= 0 or cap <= 0:
+        return {}
+    cap = min(cap, total)
+    raw = {job: n * cap / total for job, n in counts.items()}
+    alloc = {job: min(int(v), counts[job]) for job, v in raw.items()}
+    remaining = cap - sum(alloc.values())
+    if remaining > 0:
+        by_fraction = sorted(
+            counts, key=lambda job: raw[job] - int(raw[job]), reverse=True
+        )
+        for job in by_fraction:
+            if remaining <= 0:
+                break
+            if alloc[job] < counts[job]:
+                alloc[job] += 1
+                remaining -= 1
+    return {job: n for job, n in alloc.items() if n > 0}
+
+
+def _scatter_balanced_by_job(
+    reader: Store, xcol: str, ycol: str, start: float, end: float, cap: int
+) -> list[dict[str, Any]]:
+    """Per-job-balanced stride sample: each job's share of ``cap`` points is
+    proportional to its share of the rows, taken as an even stride of that
+    job's own time-ordered rows (never a random sample at this scale -- one
+    ``ORDER BY random()`` pass over tens of millions of rows is the thing this
+    branch exists to avoid)."""
+    job_counts = {
+        int(row["job"]): int(row["n"])
+        for row in reader.query(
+            "SELECT job, COUNT(*) AS n FROM cands WHERE ts_unix >= ? AND ts_unix <= ? "
+            "GROUP BY job",
+            (start, end),
+        )
+    }
+    alloc = _balanced_allocation(job_counts, cap)
+    rows: list[dict[str, Any]] = []
+    for job, job_cap in alloc.items():
+        count = job_counts[job]
+        stride = max(1, count // max(1, job_cap))
+        rows.extend(
+            reader.query(
+                f"SELECT xv, yv, ts_unix FROM (SELECT {xcol} AS xv, {ycol} AS yv, ts_unix, "
+                "ROW_NUMBER() OVER (ORDER BY ts_unix ASC) AS rn FROM cands "
+                "WHERE ts_unix >= ? AND ts_unix <= ? AND job = ?) "
+                "WHERE (rn - 1) % ? = 0 LIMIT ?",
+                (start, end, job, stride, job_cap),
+            )
+        )
+    rows.sort(key=lambda r: r["ts_unix"])
+    return rows
+
+
 def _table_exists(reader: Store, name: str) -> bool:
     return bool(
         reader.query("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (name,))
@@ -205,19 +331,12 @@ def build_router(reader: Store, settings: Settings) -> APIRouter:
     def have_gulps() -> bool:
         return _table_exists(reader, "gulp_stats_mirror")
 
-    def values_in(column: str, start: float, end: float) -> tuple[list[float], int]:
-        """One column of ``cands`` over the window, bounded, plus the row count."""
+    def count_in(start: float, end: float) -> int:
         if not have_cands():
-            return [], 0
-        n = int(reader.query(
+            return 0
+        return int(reader.query(
             "SELECT COUNT(*) AS n FROM cands WHERE ts_unix >= ? AND ts_unix <= ?", (start, end)
         )[0]["n"])
-        rows = reader.query(
-            f"SELECT {column} AS v FROM cands WHERE ts_unix >= ? AND ts_unix <= ? "
-            "ORDER BY ts_unix ASC LIMIT ?",
-            (start, end, HIST_MAX_ROWS),
-        )
-        return [float(r["v"]) for r in rows], n
 
     @router.get("/summary")
     def summary(t0: str | None = None, t1: str | None = None) -> dict[str, Any]:
@@ -296,17 +415,24 @@ def build_router(reader: Store, settings: Settings) -> APIRouter:
         if field not in FIELDS:
             raise HTTPException(status_code=400, detail=f"field must be one of {'|'.join(FIELDS)}")
         start, end = window(t0, t1)
-        values, n_total = values_in(field, start, end)
-        edges = field_edges(field, values, int(bins), bool(log))
+        # The edges are data-driven (snr/dm) from the window's TRUE min/max
+        # (one aggregate query), never from a capped sample of rows; the
+        # counts are then a single SQL GROUP BY over the whole window, so a
+        # storm gulp's millions of extra trials all still count.
+        rng = _field_minmax(reader, field, start, end) if have_cands() else None
+        edges = field_edges(field, [] if rng is None else [rng[0], rng[1]], int(bins), bool(log))
+        counts = hist_counts_sql(reader, field, start, end, edges, bool(log)) if rng else [0] * (
+            len(edges) - 1
+        )
         return {
             "field": field,
             "t0": iso(start),
             "t1": iso(end),
             "log": bool(log),
             "edges": [round(float(e), 6) for e in edges],
-            "counts": histogram(values, edges),
-            "n_total": n_total,
-            "n_used": len(values),
+            "counts": counts,
+            "n_total": count_in(start, end),
+            "n_used": sum(counts),
         }
 
     @router.get("/scatter")
@@ -336,17 +462,26 @@ def build_router(reader: Store, settings: Settings) -> APIRouter:
                 "WHERE ts_unix >= ? AND ts_unix <= ? ORDER BY ts_unix ASC",
                 (start, end),
             )
-        else:
-            # Uniform stride in SQL (the same trick as Store.series): a
-            # time-ordered every-Nth sample, so the cloud keeps its shape and we
-            # never pull the whole storm into Python to throw most of it away.
-            stride = (n_total + cap - 1) // cap
+        elif n_total < SCATTER_RANDOM_MAX_ROWS:
+            # A uniform TIME stride (the old approach) aliases with anything
+            # periodic in the arrival pattern (a job's own gulp cadence, an
+            # RFI burst that recurs every Nth trial); a uniform RANDOM sample
+            # does not, and is still one SQL pass with no full materialisation.
+            # Re-sorted by time afterward so the plotted cloud is still drawn
+            # in time order (matches the <=cap and the old-stride behaviour).
             rows = reader.query(
-                f"SELECT xv, yv FROM (SELECT {xcol} AS xv, {ycol} AS yv, "
-                "ROW_NUMBER() OVER (ORDER BY ts_unix ASC) AS rn FROM cands "
-                "WHERE ts_unix >= ? AND ts_unix <= ?) WHERE (rn - 1) % ? = 0 LIMIT ?",
-                (start, end, stride, cap),
+                f"SELECT xv, yv FROM (SELECT {xcol} AS xv, {ycol} AS yv, ts_unix FROM cands "
+                "WHERE ts_unix >= ? AND ts_unix <= ? ORDER BY RANDOM() LIMIT ?) "
+                "ORDER BY ts_unix ASC",
+                (start, end, cap),
             )
+        else:
+            # At storm scale, a random sample can still come back dominated by
+            # whichever job happens to be flooding: split the budget evenly
+            # across the jobs that have rows in the window and stride each
+            # one's OWN time-ordered rows independently, so no single job's
+            # storm can crowd out the others' points.
+            rows = _scatter_balanced_by_job(reader, xcol, ycol, start, end, cap)
         return {
             "x": [float(r["xv"]) for r in rows],
             "y": [float(r["yv"]) for r in rows],

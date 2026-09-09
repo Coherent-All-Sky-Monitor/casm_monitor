@@ -127,6 +127,15 @@ Tabs:
    weights uploaded, cal job run. This is the page that replaces re-excavating
    incidents.md for "when did ant X change".
 
+## MVP direction for plots (operator, 2026-09-09 evening)
+
+Heavy figures are rendered SERVER-SIDE with the team's own matplotlib code
+(casm_vis_analysis plotting), for the last 24 h, refreshed every 30 min, and
+served as PNGs with ETag + max-age so the browser caches them and toggles are
+instant. Interactive Plotly stays only for click-to-expand single-baseline views.
+Reason: hundreds of tiny Plotly widgets look worse than one matplotlib raster and
+load one by one. Real-time is not required; keeping up with data is.
+
 ## Architecture
 
 ```
