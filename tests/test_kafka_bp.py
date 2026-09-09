@@ -7,6 +7,7 @@ every store lives under tmp_path.
 from __future__ import annotations
 
 import json
+import struct
 import time
 from pathlib import Path
 
@@ -63,17 +64,24 @@ def test_decode_fixture_record():
     assert set(int(r) % 2 for r in populated) == {0}
 
 
-def test_decode_falls_back_when_headers_disagree():
+def test_decode_refuses_a_body_that_disagrees_with_its_headers():
+    """No guessing: a body that is not nsig*npol*nchan float32 is refused, so a
+    record we do not understand cannot be reshaped into a wrong row mapping."""
     body, headers = fixture_record()
-    bad = dict(headers, nsig=7)  # 7 * 2 * 512 != the body
-    block = decode_bp(body, bad)
-    assert block.shape == (len(body) // 4 // SUBBAND_NCHAN, SUBBAND_NCHAN)
+    with pytest.raises(ValueError):
+        decode_bp(body, dict(headers, nsig=7))  # 7 * 2 * 512 != the body
 
 
 def test_decode_rejects_an_impossible_body():
     _body, headers = fixture_record()
     with pytest.raises(ValueError):
         decode_bp(b"\x00" * 6, dict(headers, nchan=512))
+
+
+def test_decode_rejects_a_non_subband_nchan():
+    body, headers = fixture_record()
+    with pytest.raises(ValueError):
+        decode_bp(body, dict(headers, nchan=NCHAN, nsig=22, npol=1))
 
 
 # -- frame assembly -----------------------------------------------------
@@ -161,6 +169,10 @@ def test_incomplete_frame_is_emitted_after_the_timeout(settings, monkeypatch):
     for sub in (0, 1, 2, 4, 5):
         collector._ingest_bp(ctx, FakeRecord(raw_headers(sub, 2000), body.tobytes()))
     assert collector._latest is None  # still waiting for subband 3
+    # Not yet: the timeout has to outlast the ~68 s producer skew (150 s here).
+    collector._frames[2000.0].first_seen -= 100.0
+    collector._flush_expired_frames(ctx)
+    assert collector._latest is None
     collector._frames[2000.0].first_seen -= 60.0
     collector._flush_expired_frames(ctx)
     frame = collector._latest
@@ -210,6 +222,150 @@ def test_close_flushes_the_buffered_shards(settings):
     assert len(reader.list("kafka_bp_full")) == 1
     # Idempotent / harmless with nothing buffered (e.g. a second close()).
     collector.close(ctx)
+    ctx.store.close()
+
+
+def test_records_without_a_timestamp_header_are_dropped_and_counted(settings):
+    """No CreateTime fallback: without the header there is no frame identity
+    the other five producers would agree on."""
+    ctx = context(settings)
+    collector = KafkaBandpassCollector(settings)
+    body = np.ones((2, SUBBAND_NCHAN), dtype=np.float32)
+    headers = [h for h in raw_headers(0, 6000, nsig=2) if h[0] != "timestamp"]
+    collector._ingest_bp(ctx, FakeRecord(headers, body.tobytes(), offset=11, timestamp=6_000_000))
+    assert collector._frames == {}
+    assert collector._latest is None
+    assert collector._dropped == {"no_timestamp": 1}
+    ctx.store.close()
+
+
+def test_duplicate_and_late_records_are_dropped(settings):
+    ctx = context(settings)
+    collector = KafkaBandpassCollector(settings)
+    body = np.ones((2, SUBBAND_NCHAN), dtype=np.float32)
+    collector._ingest_bp(ctx, FakeRecord(raw_headers(0, 7000, nsig=2), body.tobytes(), offset=0))
+    # Same (timestamp, offset) twice: the second copy adds nothing.
+    collector._ingest_bp(ctx, FakeRecord(raw_headers(0, 7000, nsig=2), body.tobytes(), offset=1))
+    assert collector._dropped == {"duplicate_subband": 1}
+    for sub in range(1, N_SUBBANDS):
+        collector._ingest_bp(
+            ctx, FakeRecord(raw_headers(sub, 7000, nsig=2), body.tobytes(), offset=sub + 1)
+        )
+    assert collector._latest is not None and collector._latest.ts == 7000.0
+    n_sub = len(collector._sub_buf)
+
+    # A straggler for the frame that has already been emitted.
+    collector._ingest_bp(ctx, FakeRecord(raw_headers(2, 7000, nsig=2), body.tobytes(), offset=99))
+    assert collector._dropped["late_record"] == 1
+    assert len(collector._sub_buf) == n_sub
+    ctx.store.close()
+
+
+def test_latest_only_moves_forward(settings):
+    ctx = context(settings)
+    collector = KafkaBandpassCollector(settings)
+    body = np.ones((2, SUBBAND_NCHAN), dtype=np.float32)
+    for sub in range(N_SUBBANDS):
+        collector._ingest_bp(ctx, FakeRecord(raw_headers(sub, 8010, nsig=2), body.tobytes()))
+    assert collector._latest.ts == 8010.0
+    # An older frame completes afterwards: it is stored, but it is not "live".
+    for sub in range(N_SUBBANDS):
+        collector._ingest_bp(ctx, FakeRecord(raw_headers(sub, 8000, nsig=2), body.tobytes()))
+    assert collector._latest.ts == 8010.0
+    assert sorted(s.ts for s in collector._sub_buf) == [8000.0, 8010.0]
+    assert read_latest_frame(settings)["ts"] == 8010.0
+    ctx.store.close()
+
+
+def test_records_with_a_bad_offset_or_shape_are_refused(settings):
+    ctx = context(settings)
+    collector = KafkaBandpassCollector(settings)
+    body = np.ones((2, SUBBAND_NCHAN), dtype=np.float32)
+    bad_offset = [
+        (k, v) for k, v in raw_headers(0, 9000, nsig=2) if k != "offset"
+    ] + [("offset", struct.pack("<i", 700))]
+    with pytest.raises(ValueError):
+        collector._ingest_bp(ctx, FakeRecord(bad_offset, body.tobytes()))
+    with pytest.raises(ValueError):
+        collector._ingest_bp(
+            ctx, FakeRecord(raw_headers(0, 9000, nsig=3), body.tobytes())  # body is 2 rows
+        )
+    assert collector._frames == {}
+    ctx.store.close()
+
+
+def test_watermark_waits_for_the_shard_and_a_replay_is_idempotent(settings):
+    """The Kafka read position may not pass a record whose frame is still only
+    in a buffer, and re-reading it after a restart must not duplicate history."""
+    ctx = context(settings)
+    collector = KafkaBandpassCollector(settings)
+    body = np.ones((2, SUBBAND_NCHAN), dtype=np.float32)
+    for sub in range(N_SUBBANDS):
+        collector._ingest_bp(
+            ctx,
+            FakeRecord(raw_headers(sub, 10_000, nsig=2), body.tobytes(), offset=100 + sub),
+        )
+    collector._offset_seen["casm_antenna_bp"] = 105
+    collector._advance_watermarks(ctx)
+    # Buffered but not written: the watermark stops one below the frame's
+    # lowest record (100), not at the last record consumed (105).
+    assert int(ctx.store.get_watermark("kafka_bp", "offset:casm_antenna_bp")) == 99
+
+    collector._flush_sub(ctx)
+    collector._advance_watermarks(ctx)
+    # The 60 s buffer still holds the same frame, so still nothing to advance.
+    assert int(ctx.store.get_watermark("kafka_bp", "offset:casm_antenna_bp")) == 99
+    collector._flush_full(ctx)
+    collector._advance_watermarks(ctx)
+    assert int(ctx.store.get_watermark("kafka_bp", "offset:casm_antenna_bp")) == 105
+
+    # A replay of the very same records (what a restart from the watermark
+    # does) re-writes the same (stream, t0) shards, which are skipped.
+    before = {s: len(ShardReader(ctx.store).list(s)) for s in ("kafka_bp_sub", "kafka_bp_full")}
+    replay = KafkaBandpassCollector(settings)
+    for sub in range(N_SUBBANDS):
+        replay._ingest_bp(
+            ctx,
+            FakeRecord(raw_headers(sub, 10_000, nsig=2), body.tobytes(), offset=100 + sub),
+        )
+    replay._flush_sub(ctx)
+    replay._flush_full(ctx)
+    after = {s: len(ShardReader(ctx.store).list(s)) for s in ("kafka_bp_sub", "kafka_bp_full")}
+    assert after == before
+
+    # ...and also when the replay's buffer boundary differs, so the shard would
+    # get a new t0: the samples are already published and are not rewritten.
+    replay2 = KafkaBandpassCollector(settings)
+    for ts in (9_990.0, 10_000.0):
+        for sub in range(N_SUBBANDS):
+            replay2._ingest_bp(
+                ctx, FakeRecord(raw_headers(sub, int(ts), nsig=2), body.tobytes(), offset=90)
+            )
+    replay2._flush_sub(ctx)
+    assert len(ShardReader(ctx.store).list("kafka_bp_sub")) == before["kafka_bp_sub"]
+    ctx.store.close()
+
+
+def test_a_failed_flush_keeps_the_buffer_then_drops_it_with_an_event(settings, monkeypatch):
+    ctx = context(settings)
+    collector = KafkaBandpassCollector(settings)
+    body = np.ones((2, SUBBAND_NCHAN), dtype=np.float32)
+    for sub in range(N_SUBBANDS):
+        collector._ingest_bp(ctx, FakeRecord(raw_headers(sub, 11_000, nsig=2), body.tobytes()))
+    assert len(collector._sub_buf) == 1
+
+    def boom(*_a, **_k):
+        raise OSError("store went away")
+
+    monkeypatch.setattr(ctx.shards, "write", boom)
+    for attempt in range(1, 3):
+        collector._flush_sub(ctx)
+        assert len(collector._sub_buf) == 1, f"buffer lost on attempt {attempt}"
+        assert ctx.store.events(kind="kafka_bp_flush_failed") == []
+    collector._flush_sub(ctx)  # third failure
+    assert collector._sub_buf == []
+    events = ctx.store.events(kind="kafka_bp_flush_failed")
+    assert len(events) == 1 and events[0]["severity"] == "error"
     ctx.store.close()
 
 
@@ -279,11 +435,32 @@ def test_validate_rows_flags_a_mismatch_without_changing_the_assignment():
     freq = rowmap.freq_axis_mhz()
     truth = synthetic_bandpasses(4)
     inputs = [0, 1, 2, 3]
-    row = rowmap.formula_row(0)  # formula says this row belongs to packet_idx 0
-    # ...but its measured data is really input 1's shape.
-    mapping = rowmap.validate_rows([row], truth[1:2], inputs, truth, freq)
-    assert mapping[row]["status"] == "mismatch"
-    assert mapping[row]["packet_idx"] == 0  # the formula's answer, unchanged
+    rows = [rowmap.formula_row(p) for p in inputs]
+    # Inputs 0 and 1 are swapped on the wire: row 0's measured data really is
+    # input 1's shape and vice versa, and both correlate strongly (1.0), so
+    # this is real evidence of a disagreement rather than a weak score.
+    mapping = rowmap.validate_rows(rows, truth[[1, 0, 2, 3]], inputs, truth, freq)
+    assert mapping[rows[0]]["status"] == "mismatch"
+    assert mapping[rows[0]]["packet_idx"] == 0  # the formula's answer, unchanged
+    assert mapping[rows[0]]["runner_up"] == pytest.approx(1.0, abs=1e-3)
+    assert mapping[rows[2]]["status"] == "formula+verified"
+
+
+def test_validate_rows_leaves_a_degenerate_spectrum_unverified():
+    """A flat/dead spectrum (or a correlation below the floor) is no evidence:
+    the row stays "formula", never "mismatch" -- a dead feed must not raise a
+    red flag about the mapping."""
+    freq = rowmap.freq_axis_mhz()
+    truth = synthetic_bandpasses(4)
+    flat = np.ones((1, NCHAN))
+    mapping = rowmap.validate_rows([0], flat, [0, 1, 2, 3], truth, freq)
+    assert mapping[0]["status"] == "formula"
+    assert mapping[0]["runner_up"] is None
+    assert "degenerate" in mapping[0]["unverified_reason"]
+
+    nan_row = np.full((1, NCHAN), np.nan)
+    nan_mapping = rowmap.validate_rows([0], nan_row, [0, 1, 2, 3], truth, freq)
+    assert nan_mapping[0]["status"] == "formula"
 
 
 def test_validate_rows_skips_rows_outside_the_formula():
@@ -343,12 +520,60 @@ def test_wired_inputs_reads_the_functional_column(tmp_path):
 
 
 def test_newest_complete_observation_skips_the_growing_file(tmp_path):
+    import os
+
+    old = time.time() - 3600.0
     for idx, size in ((0, 100), (1, 100), (2, 40)):
-        (tmp_path / f"2026-09-04-16:43:47.dat.{idx}").write_bytes(b"\x00" * size)
-    (tmp_path / "2026-09-01-00:00:00.dat.0").write_bytes(b"\x00" * 100)
-    obs, index = rowmap.newest_complete_observation(tmp_path)
+        path = tmp_path / f"2026-09-04-16:43:47.dat.{idx}"
+        path.write_bytes(b"\x00" * size)
+        os.utime(path, (old, old))
+    other = tmp_path / "2026-09-01-00:00:00.dat.0"
+    other.write_bytes(b"\x00" * 100)
+    os.utime(other, (old, old))
+    obs, index = rowmap.newest_complete_observation(tmp_path, full_size=100)
     assert obs == "2026-09-04-16:43:47"
     assert index == 1
+
+
+def test_newest_complete_observation_requires_the_full_size_and_a_still_file(tmp_path):
+    """The old rule ("largest file of the observation") accepts a lone growing
+    file; the size must be the absolute full-file size and the file must have
+    been untouched for five minutes."""
+    import os
+
+    growing = tmp_path / "2026-09-04-16:43:47.dat.0"
+    growing.write_bytes(b"\x00" * 40)  # only file, still growing
+    with pytest.raises(RuntimeError):
+        rowmap.newest_complete_observation(tmp_path, full_size=100)
+
+    just_closed = tmp_path / "2026-09-04-16:43:47.dat.1"
+    just_closed.write_bytes(b"\x00" * 100)  # full size, but mtime is now
+    with pytest.raises(RuntimeError):
+        rowmap.newest_complete_observation(tmp_path, full_size=100)
+
+    old = time.time() - 3600.0
+    os.utime(just_closed, (old, old))
+    assert rowmap.newest_complete_observation(tmp_path, full_size=100) == (
+        "2026-09-04-16:43:47",
+        1,
+    )
+
+
+def test_purge_row_map_drops_rows_no_longer_wired(tmp_path, store):
+    csv_path = tmp_path / "layout.csv"
+    csv_path.write_text("antenna,snap,adc,packet_idx,functional\n1,0,0,0,1\n3,0,2,2,1\n")
+    rowmap.save_row_map(
+        store,
+        {
+            0: {"packet_idx": 0, "corr": 0.9, "runner_up": 0.1, "status": "formula+verified"},
+            4: {"packet_idx": 2, "corr": 0.9, "runner_up": 0.1, "status": "formula+verified"},
+            8: {"packet_idx": 4, "corr": 0.9, "runner_up": 0.1, "status": "mismatch"},
+        },
+        {"obs": "x"},
+    )
+    assert rowmap.purge_row_map(store, csv_path) == [8]
+    assert sorted(rowmap.load_row_map(store)) == [0, 4]
+    assert 8 not in rowmap.current_mapping(store, layout_path=csv_path)
 
 
 # -- nightly median -----------------------------------------------------

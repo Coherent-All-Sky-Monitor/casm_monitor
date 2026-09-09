@@ -58,10 +58,10 @@ Tabs:
    in `antenna_layouts/current`, re-read at each integration so the set grows
    by itself as antennas are connected; 24 today = 300 baselines). Default
    DISPLAY = the live/beamforming set (`include_in_beamforming=1`, 17 today).
-   Selector: live set | all wired (cached) | all 48 SNAP inputs (on demand:
-   computed from the raw .dat files on nvme4, 30-day retention, ~3 min per
-   day of one baseline, progress bar, result cached, labelled "from raw, not
-   live"). Measured 2026-09-08 (casm_io, live file): read time per
+   Selector: live set | all wired (cached). DECISION (operator, 2026-09-08):
+   only these two sets for now, to keep data rates manageable; an
+   "all 48 SNAP inputs" view (from raw files on demand) is deferred and can
+   be added later. Measured 2026-09-08 (casm_io, live file): read time per
    integration 0.07 s (24 inputs), 0.15 s (48), 0.31 s (full 8256-baseline
    triangle), so compute is never the limit at the 137 s cadence; storage is:
    4.6 GB/d for 24 inputs, 18 GB/d for 48, 32 GB/d at 64 antennas full-res.

@@ -63,6 +63,10 @@ class Settings:
     medusa_cfg: Path = Path("/home/casm/software/fourier-space/opt/casm/share/common/medusa.cfg")
     kafka_bootstrap: str = "casm-corr1:9092"
     kafka_topics: tuple[str, ...] = ("casm_antenna_bp", "casm_antenna_ts", "casm_antenna_hg")
+    # How long a bandpass frame waits for its six producers before it is
+    # emitted incomplete. Must exceed the producer skew (~68 s measured
+    # 2026-09-08); see casm_monitor.collectors.kafka_bp.
+    kafka_frame_timeout_s: float = 150.0
     corr2_ssh: str = "casm-corr2"
     zapdos_ssh: str = "zapdos"
     check_head_node: bool = False
@@ -163,6 +167,9 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         medusa_cfg=Path(paths.get("medusa_cfg", defaults.medusa_cfg)),
         kafka_bootstrap=str(kafka.get("bootstrap", defaults.kafka_bootstrap)),
         kafka_topics=tuple(kafka.get("topics", defaults.kafka_topics)),
+        kafka_frame_timeout_s=float(
+            kafka.get("frame_timeout_s", defaults.kafka_frame_timeout_s)
+        ),
         corr2_ssh=str(hosts.get("corr2_ssh", defaults.corr2_ssh)),
         zapdos_ssh=str(hosts.get("zapdos_ssh", defaults.zapdos_ssh)),
         check_head_node=_as_bool(hosts.get("check_head_node", defaults.check_head_node)),

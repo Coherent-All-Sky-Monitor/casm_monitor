@@ -15,18 +15,30 @@ not initialise anything), ``fpga.is_programmed``, ``autocorr.get_new_spectra``,
 ``sw_sync``, no ``set_coeffs``.
 
 Boards are read strictly in sequence in this one process, each with a
-wall-clock budget (default 60 s): once the budget is spent the remaining calls
-for that board are skipped and recorded as ``budget_exceeded`` rather than left
-to hang. Every individual call is wrapped, so a golden-image or half-dead board
-produces an error string instead of killing the run.
+wall-clock budget (default 60 s). The budget is enforced per CALL, hard, with
+``signal.alarm``: a KATCP getter that hangs (a half-dead board answering its
+socket but not the request) is interrupted after whatever is left of the
+board's budget, that board is abandoned with a ``timeout`` error, and the run
+moves on to the next one. Without the alarm one hung call could spend the whole
+multi-board ssh timeout. Every individual call is also wrapped in
+try/except, so a golden-image or half-dead board produces an error string
+instead of killing the run.
 
-Output: exactly one ``np.savez_compressed`` archive on stdout. Logging goes to
-stderr, which the caller keeps in the job log.
+Output: exactly one ``np.savez_compressed`` archive, written at the very end to
+the ORIGINAL file descriptor 1, which is saved and taken away from python
+before anything else runs (``sys.stdout`` and fd 1 are redirected to stderr for
+the whole run). A stray ``print`` in casperfpga/casm_f therefore cannot land in
+the middle of the archive and corrupt it. Logging goes to stderr, which the
+caller keeps in the job log.
 """
 
 from __future__ import print_function
 
+import io
 import json
+import math
+import os
+import signal
 import sys
 import time
 import traceback
@@ -46,6 +58,21 @@ def log(msg):
     sys.stderr.flush()
 
 
+class CallTimeout(Exception):
+    """Raised in the main thread by SIGALRM when one getter overruns."""
+
+
+def _alarm_handler(signum, frame):
+    raise CallTimeout("hard per-call timeout")
+
+
+def _set_alarm(seconds):
+    """Arm (or, with 0, cancel) the per-call alarm; a no-op where unsupported."""
+    if not hasattr(signal, "SIGALRM"):  # pragma: no cover - posix only in practice
+        return
+    signal.alarm(int(seconds))
+
+
 class BoardReader(object):
     """One board, one budget, one dict of results plus its arrays."""
 
@@ -55,6 +82,10 @@ class BoardReader(object):
         self.t_start = time.time()
         self.errors = {}
         self.timings = {}
+        # Set when a call is killed by the alarm: the rest of THIS board is
+        # abandoned (its state is unknown and every further call would likely
+        # hang the same way), the next board still gets its full budget.
+        self.aborted = False
         self.meta = {
             "ip": ip,
             "programmed": None,
@@ -78,18 +109,39 @@ class BoardReader(object):
         return self.budget_s - (time.time() - self.t_start)
 
     def call(self, label, fn):
-        """Run one board getter; record its timing, its error, its result."""
-        if self.remaining_s() <= 0:
+        """Run one board getter under a hard alarm; record timing/error/result.
+
+        The alarm is set to whatever is left of the board's budget (at least
+        one second, since ``alarm`` has second resolution), so the sum of the
+        calls can never exceed the budget by more than that rounding.
+        """
+        if self.aborted:
+            self.errors[label] = "board_aborted"
+            return None
+        remaining = self.remaining_s()
+        if remaining <= 0:
             self.errors[label] = "budget_exceeded"
             return None
+        limit = max(1, int(math.ceil(remaining)))
         t0 = time.time()
         try:
+            _set_alarm(limit)
             value = fn()
+        except CallTimeout:
+            _set_alarm(0)
+            self.aborted = True
+            self.errors[label] = "timeout after %ds (board abandoned)" % limit
+            self.timings[label] = round(time.time() - t0, 3)
+            log("%s %s timed out after %ds; abandoning this board" % (self.ip, label, limit))
+            return None
         except Exception as exc:  # a dead/golden board raises anything
+            _set_alarm(0)
             self.errors[label] = "%s: %s" % (type(exc).__name__, exc)
             self.timings[label] = round(time.time() - t0, 3)
             log("%s %s failed: %s" % (self.ip, label, self.errors[label]))
             return None
+        finally:
+            _set_alarm(0)
         self.timings[label] = round(time.time() - t0, 3)
         return value
 
@@ -106,6 +158,10 @@ class BoardReader(object):
         # record which of these calls answer at all.
         self._read_sync(snap)
         if not programmed:
+            # Recorded as an error string, not just a log line: the ingesting
+            # side refuses a board that comes back with neither spectra nor a
+            # reason, so "why there is no data" has to travel in the archive.
+            self.errors["autocorr"] = "skipped: programmed=%s" % (programmed,)
             log("%s not programmed (golden image?): skipping data reads" % self.ip)
             return self.result()
 
@@ -227,6 +283,50 @@ def _as_int(value):
         return None
 
 
+def _take_stdout():
+    """Save fd 1, point fd 1 and ``sys.stdout`` at stderr; return the saved fd.
+
+    Everything printed by any library for the rest of the run goes to stderr,
+    so the only bytes that ever reach the real stdout are the archive written
+    through the returned descriptor.
+    """
+    try:
+        saved = os.dup(1)
+        os.dup2(2, 1)
+    except OSError:  # pragma: no cover - no fds to juggle (a test harness)
+        return None
+    sys.stdout = sys.stderr
+    return saved
+
+
+def _write_archive(fd, payload):
+    """Write the npz to the saved descriptor (or to ``sys.stdout`` if none)."""
+    buf = io.BytesIO()
+    np.savez_compressed(buf, **payload)
+    data = buf.getvalue()
+    if fd is None:  # pragma: no cover - only when fd juggling failed
+        out = getattr(sys.stdout, "buffer", sys.stdout)
+        out.write(data)
+        out.flush()
+        return len(data)
+    written = 0
+    while written < len(data):
+        written += os.write(fd, data[written:])
+    return written
+
+
+def _restore_stdout(fd):
+    """Put the saved descriptor back on fd 1 (tidy for any caller in-process)."""
+    if fd is None:
+        return
+    try:
+        os.dup2(fd, 1)
+        os.close(fd)
+    except OSError:  # pragma: no cover
+        pass
+    sys.stdout = sys.__stdout__
+
+
 def main(argv):
     ips = []
     budget_s = DEFAULT_BUDGET_S
@@ -239,6 +339,9 @@ def main(argv):
         sys.stderr.write("usage: python3 - [--budget=S] <ip> [<ip> ...]\n")
         return 2
 
+    if hasattr(signal, "SIGALRM"):
+        signal.signal(signal.SIGALRM, _alarm_handler)
+    stdout_fd = _take_stdout()
     t_start = time.time()
     payload = {}
     boards = {}
@@ -267,8 +370,13 @@ def main(argv):
     payload["meta_json"] = np.array(
         json.dumps(
             {
+                # ``version`` is what the ingesting side checks before it trusts
+                # anything else in here; ``ips`` is the list it REQUESTED, so a
+                # board silently missing from ``boards`` is detectable.
+                "version": SCRIPT_VERSION,
                 "script_version": SCRIPT_VERSION,
                 "ips": ips,
+                "requested_ips": ips,
                 "budget_s": budget_s,
                 "t_start": t_start,
                 "t_end": time.time(),
@@ -277,9 +385,9 @@ def main(argv):
             default=str,
         )
     )
-    np.savez_compressed(sys.stdout.buffer, **payload)
-    sys.stdout.buffer.flush()
-    log("wrote %d board(s) in %.1f s" % (len(ips), time.time() - t_start))
+    n_bytes = _write_archive(stdout_fd, payload)
+    _restore_stdout(stdout_fd)
+    log("wrote %d board(s), %d bytes, in %.1f s" % (len(ips), n_bytes, time.time() - t_start))
     return 0
 
 

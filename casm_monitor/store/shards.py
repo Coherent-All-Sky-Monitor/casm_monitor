@@ -141,6 +141,17 @@ class ShardWriter:
         arr = np.asarray(array)
         t1 = t0 if t1 is None else t1
         meta = dict(meta or {})
+        # Idempotent by (stream, t0): a replay after a crash re-derives the same
+        # samples from the same records, and a second copy of an already
+        # committed shard would duplicate that history for every reader. The
+        # committed one wins and this call is a no-op.
+        for row in self.store.list_shards(stream, t0=t0, t1=t0):
+            if float(row["t0"]) == float(t0):
+                log.info(
+                    "shard for %s t0=%.3f is already committed (id %s); skipping the rewrite",
+                    stream, t0, row["id"],
+                )
+                return row
         sdir = self.stream_dir(stream)
         sdir.mkdir(parents=True, exist_ok=True)
         final = self._shard_path(sdir, iso_compact(t0))

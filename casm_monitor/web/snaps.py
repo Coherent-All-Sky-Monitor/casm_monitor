@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from ..collectors import rowmap
 from ..collectors.kafka_bp import (
+    DB_FLOOR,
     FRAME_CADENCE_S,
     STREAM_FULL,
     STREAM_SUB,
@@ -38,7 +39,11 @@ log = logging.getLogger("casm_monitor.web.snaps")
 # full-resolution one (the plan's "sub for > 2 d").
 SUB_SPAN_S = 2 * 86400.0
 DEFAULT_MAX_CELLS = 1_000_000
-MAX_MAX_CELLS = 4_000_000
+# Hard bounds on what a caller may ask for. The upper one keeps a single
+# response bounded; the lower one is a real limit, not a suggestion -- a request
+# for 200 cells gets at most 200 cells, it is never quietly raised.
+MIN_MAX_CELLS = 100
+MAX_MAX_CELLS = 2_000_000
 N_ADC = 12
 # store event kind -> the epoch kind the frontend draws ("eq" | "adc_gain" |
 # "obs_restart", docs/api-snaps.md).
@@ -160,6 +165,31 @@ def input_to_row(mapping: dict[int, dict[str, Any]]) -> dict[int, int]:
     return {int(v): int(k) for k, v in rowmap.assignment(mapping).items()}
 
 
+def db_to_linear(values: np.ndarray) -> np.ndarray:
+    """dB -> linear power, floored the same way ``kafka_bp.to_db`` floors it."""
+    return np.maximum(np.power(10.0, np.asarray(values, dtype=np.float64) / 10.0), DB_FLOOR)
+
+
+def linear_to_db(power: np.ndarray) -> np.ndarray:
+    """Linear power -> dB, with the same floor."""
+    return 10.0 * np.log10(np.maximum(np.asarray(power, dtype=np.float64), DB_FLOOR))
+
+
+def average_db(values: np.ndarray, n: int) -> np.ndarray:
+    """Average dB values over the last axis IN LINEAR POWER, back to dB.
+
+    Averaging dB directly is a geometric mean: it under-reports a band that has
+    one hot channel and buries a dead channel's contribution, so every
+    decimation of a spectrum goes through the power domain.
+    """
+    return linear_to_db(average_channels(db_to_linear(values), n))
+
+
+def average_db_axis0(values: np.ndarray, n: int) -> np.ndarray:
+    """Same as :func:`average_db` over the FIRST axis (time)."""
+    return linear_to_db(average_channels(db_to_linear(values).T, n).T)
+
+
 def average_channels(values: np.ndarray, nchan: int) -> np.ndarray:
     """Block-average the last axis down to at most ``nchan`` points."""
     values = np.asarray(values, dtype=np.float64)
@@ -176,20 +206,31 @@ def average_channels(values: np.ndarray, nchan: int) -> np.ndarray:
 
 
 def decimate(z: np.ndarray, times: np.ndarray, freq: np.ndarray, max_cells: int):
-    """Thin (time, freq) to at most ``max_cells``: stride in time, mean in freq."""
+    """Reduce a (time, freq) dB matrix to at most ``max_cells`` cells.
+
+    Both axes are block-AVERAGED in linear power (never strided, never averaged
+    in dB), and ``len(t) * len(freq) <= max_cells`` holds strictly on the way
+    out: a time-heavy matrix collapses frequency to a single channel rather than
+    returning more cells than asked for.
+    """
     nt, nf = z.shape
     if nt * nf <= max_cells or nt == 0 or nf == 0:
         return z, times, freq
-    # Split the budget so neither axis collapses: keep the aspect ratio.
+    # Split the budget so neither axis collapses if it does not have to: keep
+    # the aspect ratio.
     scale = np.sqrt((nt * nf) / float(max_cells))
-    t_stride = max(1, int(np.ceil(scale)))
-    z = z[::t_stride]
-    times = times[::t_stride]
+    target_t = max(1, int(np.floor(nt / max(1.0, scale))))
+    # Even at one channel the time axis may not exceed the budget.
+    target_t = min(target_t, int(max_cells))
+    if target_t < nt:
+        z = average_db_axis0(z, target_t)
+        times = average_channels(times, target_t)
     nt = z.shape[0]
     target_f = max(1, int(max_cells // max(1, nt)))
     if nf > target_f:
-        z = average_channels(z, target_f)
+        z = average_db(z, target_f)
         freq = average_channels(freq, target_f)
+    assert z.shape[0] * z.shape[1] <= max_cells
     return z, times, freq
 
 
@@ -267,7 +308,7 @@ def build_router(
             if frame is not None and row is not None and row in rows_index:
                 values = [
                     round(float(v), 3)
-                    for v in average_channels(frame["power_db"][rows_index[row]], nchan)
+                    for v in average_db(frame["power_db"][rows_index[row]], nchan)
                 ]
             status = mapping.get(row, {}).get("status", "formula") if row is not None else "unmapped"
             inputs.append(
@@ -305,7 +346,7 @@ def build_router(
             raise HTTPException(
                 status_code=501, detail="only source=kafka exists until the board-read half lands"
             )
-        max_cells = max(1000, min(int(max_cells), MAX_MAX_CELLS))
+        max_cells = max(MIN_MAX_CELLS, min(int(max_cells), MAX_MAX_CELLS))
         now = time.time()
         start = _time_arg("t0", t0)
         end = _time_arg("t1", t1)
@@ -467,4 +508,11 @@ def build_router(
     return router
 
 
-__all__ = ["build_router", "board_table", "decimate", "average_channels", "station_label"]
+__all__ = [
+    "build_router",
+    "board_table",
+    "decimate",
+    "average_channels",
+    "average_db",
+    "station_label",
+]

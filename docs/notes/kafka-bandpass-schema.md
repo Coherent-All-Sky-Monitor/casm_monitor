@@ -66,6 +66,25 @@ on subband 0 (484.075 vs 484.375 MHz for the top of the band), so the frequency
 axis used everywhere is casm_io's: 484.375 MHz descending, 93.75/3072 MHz per
 channel.
 
+### Frame completeness and producer skew, measured 2026-09-08 (M1 review fixes)
+
+Read-only probe, group-less `assign()` on partition 0 of `casm_antenna_bp` from
+the log end, no commits, 301 s: **30 frame timestamps, all 30 complete 6/6, none
+incomplete**. Per frame:
+
+* wall-clock delay between the arrival of a frame's FIRST and its LAST record:
+  **max 1.1 s, median 0.9 s** — the six producers' records for one frame land in
+  the log essentially together;
+* spread of the Kafka CreateTime *within* one frame: **68.6 s typical, max 69.5 s**
+  (this is the corr1-vs-corr2 producer skew the earlier trace reported; it is a
+  timestamping offset, not an append-time gap).
+
+The completeness timeout is therefore `kafka.frame_timeout_s`, default **150 s**,
+measured from a frame's FIRST record: comfortably beyond the 69 s CreateTime skew
+in case delivery ever tracks it, and two orders of magnitude beyond the observed
+1.1 s arrival spread. The previous 15 s value was below the skew and would emit
+incomplete frames the moment delivery follows the timestamps.
+
 ### Row -> correlator input mapping
 
 **The mapping is `row = 2 x packet_idx`** (i.e. `isig = packet_idx = antenna -

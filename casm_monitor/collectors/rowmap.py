@@ -68,6 +68,22 @@ BAND_LO_MHZ = 400.0
 BAND_HI_MHZ = 480.0
 COMMON_MODE_N = 12
 
+# One integration of the layout_64ant format: 3072 channels x 8256 baselines x
+# 8 B (verified against the live files, plan.md "Feasibility numbers"), 32 per
+# file, plus the 4096-byte header the correlator has written since March 4.
+VIS_INTEGRATION_BYTES = 3072 * 8256 * 8
+VIS_INTEGRATIONS_PER_FILE = 32
+VIS_HEADER_BYTES = 4096
+VIS_FULL_FILE_BYTES = VIS_INTEGRATION_BYTES * VIS_INTEGRATIONS_PER_FILE
+# A file that reached its full size a moment ago may still be being closed and
+# flushed; the validation only ever reads one that has been still this long.
+VIS_MIN_AGE_S = 300.0
+
+# Correlations this weak (or a flat/NaN spectrum) say nothing about which input
+# a row belongs to, so they leave the row plainly ``formula`` instead of
+# accusing it of a mismatch.
+MIN_VALID_CORR = 0.3
+
 SNAP_MAP_CSV = Path("/home/casm/software/dev/antenna_layouts/casm_snap_map.csv")
 LAYOUT_CSV = Path("/home/casm/software/dev/antenna_layouts/current")
 # Boards with no antennas that only relay the PPS chain (wiki: snap-recovery).
@@ -142,32 +158,51 @@ def formula_mapping(layout: Iterable[dict[str, str]]) -> dict[int, dict[str, Any
 
 
 # -- visibilities -------------------------------------------------------
-def newest_complete_observation(vis_dir: str | os.PathLike[str]) -> tuple[str, int]:
+def newest_complete_observation(
+    vis_dir: str | os.PathLike[str],
+    *,
+    full_size: int | None = None,
+    min_age_s: float = VIS_MIN_AGE_S,
+    now: float | None = None,
+) -> tuple[str, int]:
     """(obs base string, index of the newest COMPLETE file) for the live obs.
 
-    "Complete" means the file has the full size of the observation's largest
-    file; the live one is still growing and is never read (the plan's guard
-    band rule, kept simple here because we only ever want a finished file).
+    "Complete" is an absolute test, not a relative one: the file must have the
+    FULL size of a finished file (32 integrations, with or without the 4096-byte
+    header) and must not have been written to for ``min_age_s``. Taking the
+    largest file of the observation instead — the previous rule — accepts a
+    single still-growing file when it is the only one there, and reading a
+    partially written integration produces a bandpass that is not any input's.
     """
     vis_dir = Path(vis_dir)
-    files: dict[str, dict[int, int]] = {}
+    t = time.time() if now is None else now
+    expected = (
+        {int(full_size)}
+        if full_size is not None
+        else {VIS_FULL_FILE_BYTES, VIS_FULL_FILE_BYTES + VIS_HEADER_BYTES}
+    )
+    files: dict[str, list[int]] = {}
     for path in vis_dir.glob("*.dat.*"):
         base, _, tail = path.name.rpartition(".dat.")
         idx = _int(tail)
         if idx is None:
             continue
         try:
-            files.setdefault(base, {})[idx] = path.stat().st_size
+            stat = path.stat()
         except OSError:
             continue
+        files.setdefault(base, [])
+        if stat.st_size in expected and t - stat.st_mtime > float(min_age_s):
+            files[base].append(idx)
     if not files:
         raise RuntimeError(f"no visibility files in {vis_dir}")
     obs = max(files)  # base strings sort chronologically
-    sizes = files[obs]
-    full = max(sizes.values())
-    complete = [idx for idx, size in sizes.items() if size == full]
+    complete = files[obs]
     if not complete:
-        raise RuntimeError(f"observation {obs} has no complete file yet")
+        raise RuntimeError(
+            f"observation {obs} has no file that is both full size "
+            f"({sorted(expected)} B) and older than {min_age_s:.0f} s"
+        )
     return obs, max(complete)
 
 
@@ -204,6 +239,15 @@ def read_input_autos(
 
 
 # -- the shape metric ---------------------------------------------------
+def _degenerate(spectrum: np.ndarray, mask: np.ndarray) -> bool:
+    """True for a spectrum with no usable shape: NaN/inf, non-positive, or flat."""
+    band = np.asarray(spectrum, dtype=np.float64)[mask]
+    if band.size == 0 or not np.isfinite(band).all() or not (band > 0).all():
+        return True
+    return float(np.std(np.log10(band))) <= 0.0
+
+
+
 def band_mask(freq_mhz: np.ndarray) -> np.ndarray:
     """Channels used for the match: the 400-480 MHz part of the band."""
     return (np.asarray(freq_mhz) >= BAND_LO_MHZ) & (np.asarray(freq_mhz) <= BAND_HI_MHZ)
@@ -267,6 +311,23 @@ def validate_rows(
         j = input_index[expected]
         scores = corr[k]
         own_score = float(scores[j])
+        # A degenerate row or input (all-NaN, flat, or simply not correlating
+        # with anything) carries no evidence either way. Calling that a
+        # "mismatch" would put a red flag on the operator's card for a dead
+        # feed, so such a row stays plainly "formula": unverified, not accused.
+        degenerate = _degenerate(rows_power[k], mask) or not np.isfinite(scores).any()
+        if not degenerate:
+            finite = scores[np.isfinite(scores)]
+            degenerate = finite.size == 0 or float(np.max(finite)) < MIN_VALID_CORR
+        if degenerate:
+            out[int(row)] = {
+                "packet_idx": expected,
+                "corr": round(own_score, 4) if np.isfinite(own_score) else None,
+                "runner_up": None,
+                "status": "formula",
+                "unverified_reason": f"degenerate spectrum or corr < {MIN_VALID_CORR:.2f}",
+            }
+            continue
         order = np.argsort(scores)
         best = int(order[-1])
         best_score = float(scores[best])
@@ -351,6 +412,29 @@ def save_row_map(
                 payload,
             ),
         )
+
+
+def purge_row_map(
+    store: Store, layout_path: str | os.PathLike[str] | None = None
+) -> list[int]:
+    """Delete stored rows whose input is no longer wired; returns those rows.
+
+    Without this a gated or removed feed keeps a stale validation row in the
+    store for ever, and :func:`current_mapping` keeps exposing it as an
+    assignable row.
+    """
+    layout_path = layout_path if layout_path is not None else LAYOUT_CSV
+    try:
+        wired = set(formula_mapping(read_layout(layout_path)))
+    except OSError:
+        # No readable layout: purging on that basis would delete everything.
+        return []
+    stale = sorted(row for row in load_row_map(store) if row not in wired)
+    for row in stale:
+        store.execute("DELETE FROM kafka_row_map WHERE row = ?", (int(row),))
+    if stale:
+        log.info("rowmap: purged %d row(s) no longer wired: %s", len(stale), stale)
+    return stale
 
 
 def load_row_map(store: Store) -> dict[int, dict[str, Any]]:

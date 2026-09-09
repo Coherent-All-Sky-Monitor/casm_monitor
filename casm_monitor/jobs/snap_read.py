@@ -5,9 +5,15 @@ Everything the operator's constraints demand lives here, not in the caller:
 * **one reader at a time, across processes and restarts.** The job takes a
   persisted lock (``watermarks`` row ``snap_read/lock``) with one atomic
   compare-and-set that only succeeds if the previous holder's lease has
-  expired, and releases it in a ``finally`` conditional on still being the
-  holder. A crashed job therefore frees the lock after ``LOCK_TTL_S`` and never
-  before.
+  expired, and releases it in a ``finally`` conditional on still owning it.
+  Ownership is a **unique token** per job (not the host:pid string, which a
+  restarted service can repeat), and the lease is **renewed every
+  ``LOCK_RENEW_S``** by a background thread for as long as the ssh runs, so a
+  read that outlives ``LOCK_TTL_S`` never lets a second reader in. If a renewal
+  fails — i.e. somebody else now owns the row — the renewer kills the ssh
+  process group immediately, so hardware contact stops before the new owner can
+  start its own. A crashed job therefore frees the lock ``LOCK_TTL_S`` after
+  its last renewal, and only then.
 * **one ssh session, boards in sequence.** The remote script
   (``casm_monitor/remote/snap_read_remote.py``) is piped to zapdos on stdin, so
   nothing is left on its disk, and it walks the boards one after another with a
@@ -35,11 +41,14 @@ import io
 import json
 import logging
 import os
+import signal
 import socket
 import subprocess
+import threading
 import time
+import uuid
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 
@@ -53,8 +62,12 @@ SHARD_STREAM = "snap_read"
 LOCK_STREAM = "snap_read"
 LOCK_KEY = "lock"
 LOCK_TTL_S = 600.0  # 10 min: longer than any read, short enough to self-heal
+LOCK_RENEW_S = 60.0  # the holder pushes the lease out again this often
 LAST_MANUAL_KEY = "last_manual_ts"
 LAST_READ_KEY = "last_read_ts"
+# The remote script's ``version`` in meta; an archive from any other version is
+# refused rather than half-understood.
+REMOTE_VERSION = 1
 
 REMOTE_SCRIPT = Path(__file__).resolve().parent.parent / "remote" / "snap_read_remote.py"
 
@@ -85,30 +98,63 @@ def ensure_latest_table(store: Store) -> None:
     store.execute(LATEST_DDL)
 
 
-def acquire_lock(store: Store, holder: str, *, ttl_s: float = LOCK_TTL_S, now: float | None = None) -> bool:
-    """Take the read lock, or return False if somebody still holds it.
+def new_lock_token() -> str:
+    """A lease token no other job can repeat (a restarted service reuses pids)."""
+    return uuid.uuid4().hex
+
+
+def acquire_lock(
+    store: Store,
+    holder: str,
+    *,
+    ttl_s: float = LOCK_TTL_S,
+    now: float | None = None,
+    token: str | None = None,
+) -> str | None:
+    """Take the read lock; returns the lease token, or None if somebody holds it.
 
     One statement, one transaction: the UPDATE branch fires only when the
     stored expiry is in the past, so two processes racing (a click and the
     scheduler, or a restarted service overlapping the old one) cannot both win.
+    The token identifies THIS lease: only its owner can renew or release it.
     """
     t = time.time() if now is None else now
-    value = json.dumps({"holder": holder, "acquired": t, "expires": t + float(ttl_s)})
+    tok = token or new_lock_token()
+    value = json.dumps(
+        {"holder": holder, "token": tok, "acquired": t, "expires": t + float(ttl_s)}
+    )
     cur = store.execute(
         "INSERT INTO watermarks (stream, key, value) VALUES (?, ?, ?) "
         "ON CONFLICT(stream, key) DO UPDATE SET value = excluded.value "
         "WHERE CAST(json_extract(watermarks.value, '$.expires') AS REAL) <= ?",
         (LOCK_STREAM, LOCK_KEY, value, t),
     )
+    return tok if cur.rowcount == 1 else None
+
+
+def renew_lock(
+    store: Store, token: str, *, ttl_s: float = LOCK_TTL_S, now: float | None = None
+) -> bool:
+    """Push our lease out by ``ttl_s``; False means we no longer own the lock.
+
+    A False here is not a warning, it is a stop signal: somebody else's read
+    may already be talking to the boards (see :class:`LeaseRenewer`).
+    """
+    t = time.time() if now is None else now
+    cur = store.execute(
+        "UPDATE watermarks SET value = json_set(value, '$.expires', ?) "
+        "WHERE stream = ? AND key = ? AND json_extract(value, '$.token') = ?",
+        (t + float(ttl_s), LOCK_STREAM, LOCK_KEY, token),
+    )
     return cur.rowcount == 1
 
 
-def release_lock(store: Store, holder: str) -> bool:
-    """Release the lock, but only if we are still its holder."""
+def release_lock(store: Store, token: str) -> bool:
+    """Release the lock, but only if the stored token is still ours."""
     cur = store.execute(
         "DELETE FROM watermarks WHERE stream = ? AND key = ? "
-        "AND json_extract(value, '$.holder') = ?",
-        (LOCK_STREAM, LOCK_KEY, holder),
+        "AND json_extract(value, '$.token') = ?",
+        (LOCK_STREAM, LOCK_KEY, token),
     )
     return cur.rowcount == 1
 
@@ -127,22 +173,59 @@ def lock_holder(store: Store, *, now: float | None = None) -> dict[str, Any] | N
 
 
 # -- npz parsing --------------------------------------------------------
-def parse_npz(data: bytes) -> dict[str, Any]:
+MANDATORY_ARRAYS = ("spectra", "adc_rms", "adc_mean", "adc_power", "eq_coeffs")
+
+
+def parse_npz(data: bytes, *, requested_ips: Sequence[str] | None = None) -> dict[str, Any]:
     """Turn the remote archive into ``{"meta": ..., "boards": {ip: {...}}}``.
 
     Raises ``ValueError`` when the archive is unusable, which is what makes a
-    truncated ssh transfer a failed job rather than a silent empty read.
+    truncated ssh transfer — or a partial, half-populated read — a failed job
+    rather than a silent empty one. Validated, in order:
+
+    * the archive carries ``meta_json`` and its ``version`` is
+      :data:`REMOTE_VERSION` (a zapdos running a different script is refused,
+      not half-understood);
+    * the ip set answered equals the ip set requested (a board silently dropped
+      from the pass is a failure, not a missing card);
+    * every board carries all of :data:`MANDATORY_ARRAYS`, and its spectra are
+      either populated or accompanied by an error string saying why not (this
+      is what a relay board with ``acc_len=0`` reports).
     """
     with np.load(io.BytesIO(data), allow_pickle=False) as npz:
         if "meta_json" not in npz:
             raise ValueError("npz has no meta_json (truncated or wrong stream?)")
         meta = json.loads(str(npz["meta_json"][()]))
+        version = meta.get("version", meta.get("script_version"))
+        if int(version or 0) != REMOTE_VERSION:
+            raise ValueError(
+                f"remote script version {version!r} != expected {REMOTE_VERSION}"
+            )
+        raw_boards = meta.get("boards") or {}
+        if requested_ips is not None:
+            wanted = {str(ip) for ip in requested_ips}
+            answered = {str(ip) for ip in raw_boards}
+            listed = {str(ip) for ip in (meta.get("ips") or [])}
+            if answered != wanted or listed != wanted:
+                raise ValueError(
+                    f"archive covers {sorted(answered)} (meta ips {sorted(listed)}), "
+                    f"requested {sorted(wanted)}"
+                )
         boards: dict[str, Any] = {}
-        for ip, board_meta in (meta.get("boards") or {}).items():
+        for ip, board_meta in raw_boards.items():
             entry = dict(board_meta)
-            for field in ("spectra", "adc_rms", "adc_mean", "adc_power", "eq_coeffs"):
+            for field in MANDATORY_ARRAYS:
                 key = f"{ip}__{field}"
-                entry[field] = np.asarray(npz[key]) if key in npz else None
+                if key not in npz:
+                    raise ValueError(f"board {ip} is missing its {field} array")
+                entry[field] = np.asarray(npz[key])
+            spectra = entry["spectra"]
+            if spectra.ndim != 2:
+                raise ValueError(f"board {ip} spectra have shape {spectra.shape}")
+            if not np.isfinite(spectra).any() and not (board_meta.get("errors") or {}):
+                raise ValueError(
+                    f"board {ip} returned no spectra and no error saying why"
+                )
             boards[ip] = entry
     return {"meta": {k: v for k, v in meta.items() if k != "boards"}, "boards": boards}
 
@@ -420,6 +503,76 @@ def _emit_events(
         )
 
 
+# -- the lease renewer --------------------------------------------------
+class LeaseRenewer:
+    """Keeps the read lease alive while the ssh runs, and kills it if it is lost.
+
+    A plain fixed lease is not enough: a seven-board pass plus ingestion can
+    outlive ``LOCK_TTL_S``, after which another job would legitimately acquire
+    the lock while this one is still contacting hardware. So the holder renews
+    every ``interval_s`` in this thread; the moment a renewal returns False
+    (the row is somebody else's now, or gone) the ssh **process group** is
+    killed, so the boards stop being touched before the new owner starts.
+
+    ``renew`` and ``kill`` are injected so the thread can be tested without a
+    store or a real ssh.
+    """
+
+    def __init__(
+        self,
+        renew: Callable[[], bool],
+        kill: Callable[[], None],
+        *,
+        interval_s: float = LOCK_RENEW_S,
+    ) -> None:
+        self._renew = renew
+        self._kill = kill
+        self._interval_s = float(interval_s)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.lost = False
+        self.renewals = 0
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval_s):
+            try:
+                ok = bool(self._renew())
+            except Exception as exc:  # a store error is treated as a loss
+                log.warning("snap_read: lease renewal raised: %s", exc)
+                ok = False
+            if ok:
+                self.renewals += 1
+                continue
+            self.lost = True
+            log.error("snap_read: lease lost; killing the ssh process group")
+            try:
+                self._kill()
+            except Exception:  # pragma: no cover - the process is already gone
+                log.debug("kill after lease loss failed", exc_info=True)
+            return
+
+    def __enter__(self) -> "LeaseRenewer":
+        self._thread = threading.Thread(target=self._run, name="snap_read-lease", daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5.0)
+
+
+def kill_process_group(proc: Any) -> None:
+    """SIGKILL the ssh's whole process group (it is started in its own session)."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except Exception:  # pragma: no cover - already reaped
+            pass
+
+
 # -- the remote call ----------------------------------------------------
 def ssh_command(settings: Settings, ips: Sequence[str]) -> list[str]:
     """``ssh zapdos python3 -`` with the board list as the script's argv."""
@@ -437,25 +590,63 @@ def ssh_command(settings: Settings, ips: Sequence[str]) -> list[str]:
     ]
 
 
-def read_boards_remote(settings: Settings, ips: Sequence[str]) -> dict[str, Any]:
-    """Run the one ssh session and parse its npz (raises on failure)."""
+def read_boards_remote(
+    settings: Settings,
+    ips: Sequence[str],
+    *,
+    lease_renew: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
+    """Run the one ssh session and parse its npz (raises on failure).
+
+    The child is started in its own session (``start_new_session=True``) so the
+    lease renewer can kill the whole process group — ssh plus the remote
+    python — the instant our ownership of the read lock is lost.
+    """
     script = REMOTE_SCRIPT.read_bytes()
     cmd = ssh_command(settings, ips)
     timeout = float(settings.snap_per_board_timeout_s) * len(ips) + 90.0
     print(f"snap_read: {' '.join(cmd)} (timeout {timeout:.0f} s)", flush=True)
     started = time.time()
-    proc = subprocess.run(cmd, input=script, capture_output=True, timeout=timeout, check=False)
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    renewer: LeaseRenewer | None = None
+    try:
+        if lease_renew is not None:
+            renewer = LeaseRenewer(lease_renew, lambda: kill_process_group(proc))
+            renewer.__enter__()
+        try:
+            stdout, stderr_bytes = proc.communicate(input=script, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            kill_process_group(proc)
+            stdout, stderr_bytes = proc.communicate()
+            raise RuntimeError(
+                f"ssh read timed out after {timeout:.0f}s: "
+                f"{stderr_bytes.decode('utf-8', 'replace').strip()[:500]}"
+            )
+    finally:
+        if renewer is not None:
+            renewer.__exit__(None, None, None)
     elapsed = time.time() - started
-    stderr = proc.stderr.decode("utf-8", "replace")
+    stderr = stderr_bytes.decode("utf-8", "replace")
     if stderr:
         print(stderr.strip(), flush=True)
+    if renewer is not None and renewer.lost:
+        raise RuntimeError(
+            "snap_read lost its lock lease during the read; the ssh was killed "
+            "and nothing is ingested"
+        )
     if proc.returncode != 0:
         raise RuntimeError(
             f"ssh read failed rc={proc.returncode} after {elapsed:.1f}s: {stderr.strip()[:500]}"
         )
-    parsed = parse_npz(proc.stdout)
+    parsed = parse_npz(stdout, requested_ips=ips)
     parsed["meta"]["ssh_elapsed_s"] = round(elapsed, 3)
-    parsed["meta"]["npz_bytes"] = len(proc.stdout)
+    parsed["meta"]["npz_bytes"] = len(stdout)
     return parsed
 
 
@@ -508,14 +699,17 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
     holder = f"{socket.gethostname()}:{os.getpid()}"
     store = Store(settings.db_path, store_root=settings.store_root)
     try:
-        if not acquire_lock(store, holder):
+        token = acquire_lock(store, holder)
+        if token is None:
             current = lock_holder(store)
             print(f"snap_read: lock held by {current}; not reading", flush=True)
             return {"status": "locked", "lock": current, "ips": ips, "reason": reason}
         try:
             started = time.time()
             try:
-                parsed = read_boards_remote(settings, ips)
+                parsed = read_boards_remote(
+                    settings, ips, lease_renew=lambda: renew_lock(store, token)
+                )
             except Exception as exc:
                 _note_zapdos_contact(store, False, str(exc)[:200])
                 raise
@@ -540,6 +734,6 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
                 "boards": summary,
             }
         finally:
-            release_lock(store, holder)
+            release_lock(store, token)
     finally:
         store.close()

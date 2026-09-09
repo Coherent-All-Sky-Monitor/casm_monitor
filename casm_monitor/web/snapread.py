@@ -5,13 +5,18 @@ Two routes, one read and one write, per ``docs/api-snaps.md``:
 * ``GET`` serves the *last* read out of the store. It never contacts zapdos and
   never blocks on hardware: if a board has never been read it answers
   ``ts: null`` rather than 404, so the card renders a "never read" state.
-* ``POST`` submits a ``snap_read`` job and is the only write. It refuses with
-  429 when a read is already in flight (the persisted lock, or a queued/running
-  job) or when the last manual request was less than
-  ``snap.manual_min_interval_s`` ago; the refusal carries ``retry_after_s`` so
-  the button can count down. The manual timestamp is stamped *before* the job
-  is submitted and only on a successful submit, so a burst of clicks produces
-  one job.
+* ``POST`` submits a ``snap_read`` job and is the only write. Checking the
+  limits, stamping the manual timestamp and inserting the job are ONE
+  transaction (:meth:`casm_monitor.store.Store.submit_job_atomic`): with them
+  as three separate steps two clicks landing together both passed the checks
+  and both enqueued a read, which the one-reader-at-a-time rule forbids. It
+  refuses with 429 when a read is already in flight (the persisted lease, or a
+  queued/running job) or when the last manual request was less than
+  ``max(snap.manual_min_interval_s, 300)`` s ago; the refusal carries
+  ``retry_after_s`` so the button can count down. A manual read also *claims*
+  the shared hourly zapdos slot when it is free, so the scheduler does not add
+  a second contact in the same hour. Requested ips are de-duplicated and must
+  all be configured boards (unknown ip -> 400).
 
 Wiring: the router is created by :func:`build_router` with the app's read-only
 handle and its single write handle, so this module opens no database of its own.
@@ -26,9 +31,11 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
+from ..collectors.services import zapdos_interval_s
 from ..config import Settings
 from ..jobs.snap_read import (
     LAST_MANUAL_KEY,
+    LOCK_KEY,
     LOCK_STREAM,
     latest_reads,
     lock_holder,
@@ -38,6 +45,10 @@ from ..store import ShardReader, Store
 from ..util import iso
 
 SNAP_READ_KIND = "snap_read"
+# Floor on the manual rate limit: the config may make the gap between two
+# operator-triggered board reads longer, never shorter (plan.md: "minimum 5 min
+# between manual reads").
+MANUAL_MIN_INTERVAL_FLOOR_S = 300.0
 # Board-side band: 4096 channels, 500 -> 375 MHz, descending (plan.md).
 FREQ_MHZ = np.linspace(500.0, 375.0, 4096)
 
@@ -60,14 +71,61 @@ def _pending_job(store: Store) -> dict[str, Any] | None:
     return {"id": int(rows[0]["id"]), "state": str(rows[0]["state"])} if rows else None
 
 
+def manual_min_interval_s(settings: Settings) -> float:
+    """Effective manual rate limit: the config can only make it longer."""
+    return max(float(settings.snap_manual_min_interval_s), MANUAL_MIN_INTERVAL_FLOOR_S)
+
+
+def normalise_ips(body: dict[str, Any] | None, settings: Settings) -> list[str] | None:
+    """Validated, de-duplicated board list from the request body (None = all).
+
+    Duplicates would read one board twice in the same pass, and an ip that is
+    not a configured board is a client error, not something to hand to the job.
+    """
+    ips = (body or {}).get("ips")
+    if ips is None:
+        return None
+    if not isinstance(ips, list) or not all(isinstance(x, str) for x in ips):
+        raise HTTPException(status_code=400, detail="ips must be a list of strings or null")
+    known = {b.ip for b in all_boards(settings)}
+    unknown = [ip for ip in ips if ip not in known]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown board ip(s): {sorted(set(unknown))}")
+    seen: list[str] = []
+    for ip in ips:
+        if ip not in seen:
+            seen.append(ip)
+    if not seen:
+        raise HTTPException(status_code=400, detail="ips must not be an empty list")
+    return seen
+
+
+def refusal_body(refusal: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    """The 429 body (``detail`` + ``retry_after_s``) for a store refusal."""
+    reason = refusal.get("reason")
+    if reason == "locked":
+        detail = f"a board read is already running (holder {refusal.get('holder')})"
+    elif reason == "pending":
+        detail = f"board read job {refusal.get('job_id')} is {refusal.get('state')}"
+    elif reason == "rate_limited":
+        detail = (
+            f"manual reads are limited to one per {manual_min_interval_s(settings):.0f} s "
+            f"(last one {float(refusal.get('age_s') or 0.0):.0f} s ago)"
+        )
+    else:  # pragma: no cover - no other reason can reach the manual path
+        detail = f"board read refused ({reason})"
+    return {"detail": detail, "retry_after_s": int(refusal.get("retry_after_s") or 1)}
+
+
 def manual_refusal(
     reader: Store, settings: Settings, *, now: float | None = None
 ) -> dict[str, Any] | None:
-    """Why a manual read must be refused right now, or None if it may run.
+    """Why a manual read would be refused right now, or None if it may run.
 
-    Three reasons, in the order the operator cares about: a read is already
-    running (the persisted lock), a job is already queued/running, or the last
-    manual request was too recent.
+    Advisory only (a read-only handle is enough): the POST route does not act
+    on this, it calls ``Store.submit_job_atomic`` which re-checks the very same
+    conditions inside the transaction that inserts the job. This function
+    exists for status/diagnostic callers and for the tests.
     """
     t = time.time() if now is None else now
     holder = lock_holder(reader, now=t)
@@ -85,7 +143,7 @@ def manual_refusal(
         }
     last_manual = reader.get_watermark(LOCK_STREAM, LAST_MANUAL_KEY)
     if last_manual is not None:
-        min_interval = float(settings.snap_manual_min_interval_s)
+        min_interval = manual_min_interval_s(settings)
         age = t - float(last_manual)
         if age < min_interval:
             return {
@@ -172,24 +230,29 @@ def build_router(reader: Store, writer: Store, settings: Settings) -> APIRouter:
 
     @router.post("/board-read")
     def post_board_read(body: dict[str, Any] | None = None) -> Any:
-        ips = (body or {}).get("ips")
-        if ips is not None:
-            if not isinstance(ips, list) or not all(isinstance(x, str) for x in ips):
-                raise HTTPException(status_code=400, detail="ips must be a list of strings or null")
-            known = {b.ip for b in all_boards(settings)}
-            unknown = [ip for ip in ips if ip not in known]
-            if unknown:
-                raise HTTPException(status_code=400, detail=f"unknown board ip(s): {unknown}")
-
-        refusal = manual_refusal(reader, settings)
-        if refusal is not None:
-            return JSONResponse(status_code=429, content=refusal)
-
-        # Stamped before the submit: two clicks landing together cannot both
-        # get through, because the second one sees this watermark.
-        writer.set_watermark(LOCK_STREAM, LAST_MANUAL_KEY, time.time())
+        ips = normalise_ips(body, settings)
         params = {"ips": ips, "reason": "manual"}
-        job_id = writer.submit_job(SNAP_READ_KIND, params)
+        now = time.time()
+        # ONE transaction: the limit checks, the manual timestamp, the claim on
+        # the hourly zapdos slot and the INSERT. Two clicks racing here cannot
+        # both come out with a job.
+        job_id, refusal = writer.submit_job_atomic(
+            SNAP_READ_KIND,
+            params,
+            refuse_if_pending=True,
+            lease=(LOCK_STREAM, LOCK_KEY),
+            rate_limit=(LOCK_STREAM, LAST_MANUAL_KEY, manual_min_interval_s(settings)),
+            # A manual read IS the hour's zapdos contact when the slot is free;
+            # taking it here stops the scheduler adding a second one. It is not
+            # a precondition: an operator may click within an hour of a
+            # scheduled read (the manual rate limit is what bounds that).
+            claim_slot=("zapdos", "last_probe_ts", zapdos_interval_s(settings)),
+            require_slot=False,
+            stamp=[(LOCK_STREAM, LAST_MANUAL_KEY, now)],
+            now=now,
+        )
+        if refusal is not None:
+            return JSONResponse(status_code=429, content=refusal_body(refusal, settings))
         writer.add_event(
             "job_submitted",
             severity="info",

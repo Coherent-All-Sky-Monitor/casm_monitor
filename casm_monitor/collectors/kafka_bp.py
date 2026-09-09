@@ -24,9 +24,29 @@ headers of each record.
 Frame assembly is keyed on the ``timestamp`` HEADER, not on the Kafka
 CreateTime: the six producers publish the same frame 28 s (corr1) to 96 s
 (corr2) after its timestamp, so rounding CreateTime to the 10 s cadence would
-scatter one frame across seven buckets. A frame is emitted when all six
-subbands have arrived or ``FRAME_TIMEOUT_S`` after its first record, with the
-missing subbands left at zero and flagged in ``subbands_ok``.
+scatter one frame across seven buckets. A record WITHOUT that header is dropped
+and counted (``kafka_bp.dropped_no_timestamp``); there is no CreateTime
+fallback, because a fallback silently invents a frame identity that the other
+five producers will not share.
+
+A frame is emitted when all six subbands have arrived or ``FRAME_TIMEOUT_S``
+after its FIRST record, with the missing subbands left at zero and flagged in
+``subbands_ok``. That timeout must exceed the producer skew (measured 2026-09-08
+at ~68 s between the corr1 and corr2 producers of one frame), hence the 150 s
+default and the ``kafka.frame_timeout_s`` config key. Records are deduplicated
+by ``(timestamp, offset)``: a second copy of a subband already in the frame, or
+any record for a frame that has already been emitted, is dropped and counted.
+``_latest`` only ever moves forward in frame timestamp, so a late straggler
+cannot make the live layer go backwards.
+
+Durability (plan: "readers only see committed shards"): the Kafka read
+watermark is advanced only past records whose frames are already in a committed
+shard. Everything still sitting in the sub/full buffers holds the watermark
+back, so a crash replays those records instead of losing them, and the replay is
+idempotent because :meth:`ShardWriter.write` skips a shard whose ``(stream, t0)``
+is already committed. A flush that fails keeps its buffer and retries on the
+next tick; after ``MAX_FLUSH_FAILURES`` attempts the buffer is dropped with an
+``error`` event rather than growing without bound.
 """
 
 from __future__ import annotations
@@ -35,6 +55,7 @@ import logging
 import os
 import struct
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -56,7 +77,17 @@ SUBBAND_NCHAN = 512
 N_SUBBANDS = NCHAN // SUBBAND_NCHAN
 
 FRAME_CADENCE_S = 10.0
-FRAME_TIMEOUT_S = 15.0
+# Producer skew measured on the live broker (docs/notes/kafka-bandpass-schema.md):
+# corr1's streams publish ~28 s after the frame timestamp, corr2's ~96 s, so a
+# frame is not complete for ~68 s. 150 s leaves better than 2x headroom; the
+# config key ``kafka.frame_timeout_s`` can raise it further.
+FRAME_TIMEOUT_S = 150.0
+# The only offsets the six deployed producers use (512 x stream).
+EXPECTED_OFFSETS = tuple(SUBBAND_NCHAN * i for i in range(N_SUBBANDS))
+MAX_FLUSH_FAILURES = 3
+# How many emitted frame timestamps to remember for the late-record check;
+# 4096 is > 11 h at the 10 s cadence, far beyond any producer's lateness.
+EMITTED_MEMORY = 4096
 # ~10 minutes of history on a first start: six producers x one message per
 # frame at the 10 s cadence.
 BACKFILL_MESSAGES = int(600.0 / FRAME_CADENCE_S) * N_SUBBANDS
@@ -98,6 +129,12 @@ _HEADER_FORMATS = {
 }
 
 
+def _min_offset(values: Sequence[int | None]) -> int | None:
+    """Smallest non-None offset, or None when there is nothing pending."""
+    known = [int(v) for v in values if v is not None]
+    return min(known) if known else None
+
+
 def latest_frame_path(settings: Settings) -> Path:
     """Where the newest assembled frame is mirrored for the web process."""
     return Path(settings.store_root) / "latest" / "kafka_bp_frame.npz"
@@ -125,23 +162,24 @@ def decode_headers(headers: Sequence[tuple[str, bytes]] | None) -> dict[str, Any
 def decode_bp(body: bytes, headers: dict[str, Any]) -> np.ndarray:
     """One ``casm_antenna_bp`` body as ``(nsig * npol, nchan)`` float32.
 
-    The row count is taken from the headers, never assumed: the deployed
-    producers publish 66 x 2 rows of 512 channels today and that is free to
-    change under us.
+    Strict on purpose: the row count comes from the headers and the body must
+    be exactly ``nsig * npol * nchan`` float32 of a 512-channel subband. A body
+    that does not match its headers is a record we do not understand, and
+    reshaping it on a guess would silently mis-assign every input's bandpass,
+    so it is refused (the caller drops and counts it).
     """
     flat = np.frombuffer(body, dtype="<f4")
-    nchan = int(headers.get("nchan") or SUBBAND_NCHAN)
+    nchan = int(headers.get("nchan") or 0)
     nsig = int(headers.get("nsig") or 0)
-    npol = int(headers.get("npol") or 1)
+    npol = int(headers.get("npol") or 0)
+    if nchan != SUBBAND_NCHAN:
+        raise ValueError(f"bp record has nchan={nchan}, expected {SUBBAND_NCHAN}")
     nrow = nsig * npol
-    if nrow <= 0 or nchan <= 0 or nrow * nchan != flat.size:
-        if nchan > 0 and flat.size % nchan == 0:
-            nrow = flat.size // nchan
-        else:
-            raise ValueError(
-                f"bp body of {flat.size} floats does not match headers "
-                f"nsig={nsig} npol={npol} nchan={nchan}"
-            )
+    if nsig <= 0 or npol <= 0 or nrow * nchan != flat.size:
+        raise ValueError(
+            f"bp body of {flat.size} floats does not match headers "
+            f"nsig={nsig} npol={npol} nchan={nchan}"
+        )
     return flat.reshape(nrow, nchan)
 
 
@@ -154,6 +192,12 @@ class Frame:
     nrow: int = 0
     data: np.ndarray | None = None
     subbands_ok: list[bool] = field(default_factory=lambda: [False] * N_SUBBANDS)
+    # Lowest Kafka offset that contributed to this frame: the read watermark
+    # may not pass it until the frame is in a committed shard.
+    offset_min: int | None = None
+
+    def note_offset(self, offset: int) -> None:
+        self.offset_min = offset if self.offset_min is None else min(self.offset_min, offset)
 
     def add(self, subband: int, block: np.ndarray) -> None:
         if not 0 <= subband < N_SUBBANDS:
@@ -180,6 +224,18 @@ class AssembledFrame:
     rows: list[int]
     power: np.ndarray  # (n_rows, NCHAN) linear
     subbands_ok: list[bool]
+    offset_min: int | None = None
+
+
+@dataclass
+class BufferedSample:
+    """One frame waiting in a buffer for its shard, with its offset provenance."""
+
+    ts: float
+    values: np.ndarray  # dB
+    subbands_ok: list[bool]
+    rows: list[int]
+    offset_min: int | None = None
 
 
 class KafkaBandpassCollector(Collector):
@@ -204,9 +260,8 @@ class KafkaBandpassCollector(Collector):
         self._frames: dict[float, Frame] = {}
         self._rows: list[int] = []
         self._latest: AssembledFrame | None = None
-        # buffered samples: (frame ts, dB array, subbands_ok, row set)
-        self._full_buf: dict[float, tuple[float, np.ndarray, list[bool], list[int]]] = {}
-        self._sub_buf: list[tuple[float, np.ndarray, list[bool], list[int]]] = []
+        self._full_buf: dict[float, BufferedSample] = {}
+        self._sub_buf: list[BufferedSample] = []
         self._full_flushed = 0.0
         self._sub_flushed = 0.0
         self._last_scalar = 0.0
@@ -216,6 +271,19 @@ class KafkaBandpassCollector(Collector):
         self._backoff_until = 0.0
         self._backoff_s = BACKOFF_MIN_S
         self._ok: int | None = None
+        self._frame_timeout_s = max(
+            float(getattr(settings, "kafka_frame_timeout_s", FRAME_TIMEOUT_S)), FRAME_CADENCE_S
+        )
+        # Frames already handed to the store: a record arriving for one of
+        # these is a late duplicate and is dropped, never re-emitted.
+        self._emitted: OrderedDict[float, None] = OrderedDict()
+        # Records seen but not usable, by reason, reported as scalars.
+        self._dropped: dict[str, int] = {}
+        # Read position bookkeeping: the highest offset consumed per topic, and
+        # the highest offset already persisted (what the watermark may show).
+        self._offset_seen: dict[str, int] = {}
+        self._offset_committed: dict[str, int] = {}
+        self._flush_failures: dict[str, int] = {}
 
     # -- collector entry point -----------------------------------------
     def collect(self, ctx: CollectorContext) -> None:
@@ -234,6 +302,7 @@ class KafkaBandpassCollector(Collector):
             self._handle_records(ctx, tp.topic, records)
         self._flush_expired_frames(ctx)
         self._maybe_flush_shards(ctx, time.time())
+        self._advance_watermarks(ctx)
         self._report(ctx, time.time())
         self._maybe_row_map(ctx)
         self._maybe_night_median(ctx)
@@ -256,6 +325,12 @@ class KafkaBandpassCollector(Collector):
                 self._flush_full(ctx)
             except Exception:  # pragma: no cover - best effort
                 log.exception("kafka_bp: flush of the full buffer failed on close")
+        # Whatever became durable above may now let the read position move on;
+        # whatever did not, holds it back and is replayed on the next start.
+        try:
+            self._advance_watermarks(ctx)
+        except Exception:  # pragma: no cover - best effort
+            log.exception("kafka_bp: could not persist the read position on close")
         if self._consumer is not None:
             try:
                 self._consumer.close(autocommit=False)
@@ -333,6 +408,11 @@ class KafkaBandpassCollector(Collector):
         )
 
     # -- records --------------------------------------------------------
+    def _drop(self, reason: str, offset: Any = None, detail: str = "") -> None:
+        """Count a record we refuse to use (reported as a scalar per reason)."""
+        self._dropped[reason] = self._dropped.get(reason, 0) + 1
+        log.debug("kafka_bp: dropped record at offset %s (%s) %s", offset, reason, detail)
+
     def _handle_records(self, ctx: CollectorContext, topic: str, records: Sequence[Any]) -> None:
         if not records:
             return
@@ -343,26 +423,41 @@ class KafkaBandpassCollector(Collector):
                 try:
                     self._ingest_bp(ctx, record)
                 except Exception as exc:
+                    self._drop("undecodable", record.offset, str(exc))
                     log.warning("kafka_bp: undecodable record at offset %s: %s", record.offset, exc)
             # casm_antenna_ts / _hg are decoded minimally for now: their
             # liveness (offset + record timestamp) is all M1 needs, and their
             # payload layouts get their own milestone.
-        ctx.store.set_watermark("kafka_bp", f"offset:{topic}", int(last.offset))
+        self._offset_seen[topic] = int(last.offset)
 
     def _ingest_bp(self, ctx: CollectorContext, record: Any) -> None:
         headers = decode_headers(record.headers)
-        block = decode_bp(record.value, headers)
         offset = headers.get("offset")
-        if offset is None:
-            raise ValueError("record has no 'offset' header, cannot place its subband")
+        if not isinstance(offset, int) or offset not in EXPECTED_OFFSETS:
+            raise ValueError(f"record has offset header {offset!r}, expected one of {EXPECTED_OFFSETS}")
         subband = int(offset) // SUBBAND_NCHAN
-        # The header timestamp is the frame identity; CreateTime only tells us
-        # how far behind the producer is.
-        frame_ts = float(headers.get("timestamp") or (record.timestamp / 1e3))
+        # The header timestamp is the frame identity. There is deliberately no
+        # CreateTime fallback: CreateTime trails the frame by 28-96 s depending
+        # on the producer, so it would scatter one frame across several keys.
+        raw_ts = headers.get("timestamp")
+        if not isinstance(raw_ts, int):
+            self._drop("no_timestamp", record.offset)
+            return
+        frame_ts = float(raw_ts)
+        block = decode_bp(record.value, headers)
+        if frame_ts in self._emitted:
+            # The frame has already gone to the store; re-opening it would
+            # publish the same 10 s twice.
+            self._drop("late_record", record.offset, f"frame {frame_ts:.0f}")
+            return
         frame = self._frames.get(frame_ts)
         if frame is None:
             frame = Frame(ts=frame_ts, first_seen=time.time())
             self._frames[frame_ts] = frame
+        if frame.subbands_ok[subband]:
+            self._drop("duplicate_subband", record.offset, f"frame {frame_ts:.0f} sb {subband}")
+            return
+        frame.note_offset(int(record.offset))
         frame.add(subband, block)
         if frame.complete:
             self._frames.pop(frame_ts, None)
@@ -370,12 +465,18 @@ class KafkaBandpassCollector(Collector):
 
     def _flush_expired_frames(self, ctx: CollectorContext) -> None:
         now = time.time()
-        for ts in sorted(k for k, f in self._frames.items() if now - f.first_seen >= FRAME_TIMEOUT_S):
+        timeout = self._frame_timeout_s
+        for ts in sorted(k for k, f in self._frames.items() if now - f.first_seen >= timeout):
             frame = self._frames.pop(ts)
             missing = [i for i, ok in enumerate(frame.subbands_ok) if not ok]
             log.info("kafka_bp frame %.0f incomplete after %.0fs, missing subbands %s",
-                     ts, FRAME_TIMEOUT_S, missing)
+                     ts, timeout, missing)
             self._emit_frame(ctx, frame)
+
+    def _note_emitted(self, ts: float) -> None:
+        self._emitted[ts] = None
+        while len(self._emitted) > EMITTED_MEMORY:
+            self._emitted.popitem(last=False)
 
     # -- frame -> store -------------------------------------------------
     def _emit_frame(self, ctx: CollectorContext, frame: Frame) -> None:
@@ -389,9 +490,14 @@ class KafkaBandpassCollector(Collector):
             rows=rows,
             power=frame.data[rows].astype(np.float32, copy=True),
             subbands_ok=list(frame.subbands_ok),
+            offset_min=frame.offset_min,
         )
-        self._latest = assembled
-        self._write_latest(ctx, assembled)
+        self._note_emitted(frame.ts)
+        # The live layer only moves forward: a straggler frame that completed
+        # after a newer one must not become "the latest bandpass".
+        if self._latest is None or assembled.ts >= self._latest.ts:
+            self._latest = assembled
+            self._write_latest(ctx, assembled)
         self._buffer(ctx, assembled)
 
     def _row_set(self, frame: Frame) -> list[int]:
@@ -431,15 +537,35 @@ class KafkaBandpassCollector(Collector):
 
     def _buffer(self, ctx: CollectorContext, frame: AssembledFrame) -> None:
         reduced = frame.power.reshape(frame.power.shape[0], SUB_NCHAN, SUB_CHAN_AVG).mean(axis=2)
-        self._sub_buf.append((frame.ts, to_db(reduced), list(frame.subbands_ok), list(frame.rows)))
+        self._sub_buf.append(
+            BufferedSample(
+                ts=frame.ts,
+                values=to_db(reduced),
+                subbands_ok=list(frame.subbands_ok),
+                rows=list(frame.rows),
+                offset_min=frame.offset_min,
+            )
+        )
         # The full-resolution stream keeps one frame per minute: the one whose
         # timestamp is nearest the minute boundary.
         minute = round(frame.ts / 60.0) * 60.0
         best = self._full_buf.get(minute)
-        if best is None or abs(frame.ts - minute) < abs(best[0] - minute):
-            self._full_buf[minute] = (
-                frame.ts, to_db(frame.power), list(frame.subbands_ok), list(frame.rows)
+        if best is None or abs(frame.ts - minute) < abs(best.ts - minute):
+            keep_offset = frame.offset_min if best is None else _min_offset(
+                [frame.offset_min, best.offset_min]
             )
+            self._full_buf[minute] = BufferedSample(
+                ts=frame.ts,
+                values=to_db(frame.power),
+                subbands_ok=list(frame.subbands_ok),
+                rows=list(frame.rows),
+                # Keep the LOWEST offset of the frames this minute has seen:
+                # dropping the loser's offset would let the watermark run past
+                # a record whose sample is not in any shard.
+                offset_min=keep_offset,
+            )
+        elif best is not None:
+            best.offset_min = _min_offset([best.offset_min, frame.offset_min])
         now = time.time()
         if not self._full_flushed:
             self._full_flushed = now
@@ -453,38 +579,85 @@ class KafkaBandpassCollector(Collector):
             self._flush_full(ctx)
 
     def _flush_sub(self, ctx: CollectorContext) -> None:
-        samples = sorted(self._sub_buf, key=lambda item: item[0])
-        self._sub_buf = []
+        """Write the 10 s buffer; the buffer is only emptied once it is durable."""
+        samples = sorted(self._sub_buf, key=lambda item: item.ts)
+        if not samples:
+            self._sub_flushed = time.time()
+            return
         self._sub_flushed = time.time()
-        self._write_stream(ctx, STREAM_SUB, samples, chan_avg=SUB_CHAN_AVG)
+        if self._write_stream(ctx, STREAM_SUB, samples, chan_avg=SUB_CHAN_AVG):
+            self._sub_buf = [s for s in self._sub_buf if s not in samples]
+            self._flush_failures[STREAM_SUB] = 0
+        elif self._note_flush_failure(ctx, STREAM_SUB):
+            self._sub_buf = [s for s in self._sub_buf if s not in samples]
 
     def _flush_full(self, ctx: CollectorContext) -> None:
-        samples = [self._full_buf[k] for k in sorted(self._full_buf)]
-        self._full_buf = {}
+        """Write the 60 s buffer; same keep-on-failure rule as the 10 s one."""
+        keys = sorted(self._full_buf)
+        samples = [self._full_buf[k] for k in keys]
+        if not samples:
+            self._full_flushed = time.time()
+            return
         self._full_flushed = time.time()
-        self._write_stream(ctx, STREAM_FULL, samples, chan_avg=1)
+        if self._write_stream(ctx, STREAM_FULL, samples, chan_avg=1):
+            for key in keys:
+                if self._full_buf.get(key) in samples:
+                    self._full_buf.pop(key, None)
+            self._flush_failures[STREAM_FULL] = 0
+        elif self._note_flush_failure(ctx, STREAM_FULL):
+            for key in keys:
+                self._full_buf.pop(key, None)
+
+    def _note_flush_failure(self, ctx: CollectorContext, stream: str) -> bool:
+        """Count a failed flush; True once the buffer must be dropped.
+
+        Keeping a buffer forever after a persistent store failure would grow
+        without bound and hold the Kafka watermark back indefinitely, so after
+        ``MAX_FLUSH_FAILURES`` attempts the samples are given up on loudly.
+        """
+        n = self._flush_failures.get(stream, 0) + 1
+        self._flush_failures[stream] = n
+        ctx.scalar("kafka_bp.flush_failures", n, tags={"stream": stream})
+        if n < MAX_FLUSH_FAILURES:
+            log.warning("kafka_bp: flush of %s failed (%d/%d), keeping the buffer",
+                        stream, n, MAX_FLUSH_FAILURES)
+            return False
+        self._flush_failures[stream] = 0
+        ctx.event(
+            "kafka_bp_flush_failed",
+            severity="error",
+            subject=f"kafka bandpass {stream}",
+            detail={"stream": stream, "attempts": n, "action": "buffer dropped"},
+        )
+        log.error("kafka_bp: flush of %s failed %d times; dropping the buffer", stream, n)
+        return True
 
     def _write_stream(
         self,
         ctx: CollectorContext,
         stream: str,
-        samples: list[tuple[float, np.ndarray, list[bool], list[int]]],
+        samples: list[BufferedSample],
         *,
         chan_avg: int,
-    ) -> None:
+    ) -> bool:
+        """Write one shard per row set. Returns False if any write failed."""
         if not samples:
-            return
+            return True
+        samples = self._not_yet_committed(ctx, stream, samples)
+        if not samples:
+            return True
         # One shard per row set: the array shape must be constant inside a
         # shard, and the meta must describe the rows those samples really had.
-        row_sets = {tuple(s[3]) for s in samples}
+        row_sets = {tuple(s.rows) for s in samples}
+        ok = True
         for rows in sorted(row_sets):
-            group = [s for s in samples if tuple(s[3]) == rows]
-            array = np.stack([s[1] for s in group]).astype(np.float32)
-            times = [float(s[0]) for s in group]
+            group = [s for s in samples if tuple(s.rows) == rows]
+            array = np.stack([s.values for s in group]).astype(np.float32)
+            times = [float(s.ts) for s in group]
             meta = {
                 "rows": list(rows),
                 "t": times,
-                "subbands_ok": [[bool(v) for v in s[2]] for s in group],
+                "subbands_ok": [[bool(v) for v in s.subbands_ok] for s in group],
                 "units": "dB",
                 "chan_avg": chan_avg,
                 "freq_top_mhz": rowmap.FREQ_TOP_MHZ,
@@ -494,9 +667,60 @@ class KafkaBandpassCollector(Collector):
                 },
             }
             try:
+                # Idempotent on replay: ShardWriter skips a (stream, t0) that
+                # is already committed, so re-reading from the watermark after
+                # a crash cannot duplicate history.
                 ctx.shards.write(stream, array, t0=times[0], t1=times[-1], meta=meta)
             except Exception:
+                ok = False
                 log.exception("kafka_bp: shard write failed for %s", stream)
+        return ok
+
+    def _not_yet_committed(
+        self, ctx: CollectorContext, stream: str, samples: list[BufferedSample]
+    ) -> list[BufferedSample]:
+        """Drop samples whose time is already inside a committed shard.
+
+        The ``(stream, t0)`` skip in :meth:`ShardWriter.write` only catches a
+        replay that happens to flush on the same boundary. A restart replays
+        from the watermark with a different buffer alignment, so without this
+        the same 10 s frames would be published again in a shard with a new
+        ``t0`` and every history reader would see them twice.
+        """
+        rows = ctx.store.query("SELECT MAX(t1) AS t FROM shards WHERE stream = ?", (stream,))
+        newest = rows[0]["t"] if rows else None
+        if newest is None:
+            return samples
+        keep = [s for s in samples if s.ts > float(newest)]
+        if len(keep) != len(samples):
+            log.info(
+                "kafka_bp: %d %s sample(s) at or before the newest committed shard "
+                "(t=%.0f) are already published; not rewriting them",
+                len(samples) - len(keep), stream, float(newest),
+            )
+        return keep
+
+    # -- read position --------------------------------------------------
+    def _advance_watermarks(self, ctx: CollectorContext) -> None:
+        """Persist the read position, never past a record that is not durable.
+
+        For ``casm_antenna_bp`` the safe position is one below the lowest
+        offset still held in a buffer or in a partially assembled frame; for
+        the other topics nothing is buffered, so everything consumed is safe.
+        """
+        pending = _min_offset(
+            [s.offset_min for s in self._sub_buf]
+            + [s.offset_min for s in self._full_buf.values()]
+            + [f.offset_min for f in self._frames.values()]
+        )
+        for topic, seen in sorted(self._offset_seen.items()):
+            safe = seen
+            if topic == TOPIC_BP and pending is not None:
+                safe = min(seen, pending - 1)
+            if safe < 0 or safe <= self._offset_committed.get(topic, -1):
+                continue
+            ctx.store.set_watermark("kafka_bp", f"offset:{topic}", int(safe))
+            self._offset_committed[topic] = int(safe)
 
     # -- scalars --------------------------------------------------------
     def _report(self, ctx: CollectorContext, now: float) -> None:
@@ -509,6 +733,8 @@ class KafkaBandpassCollector(Collector):
         if frame is None or now - self._last_scalar < SCALAR_INTERVAL_S:
             return
         self._last_scalar = now
+        for reason, count in sorted(self._dropped.items()):
+            ctx.scalar("kafka_bp.dropped", count, tags={"reason": reason})
         self._set_ok(ctx, 1)
         ctx.scalar("kafka_bp.subbands_ok", int(sum(frame.subbands_ok)))
         ctx.scalar("kafka_bp.frame_age_s", round(now - frame.ts, 1))
@@ -584,6 +810,10 @@ class KafkaBandpassCollector(Collector):
         source["reason"] = reason
         source["frame_ts"] = frame.ts
         rowmap.save_row_map(ctx.store, mapping, source, ts=time.time())
+        # An input the layout no longer wires must not keep a stored row.
+        purged = rowmap.purge_row_map(ctx.store)
+        if purged:
+            ctx.scalar("kafka_bp.row_map_purged", len(purged))
         ctx.store.set_watermark("kafka_bp", "row_map_ts", time.time())
         newest = self._newest_obs_restart(ctx)
         if newest is not None:

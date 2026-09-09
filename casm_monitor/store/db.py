@@ -31,6 +31,13 @@ def _jdump(obj: Any) -> str | None:
     return None if obj is None else json.dumps(obj, default=str)
 
 
+def _as_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _jload(text: Any) -> Any:
     if text is None or text == "":
         return None
@@ -373,6 +380,130 @@ class Store:
             (kind, _jdump(params or {}), time.time()),
         )
         return int(cur.lastrowid or 0)
+
+    def submit_job_atomic(
+        self,
+        kind: str,
+        params: dict[str, Any] | None = None,
+        *,
+        refuse_if_pending: bool = True,
+        lease: tuple[str, str] | None = None,
+        rate_limit: tuple[str, str, float] | None = None,
+        claim_slot: tuple[str, str, float] | None = None,
+        require_slot: bool = False,
+        stamp: Sequence[tuple[str, str, Any]] = (),
+        now: float | None = None,
+    ) -> tuple[int | None, dict[str, Any] | None]:
+        """Check the guards, stamp the watermarks and insert the job in ONE
+        ``BEGIN IMMEDIATE`` transaction; returns ``(job_id, None)`` or
+        ``(None, refusal)``.
+
+        This exists because "may I?" and "then do it" as separate transactions
+        is a race: two clicks (or a click and the scheduler) both passed the
+        checks and both enqueued a read, which the one-reader-at-a-time rule
+        forbids. SQLite serialises writers, so of two callers racing here
+        exactly one commits and the other sees the first one's effects.
+
+        Guards, in the order the caller cares about:
+
+        * ``refuse_if_pending`` — a job of the same ``kind`` is queued/running;
+        * ``lease`` — ``(stream, key)`` of a lease watermark
+          (``{"expires": ...}``, see :mod:`casm_monitor.jobs.snap_read`): a live
+          lease means the work is already running;
+        * ``rate_limit`` — ``(stream, key, min_interval_s)`` refuses while that
+          timestamp watermark is younger than ``min_interval_s``;
+        * ``claim_slot`` — ``(stream, key, min_interval_s)`` of a shared slot
+          (the hourly zapdos contact). It is claimed (stamped with ``now``)
+          when it is free; when it is not, the submit is refused only if
+          ``require_slot`` is set, otherwise it proceeds without re-claiming.
+
+        ``stamp`` is applied only on success, so a refused call writes nothing.
+        """
+        t = time.time() if now is None else now
+        refusal: dict[str, Any] | None = None
+        job_id: int | None = None
+
+        def _watermark(stream: str, key: str) -> Any:
+            row = self._conn.execute(
+                "SELECT value FROM watermarks WHERE stream = ? AND key = ?", (stream, key)
+            ).fetchone()
+            return None if row is None else _jload(row["value"])
+
+        def _set(stream: str, key: str, value: Any) -> None:
+            self._conn.execute(
+                "INSERT INTO watermarks (stream, key, value) VALUES (?, ?, ?) "
+                "ON CONFLICT(stream, key) DO UPDATE SET value = excluded.value",
+                (stream, key, _jdump(value)),
+            )
+
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                if refuse_if_pending:
+                    row = self._conn.execute(
+                        "SELECT id, state FROM jobs WHERE kind = ? "
+                        "AND state IN ('queued', 'running') ORDER BY id DESC LIMIT 1",
+                        (kind,),
+                    ).fetchone()
+                    if row is not None:
+                        refusal = {
+                            "reason": "pending",
+                            "job_id": int(row["id"]),
+                            "state": str(row["state"]),
+                            "retry_after_s": 10,
+                        }
+                if refusal is None and lease is not None:
+                    holder = _watermark(*lease)
+                    if isinstance(holder, dict):
+                        try:
+                            expires = float(holder.get("expires") or 0.0)
+                        except (TypeError, ValueError):
+                            expires = 0.0
+                        if expires > t:
+                            refusal = {
+                                "reason": "locked",
+                                "holder": holder.get("holder"),
+                                "retry_after_s": max(1, int(round(expires - t))),
+                            }
+                if refusal is None and rate_limit is not None:
+                    stream, key, min_interval = rate_limit
+                    last = _as_float(_watermark(stream, key))
+                    if last is not None and t - last < float(min_interval):
+                        refusal = {
+                            "reason": "rate_limited",
+                            "age_s": round(t - last, 1),
+                            "min_interval_s": float(min_interval),
+                            "retry_after_s": max(1, int(round(float(min_interval) - (t - last)))),
+                        }
+                if refusal is None and claim_slot is not None:
+                    stream, key, min_interval = claim_slot
+                    last = _as_float(_watermark(stream, key))
+                    if last is None or t - last >= float(min_interval):
+                        _set(stream, key, t)
+                    elif require_slot:
+                        refusal = {
+                            "reason": "slot_taken",
+                            "slot": f"{stream}/{key}",
+                            "age_s": round(t - last, 1),
+                            "retry_after_s": max(
+                                1, int(round(float(min_interval) - (t - last)))
+                            ),
+                        }
+                if refusal is None:
+                    for stream, key, value in stamp:
+                        _set(stream, key, value)
+                    cur = self._conn.execute(
+                        "INSERT INTO jobs (kind, params, state, created) VALUES (?, ?, 'queued', ?)",
+                        (kind, _jdump(params or {}), t),
+                    )
+                    job_id = int(cur.lastrowid or 0)
+                    self._conn.commit()
+                else:
+                    self._conn.rollback()
+            except Exception:
+                self._conn.rollback()
+                raise
+        return job_id, refusal
 
     def get_job(self, job_id: int) -> dict[str, Any] | None:
         rows = self.query("SELECT * FROM jobs WHERE id = ?", (job_id,))

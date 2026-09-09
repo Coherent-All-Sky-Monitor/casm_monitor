@@ -22,6 +22,11 @@ kafka:
     - casm_antenna_bp
     - casm_antenna_ts
     - casm_antenna_hg
+  # A frame waits this long for all six subband producers before it is emitted
+  # incomplete, counted from its FIRST record. The measured producer skew is
+  # ~68 s (corr1 streams ~28 s behind the frame timestamp, corr2 ~96 s), so
+  # this must stay well above that.
+  frame_timeout_s: 150
 
 hosts:
   # corr1 is local; corr2 and zapdos are reached over ssh (BatchMode, key auth).

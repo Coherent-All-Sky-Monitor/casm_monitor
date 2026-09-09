@@ -11,7 +11,9 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,7 @@ from casm_monitor.jobs.kinds import KINDS
 from casm_monitor.jobs.snap_read import (
     LAST_MANUAL_KEY,
     LOCK_STREAM,
+    LeaseRenewer,
     acquire_lock,
     eq_epoch,
     ingest,
@@ -36,6 +39,7 @@ from casm_monitor.jobs.snap_read import (
     parse_npz,
     pps_summary,
     release_lock,
+    renew_lock,
     ssh_command,
 )
 from casm_monitor.store import ShardWriter, Store
@@ -170,24 +174,28 @@ def make_npz(
     programmed: bool = True,
     budget_s: float = 60.0,
     acc_len: int = 1024,
+    connect: Any = None,
 ) -> bytes:
     """Run the real remote script against fake boards; return its stdout."""
     module = _load_remote_module()
-    module.BoardReader._connect = lambda self: FakeSnap(programmed, eq_scale, acc_len)
+    module.BoardReader._connect = connect or (
+        lambda self: FakeSnap(programmed, eq_scale, acc_len)
+    )
 
-    class _Out:
-        def __init__(self) -> None:
-            self.buffer = io.BytesIO()
-
-    out = _Out()
-    real_stdout = sys.stdout
-    sys.stdout = out  # type: ignore[assignment]
-    try:
-        rc = module.main([f"--budget={budget_s:g}", *ips])
-    finally:
-        sys.stdout = real_stdout
-    assert rc == 0
-    return out.buffer.getvalue()
+    # The script writes the archive to the ORIGINAL fd 1 (it redirects
+    # sys.stdout/fd 1 to stderr for the run so no library print can corrupt
+    # the npz), so the capture has to be at the descriptor level.
+    with tempfile.TemporaryFile() as sink:
+        saved = os.dup(1)
+        os.dup2(sink.fileno(), 1)
+        try:
+            rc = module.main([f"--budget={budget_s:g}", *ips])
+        finally:
+            os.dup2(saved, 1)
+            os.close(saved)
+        assert rc == 0
+        sink.seek(0)
+        return sink.read()
 
 
 # -- 1. npz parsing -----------------------------------------------------
@@ -220,6 +228,9 @@ def test_remote_unprogrammed_board_reports_pps_only() -> None:
     board = parsed["boards"][IP_RELAY]
     assert board["programmed"] is False
     assert np.all(np.isnan(board["spectra"]))
+    # ...and it says why there is no data, which is what makes the archive
+    # acceptable rather than a "partial read" failure.
+    assert board["errors"] == {"autocorr": "skipped: programmed=False"}
     assert board["pps"]["count_pps"] == 12345  # sync is still attempted
 
 
@@ -240,23 +251,163 @@ def test_remote_budget_zero_skips_calls() -> None:
     assert board["errors"]["connect"] == "budget_exceeded"
 
 
+class HangingSnap(FakeSnap):
+    """A board that answers its socket but never returns from one getter."""
+
+    def get_new_spectra(self, signal_block: int = 0) -> np.ndarray:
+        time.sleep(30.0)
+        raise AssertionError("the alarm should have interrupted this")
+
+
+def test_remote_hard_timeout_abandons_one_board_and_reads_the_next() -> None:
+    """A hung KATCP call is interrupted by the per-call alarm, that board is
+    abandoned, and the next board still gets its own full budget -- one hang
+    cannot eat the whole ssh session."""
+    started = time.time()
+    data = make_npz(
+        (IP_A, IP_RELAY),
+        budget_s=1.0,
+        connect=lambda self: HangingSnap() if self.ip == IP_A else FakeSnap(),
+    )
+    elapsed = time.time() - started
+    parsed = parse_npz(data, requested_ips=(IP_A, IP_RELAY))
+    hung = parsed["boards"][IP_A]
+    assert "timeout after 1s" in hung["errors"]["autocorr0"]
+    # Everything after the hang on that board is skipped, not attempted.
+    assert hung["errors"]["autocorr1"] == "board_aborted"
+    assert np.all(np.isnan(hung["spectra"]))
+    # The second board was read normally.
+    good = parsed["boards"][IP_RELAY]
+    assert good["errors"] == {}
+    assert good["spectra"][0][10] == pytest.approx(10.0)
+    # Two boards, one of them hung for 30 s of sleep: well under that.
+    assert elapsed < 15.0
+
+
+class ChattySnap(FakeSnap):
+    """A board whose library prints to stdout in the middle of the read."""
+
+    def get_status(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        print("casperfpga: chatter that must not reach the archive")
+        sys.stdout.write("more chatter\n")
+        sys.stdout.flush()
+        return super().get_status()
+
+
+def test_remote_stdout_chatter_does_not_corrupt_the_archive() -> None:
+    data = make_npz((IP_A,), connect=lambda self: ChattySnap())
+    assert b"chatter" not in data[:64]
+    parsed = parse_npz(data, requested_ips=(IP_A,))
+    assert parsed["boards"][IP_A]["adc_rms"][0] == pytest.approx(10.0)
+
+
+def test_parse_npz_validates_version_ips_and_arrays() -> None:
+    good = make_npz((IP_A, IP_RELAY))
+    assert set(parse_npz(good, requested_ips=(IP_A, IP_RELAY))["boards"]) == {IP_A, IP_RELAY}
+
+    # A board missing from the answer is a failed read, not a missing card.
+    with pytest.raises(ValueError, match="requested"):
+        parse_npz(good, requested_ips=(IP_A, IP_RELAY, "192.168.120.51"))
+    with pytest.raises(ValueError, match="requested"):
+        parse_npz(good, requested_ips=(IP_A,))
+
+    def repack(mutate) -> bytes:
+        with np.load(io.BytesIO(good), allow_pickle=False) as npz:
+            payload = {k: npz[k] for k in npz.files}
+        meta = json.loads(str(payload["meta_json"][()]))
+        mutate(meta, payload)
+        payload["meta_json"] = np.array(json.dumps(meta))
+        buf = io.BytesIO()
+        np.savez_compressed(buf, **payload)
+        return buf.getvalue()
+
+    def bump_version(meta, _payload) -> None:
+        meta["version"] = 99
+        meta["script_version"] = 99
+
+    with pytest.raises(ValueError, match="version"):
+        parse_npz(repack(bump_version))
+
+    def drop_spectra(_meta, payload) -> None:
+        payload.pop(f"{IP_A}__spectra")
+
+    with pytest.raises(ValueError, match="missing its spectra"):
+        parse_npz(repack(drop_spectra))
+
+    def blank_a_board(meta, payload) -> None:
+        payload[f"{IP_A}__spectra"] = np.full((12, 4096), np.nan, dtype=np.float32)
+        meta["boards"][IP_A]["errors"] = {}
+
+    with pytest.raises(ValueError, match="no spectra and no error"):
+        parse_npz(repack(blank_a_board))
+
+
 # -- 2. the persisted lock ---------------------------------------------
 def test_lock_is_compare_and_set(snap_store: Store) -> None:
     now = 1000.0
-    assert acquire_lock(snap_store, "a", ttl_s=600.0, now=now) is True
-    assert acquire_lock(snap_store, "b", ttl_s=600.0, now=now + 1) is False
+    token_a = acquire_lock(snap_store, "a", ttl_s=600.0, now=now)
+    assert token_a
+    assert acquire_lock(snap_store, "b", ttl_s=600.0, now=now + 1) is None
     assert lock_holder(snap_store, now=now + 1)["holder"] == "a"
-    # b cannot release a's lock; a can.
-    assert release_lock(snap_store, "b") is False
-    assert release_lock(snap_store, "a") is True
+    # Somebody else's token cannot release or renew a's lease; a's can.
+    assert release_lock(snap_store, "not-a-token") is False
+    assert renew_lock(snap_store, "not-a-token", ttl_s=600.0, now=now) is False
+    assert release_lock(snap_store, token_a) is True
     assert lock_holder(snap_store, now=now + 2) is None
 
 
-def test_expired_lock_is_taken_over(snap_store: Store) -> None:
-    assert acquire_lock(snap_store, "dead", ttl_s=600.0, now=1000.0) is True
-    assert acquire_lock(snap_store, "next", ttl_s=600.0, now=1000.0 + 599.0) is False
-    assert acquire_lock(snap_store, "next", ttl_s=600.0, now=1000.0 + 601.0) is True
-    assert lock_holder(snap_store, now=1000.0 + 602.0)["holder"] == "next"
+def test_expired_lock_is_taken_over_only_when_the_holder_stops_renewing(
+    snap_store: Store,
+) -> None:
+    """A lease expiry means the holder is dead. While it renews, no takeover."""
+    t0 = 1000.0
+    token = acquire_lock(snap_store, "holder", ttl_s=600.0, now=t0)
+    assert token
+    assert acquire_lock(snap_store, "next", ttl_s=600.0, now=t0 + 599.0) is None
+
+    # The holder renews every 60 s: a read that runs 20 minutes keeps the lock.
+    for step in range(1, 21):
+        assert renew_lock(snap_store, token, ttl_s=600.0, now=t0 + 60.0 * step) is True
+        assert acquire_lock(snap_store, "next", ttl_s=600.0, now=t0 + 60.0 * step + 1.0) is None
+    assert lock_holder(snap_store, now=t0 + 1200.0)["holder"] == "holder"
+
+    # It stops renewing (crash): the lease still has to run out first.
+    last_renewal = t0 + 1200.0
+    assert acquire_lock(snap_store, "next", ttl_s=600.0, now=last_renewal + 599.0) is None
+    taken = acquire_lock(snap_store, "next", ttl_s=600.0, now=last_renewal + 601.0)
+    assert taken and taken != token
+    assert lock_holder(snap_store, now=last_renewal + 602.0)["holder"] == "next"
+    # The dead holder's token is now worthless: it can neither renew nor release.
+    assert renew_lock(snap_store, token, now=last_renewal + 602.0) is False
+    assert release_lock(snap_store, token) is False
+
+
+def test_lease_renewer_kills_the_ssh_when_ownership_is_lost() -> None:
+    """The renewal loop is the stop signal: losing the row kills the process
+    group before the new owner can touch the boards."""
+    killed: list[str] = []
+    answers = [True, True, False]
+
+    renewer = LeaseRenewer(
+        lambda: answers.pop(0), lambda: killed.append("killpg"), interval_s=0.01
+    )
+    with renewer:
+        deadline = time.time() + 5.0
+        while not renewer.lost and time.time() < deadline:
+            time.sleep(0.01)
+    assert renewer.lost is True
+    assert renewer.renewals == 2
+    assert killed == ["killpg"]
+
+
+def test_lease_renewer_that_keeps_ownership_kills_nothing() -> None:
+    killed: list[str] = []
+    renewer = LeaseRenewer(lambda: True, lambda: killed.append("killpg"), interval_s=0.01)
+    with renewer:
+        time.sleep(0.1)
+    assert renewer.lost is False
+    assert renewer.renewals >= 2
+    assert killed == []
 
 
 # -- 3. ingest, eq_epoch and events ------------------------------------
@@ -388,6 +539,98 @@ def test_post_refused_while_lock_held(snap_store: Store, snap_settings: Settings
 def test_post_rejects_unknown_ip(snap_store: Store, snap_settings: Settings) -> None:
     client = _client(snap_store, snap_settings)
     assert client.post("/api/snaps/board-read", json={"ips": ["10.0.0.1"]}).status_code == 400
+    assert client.post("/api/snaps/board-read", json={"ips": []}).status_code == 400
+    assert client.post("/api/snaps/board-read", json={"ips": [7]}).status_code == 400
+
+
+def test_post_deduplicates_the_requested_ips(
+    snap_store: Store, snap_settings: Settings
+) -> None:
+    """The same board twice in one body would be read twice in one pass."""
+    client = _client(snap_store, snap_settings)
+    resp = client.post("/api/snaps/board-read", json={"ips": [IP_A, IP_A, IP_RELAY, IP_A]})
+    assert resp.status_code == 200
+    job = snap_store.get_job(resp.json()["job_id"])
+    assert job["params"]["ips"] == [IP_A, IP_RELAY]
+
+
+def test_two_concurrent_posts_produce_exactly_one_job(
+    snap_settings: Settings,
+) -> None:
+    """The check-and-enqueue is one transaction, so of two clicks landing in the
+    same millisecond (each with its own store handle, as two web workers would
+    have) exactly one gets a job."""
+    import threading
+
+    stores = [
+        Store(snap_settings.db_path, store_root=snap_settings.store_root) for _ in range(2)
+    ]
+    try:
+        clients = [_client(st, snap_settings) for st in stores]
+        start = threading.Barrier(2)
+        codes: list[int] = []
+        lock = threading.Lock()
+
+        def click(client: TestClient) -> None:
+            start.wait()
+            resp = client.post("/api/snaps/board-read", json={"ips": None})
+            with lock:
+                codes.append(resp.status_code)
+
+        threads = [threading.Thread(target=click, args=(c,)) for c in clients]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30.0)
+        assert sorted(codes) == [200, 429]
+        jobs = [j for j in stores[0].list_jobs() if j["kind"] == "snap_read"]
+        assert len(jobs) == 1
+    finally:
+        for st in stores:
+            st.close()
+
+
+def test_manual_read_takes_the_hourly_zapdos_slot(
+    snap_store: Store, snap_settings: Settings
+) -> None:
+    """A scheduler tick right after a manual read must not add a second
+    contact: the manual POST claimed the shared slot itself."""
+    client = _client(snap_store, snap_settings)
+    assert client.post("/api/snaps/board-read", json={"ips": None}).status_code == 200
+    job_id = [j for j in snap_store.list_jobs() if j["kind"] == "snap_read"][0]["id"]
+    claimed = snap_store.get_watermark("zapdos", "last_probe_ts")
+    assert claimed is not None
+
+    ctx = CollectorContext(
+        settings=snap_settings,
+        store=snap_store,
+        shards=ShardWriter(snap_store, snap_settings.shards_root),
+    )
+    collector = SnapReadCollector(snap_settings)
+    collector.collect(ctx)
+    assert len([j for j in snap_store.list_jobs() if j["kind"] == "snap_read"]) == 1
+
+    # Even once that job is finished and the lock free, the hour is spent.
+    snap_store.finish_job(job_id, "done", {"status": "ok"})
+    collector.collect(ctx)
+    assert len([j for j in snap_store.list_jobs() if j["kind"] == "snap_read"]) == 1
+    assert float(snap_store.get_watermark("zapdos", "last_probe_ts")) == float(claimed)
+
+
+def test_scheduler_does_not_submit_while_the_read_lease_is_held(
+    snap_store: Store, snap_settings: Settings
+) -> None:
+    token = acquire_lock(snap_store, "someone-else")
+    assert token
+    ctx = CollectorContext(
+        settings=snap_settings,
+        store=snap_store,
+        shards=ShardWriter(snap_store, snap_settings.shards_root),
+    )
+    SnapReadCollector(snap_settings).collect(ctx)
+    assert [j for j in snap_store.list_jobs() if j["kind"] == "snap_read"] == []
+    assert snap_store.get_watermark("zapdos", "last_probe_ts") is None
+    release_lock(snap_store, token)
 
 
 # -- 5. GET ------------------------------------------------------------

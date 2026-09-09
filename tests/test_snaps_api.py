@@ -242,3 +242,48 @@ def test_decimation_helpers():
     assert len(tt) * len(ff) <= 10_000
     assert snaps_module.average_channels(freq, 96).size == 96
     assert snaps_module.average_channels(freq, 5000).size == 3072
+
+
+def test_decimation_is_strict_about_max_cells():
+    """Including the time-heavy case, where frequency has to collapse."""
+    freq = rowmap.freq_axis_mhz()
+    for nt, nf, budget in ((100, 3072, 10_000), (50_000, 3072, 200), (7, 3072, 100)):
+        z = np.zeros((nt, nf), dtype=np.float32)
+        t = np.arange(nt, dtype=np.float64)
+        zz, tt, ff = snaps_module.decimate(z, t, freq[:nf], budget)
+        assert zz.shape == (len(tt), len(ff))
+        assert len(tt) * len(ff) <= budget, (nt, nf, budget, zz.shape)
+        assert len(tt) >= 1 and len(ff) >= 1
+
+
+def test_decimation_averages_in_linear_power_not_in_db():
+    """Two channels at 0 dB and 20 dB average to 10log10(50.5) = 17.0 dB, not
+    to the arithmetic mean of the dB values (10 dB)."""
+    z = np.array([[0.0, 20.0]], dtype=np.float64)
+    out = snaps_module.average_db(z, 1)
+    assert out[0, 0] == pytest.approx(10.0 * np.log10(50.5), abs=1e-6)
+    assert out[0, 0] != pytest.approx(10.0)
+
+    # Same in the time direction.
+    column = np.array([[0.0], [20.0]], dtype=np.float64)
+    assert snaps_module.average_db_axis0(column, 1)[0, 0] == pytest.approx(
+        10.0 * np.log10(50.5), abs=1e-6
+    )
+
+    # And through decimate(): a 2x2 of 0/20 dB reduced to one cell.
+    z4 = np.array([[0.0, 20.0], [0.0, 20.0]], dtype=np.float64)
+    zz, _tt, ff = snaps_module.decimate(z4, np.arange(2.0), np.array([1.0, 2.0]), 1)
+    assert zz.shape == (1, 1) and len(ff) == 1
+    assert zz[0, 0] == pytest.approx(10.0 * np.log10(50.5), abs=1e-6)
+
+
+def test_history_small_max_cells_is_not_raised_to_1000(settings, layouts):
+    seed(settings)
+    t0 = time.time() - 7200.0
+    with client(settings) as c:
+        body = c.get(f"/api/snaps/history?packet_idx=0&max_cells=200&t0={t0}").json()
+    assert 0 < len(body["t"]) * len(body["freq_mhz"]) <= 200
+    # Absurd requests are clamped to the documented bounds, not honoured.
+    with client(settings) as c:
+        huge = c.get(f"/api/snaps/history?packet_idx=0&max_cells=99999999&t0={t0}").json()
+    assert len(huge["t"]) * len(huge["freq_mhz"]) <= snaps_module.MAX_MAX_CELLS
