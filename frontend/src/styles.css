@@ -1,44 +1,26 @@
-:root {
-  color-scheme: light dark;
-  --bg: #f5f6f8;
-  --bg-elev: #ffffff;
-  --fg: #14161a;
-  --fg-dim: #5b6370;
-  --border: #d8dce2;
-  --chip-ok-bg: #eef0f3;
-  --chip-ok-fg: #14161a;
-  --chip-warn-bg: #fdf1d6;
-  --chip-warn-fg: #7a4e00;
-  --chip-stale-bg: #fbe3e3;
-  --chip-stale-fg: #8a1f1f;
-  --chip-error-bg: #fbe3e3;
-  --chip-error-fg: #8a1f1f;
-  --accent: #2258d6;
-  --banner-bg: #fbe3e3;
-  --banner-fg: #8a1f1f;
-  --mono-font: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", Consolas, monospace;
-  --sans-font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-}
+/* casm_monitor frontend styling. See frontend/DESIGN.md.
+ *
+ * Light theme only. Nothing here draws a box, badge, chip, card, shadow or
+ * gradient: the page is white paper with a grid of equal panels, thin lines
+ * and short sentences. Tokens are duplicated in src/lib/theme.ts for Plotly.
+ */
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14161a;
-    --bg-elev: #1b1e24;
-    --fg: #e8eaed;
-    --fg-dim: #9aa2b1;
-    --border: #2c3038;
-    --chip-ok-bg: #23262d;
-    --chip-ok-fg: #e8eaed;
-    --chip-warn-bg: #3a2f10;
-    --chip-warn-fg: #f0c04d;
-    --chip-stale-bg: #3a1616;
-    --chip-stale-fg: #ff8080;
-    --chip-error-bg: #3a1616;
-    --chip-error-fg: #ff8080;
-    --accent: #6f9bff;
-    --banner-bg: #3a1616;
-    --banner-fg: #ff8080;
-  }
+:root {
+  --paper: #ffffff;
+  --ink: #1f2937;
+  --muted: #6b7280;
+  --faint: #9ca3af;
+  --hairline: #e5e7eb;
+  --signal: #2563eb;
+  --alert: #dc2626;
+  --caution: #b45309;
+
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --gutter: 24px;
+  --panel-gap: 16px;
+  --section-gap: 40px;
+
+  color-scheme: light;
 }
 
 * {
@@ -49,692 +31,399 @@ html,
 body {
   margin: 0;
   padding: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--sans-font);
-  font-size: 14px;
-}
-
-#root {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.mono,
-.tabular {
-  font-family: var(--mono-font);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.5;
   font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
 }
 
 a {
-  color: var(--accent);
-}
-
-button {
-  font-family: inherit;
-  font-size: inherit;
-}
-
-/* App shell */
-
-.app-header {
-  display: flex;
-  align-items: center;
-  gap: 1.5rem;
-  padding: 0.6rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-elev);
-}
-
-.app-header h1 {
-  font-size: 1.05rem;
-  margin: 0;
-  white-space: nowrap;
-}
-
-.clocks {
-  display: flex;
-  gap: 1rem;
-  font-family: var(--mono-font);
-  font-variant-numeric: tabular-nums;
-  color: var(--fg-dim);
-  font-size: 0.85rem;
-}
-
-.clocks span strong {
-  color: var(--fg);
-  font-weight: 600;
-}
-
-.tab-nav {
-  display: flex;
-  gap: 0.25rem;
-  padding: 0 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-elev);
-  overflow-x: auto;
-}
-
-.tab-nav a {
-  display: inline-block;
-  padding: 0.5rem 0.75rem;
-  color: var(--fg-dim);
+  color: var(--signal);
   text-decoration: none;
-  border-bottom: 2px solid transparent;
-  white-space: nowrap;
 }
 
-.tab-nav a.active {
-  color: var(--fg);
-  border-bottom-color: var(--accent);
+button,
+input,
+select {
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: inherit;
 }
 
-.app-main {
-  flex: 1;
-  padding: 1rem;
-  max-width: 1200px;
-  width: 100%;
-  margin: 0 auto;
-}
+/* --- header ------------------------------------------------------------ */
 
-/* Status strip */
-
-.status-strip {
+.header {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  padding: 0.5rem 1rem;
-  background: var(--bg-elev);
-  border-bottom: 1px solid var(--border);
-}
-
-.status-group {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding-right: 0.6rem;
-  border-right: 1px solid var(--border);
-}
-
-.status-group:last-child {
-  border-right: none;
-}
-
-.status-group-name {
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--fg-dim);
-  margin-right: 0.15rem;
-}
-
-.chip {
-  display: inline-flex;
   align-items: baseline;
-  gap: 0.3rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  background: var(--chip-ok-bg);
-  color: var(--chip-ok-fg);
-  font-size: 0.78rem;
-  cursor: default;
-  border: 1px solid transparent;
-}
-
-.chip.state-warn {
-  background: var(--chip-warn-bg);
-  color: var(--chip-warn-fg);
-}
-
-.chip.state-stale,
-.chip.state-error {
-  background: var(--chip-stale-bg);
-  color: var(--chip-stale-fg);
-}
-
-.chip .chip-label {
-  color: var(--fg-dim);
-}
-
-.chip.state-warn .chip-label,
-.chip.state-stale .chip-label,
-.chip.state-error .chip-label {
-  color: inherit;
-  opacity: 0.85;
-}
-
-.chip .chip-value {
-  font-family: var(--mono-font);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-
-.chip .chip-age {
-  font-family: var(--mono-font);
-  font-variant-numeric: tabular-nums;
-  font-size: 0.7rem;
-  opacity: 0.75;
-}
-
-.chip .chip-icon {
-  font-size: 0.75rem;
-}
-
-.stale-banner {
-  background: var(--banner-bg);
-  color: var(--banner-fg);
-  padding: 0.4rem 1rem;
-  font-size: 0.82rem;
-  text-align: center;
-}
-
-/* Toast */
-
-.toast-stack {
-  position: fixed;
-  bottom: 1rem;
-  right: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  z-index: 1000;
-  max-width: 380px;
-}
-
-.toast {
-  background: var(--banner-bg);
-  color: var(--banner-fg);
-  border-radius: 6px;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.8rem;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  display: flex;
   justify-content: space-between;
-  gap: 0.5rem;
-  align-items: flex-start;
+  gap: var(--section-gap);
+  padding: 20px var(--gutter) 12px;
+  border-bottom: 1px solid var(--hairline);
 }
 
-.toast button {
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: 0.9rem;
-  line-height: 1;
-  padding: 0;
-}
-
-/* Page */
-
-.page-title {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  margin-bottom: 0.4rem;
-}
-
-.page-title h2 {
+.header__title {
   margin: 0;
-  font-size: 1.2rem;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink);
 }
 
-.milestone-tag {
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--fg-dim);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0.1rem 0.5rem;
-}
-
-.page-body p {
-  color: var(--fg-dim);
-  max-width: 70ch;
-  line-height: 1.5;
-}
-
-/* ToggleBar */
-
-.toggle-bar {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.toggle-bar button {
-  border: none;
-  background: var(--bg-elev);
-  color: var(--fg-dim);
-  padding: 0.3rem 0.7rem;
-  cursor: pointer;
-  border-right: 1px solid var(--border);
-  font-size: 0.8rem;
-}
-
-.toggle-bar button:last-child {
-  border-right: none;
-}
-
-.toggle-bar button.active {
-  background: var(--accent);
-  color: #fff;
-}
-
-/* TimeRangePicker */
-
-.time-range-picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.time-range-picker input[type="datetime-local"] {
-  background: var(--bg-elev);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.2rem 0.4rem;
-  font-family: var(--mono-font);
-}
-
-.time-range-picker label {
-  color: var(--fg-dim);
-  font-size: 0.78rem;
-}
-
-.time-range-picker__warning {
-  color: var(--chip-warn-fg);
-  font-size: 0.78rem;
-}
-
-/* Events table */
-
-.events-toolbar {
+.header__tabs {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  align-items: center;
-  margin-bottom: 0.75rem;
+  gap: 20px;
 }
 
-.events-toolbar input[type="text"],
-.events-toolbar select {
-  background: var(--bg-elev);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.3rem 0.5rem;
-  font-size: 0.8rem;
+.header__tabs a {
+  color: var(--muted);
+  padding-bottom: 2px;
+  border-bottom: 2px solid transparent;
 }
 
-table.events-table {
-  width: 100%;
+.header__tabs a:hover {
+  color: var(--ink);
+}
+
+.header__tabs a.active {
+  color: var(--ink);
+  border-bottom-color: var(--signal);
+}
+
+/* --- status sentence --------------------------------------------------- */
+
+.status {
+  padding: 12px var(--gutter) 0;
+}
+
+.status__sentence {
+  margin: 0;
+  color: var(--muted);
+  cursor: pointer;
+  max-width: 110ch;
+}
+
+.status__problem {
+  margin: 2px 0 0;
+  color: var(--alert);
+  cursor: pointer;
+  max-width: 110ch;
+}
+
+.status__table {
+  margin-top: 12px;
   border-collapse: collapse;
-  font-size: 0.82rem;
+  width: auto;
 }
 
-table.events-table th,
-table.events-table td {
-  text-align: left;
-  padding: 0.4rem 0.5rem;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
+.status__table td {
+  padding: 2px 24px 2px 0;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: baseline;
 }
 
-table.events-table th {
-  color: var(--fg-dim);
-  font-weight: 600;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+.status__table td:first-child {
+  color: var(--muted);
 }
 
-td.ts,
-td.severity {
-  font-family: var(--mono-font);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+.status__table td:last-child {
+  color: var(--faint);
 }
 
-.severity-info {
-  color: var(--fg-dim);
+.status__table tr.warn td,
+.status__table tr.error td,
+.status__table tr.stale td {
+  color: var(--alert);
 }
 
-.severity-warn {
-  color: var(--chip-warn-fg);
+/* --- alert line (replaces the toast stack) ----------------------------- */
+
+.alert-line {
+  padding: 8px var(--gutter) 0;
+  color: var(--alert);
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
 }
 
-.severity-error {
-  color: var(--chip-stale-fg);
-  font-weight: 600;
+/* --- page -------------------------------------------------------------- */
+
+.main {
+  padding: var(--section-gap) var(--gutter) 64px;
 }
 
-.event-detail-toggle {
+.page__lede {
+  margin: 0 0 var(--section-gap);
+  color: var(--muted);
+  max-width: 90ch;
+}
+
+.note {
+  color: var(--muted);
+  margin: 0;
+}
+
+/* --- plain controls ---------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 24px;
+  margin-bottom: var(--section-gap);
+}
+
+.segmented {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.segmented button {
   background: none;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--fg-dim);
-  cursor: pointer;
-  padding: 0.1rem 0.4rem;
-  font-size: 0.75rem;
-}
-
-pre.event-detail {
-  margin: 0.3rem 0 0 0;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.5rem;
-  font-size: 0.75rem;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-width: 60ch;
-}
-
-.empty-note {
-  color: var(--fg-dim);
-  font-style: italic;
-}
-
-/* SNAPs tab */
-
-.snap-page-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-}
-
-.snap-page-toolbar select {
-  background: var(--bg-elev);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.3rem 0.5rem;
-  font-size: 0.8rem;
-}
-
-.snap-history-slider {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  margin-bottom: 0.75rem;
-}
-
-.snap-history-slider input[type="range"] {
-  flex: 1;
-  max-width: 500px;
-}
-
-.snap-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-  gap: 0.75rem;
-}
-
-.snap-card {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.6rem 0.7rem;
-}
-
-.snap-card--relay {
-  max-width: 420px;
-}
-
-.snap-card__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.3rem;
-}
-
-.snap-card__title {
-  font-family: var(--mono-font);
-  font-size: 0.78rem;
-  font-weight: 600;
-}
-
-.snap-card__badges {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.4rem;
-}
-
-.snap-card__relay-note {
-  color: var(--fg-dim);
-  font-size: 0.75rem;
-  line-height: 1.4;
-  margin: 0.4rem 0 0 0;
-}
-
-.snap-read-btn {
-  background: var(--bg-elev);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.25rem 0.6rem;
-  font-size: 0.75rem;
+  border: none;
+  border-bottom: 1px solid transparent;
+  padding: 0 0 2px;
+  margin: 0;
+  color: var(--muted);
   cursor: pointer;
 }
 
-.snap-read-btn:disabled {
-  opacity: 0.55;
+.segmented button:hover {
+  color: var(--ink);
+}
+
+.segmented button.selected {
+  color: var(--ink);
+  border-bottom-color: var(--signal);
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.checkbox input {
+  accent-color: var(--signal);
+  margin: 0;
+}
+
+.text-button {
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  padding: 0 0 2px;
+  color: var(--signal);
+  cursor: pointer;
+}
+
+.text-button:hover:not(:disabled) {
+  border-bottom-color: var(--signal);
+}
+
+.text-button:disabled {
+  color: var(--faint);
   cursor: default;
 }
 
-.snap-tile-grid {
+.aside {
+  color: var(--muted);
+  margin-left: 10px;
+}
+
+.range-picker {
+  display: flex;
+  gap: 24px;
+  align-items: baseline;
+}
+
+.custom-range {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--muted);
+}
+
+.custom-range input {
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  padding: 0 0 2px;
+  color: var(--ink);
+}
+
+.custom-range input:focus {
+  outline: none;
+  border-bottom-color: var(--signal);
+}
+
+/* --- time slider ------------------------------------------------------- */
+
+.slider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: var(--section-gap);
+}
+
+.slider input[type="range"] {
+  flex: 1 1 auto;
+  max-width: 640px;
+  accent-color: var(--signal);
+  background: none;
+}
+
+.slider span {
+  color: var(--muted);
+}
+
+/* --- board sections and the panel grid --------------------------------- */
+
+.board {
+  margin-bottom: var(--section-gap);
+}
+
+.board__line {
+  margin: 0;
+  color: var(--muted);
+}
+
+.board__problem {
+  margin: 0;
+  color: var(--alert);
+}
+
+.board__line:last-of-type,
+.board__problem:last-of-type {
+  margin-bottom: var(--panel-gap);
+}
+
+.grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.3rem;
-  margin-top: 0.4rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--panel-gap);
 }
 
-.snap-tile {
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.15rem;
-  position: relative;
+@media (min-width: 1100px) {
+  .grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1600px) {
+  .grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+.panel {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
   cursor: pointer;
+  display: block;
+  width: 100%;
 }
 
-.snap-tile--bold {
-  border-color: var(--accent);
-}
-
-.snap-tile--dim {
-  opacity: 0.55;
-}
-
-.snap-tile__title {
-  font-size: 0.62rem;
-  color: var(--fg-dim);
-  white-space: nowrap;
+.panel__title {
+  font-size: 12px;
+  color: var(--muted);
+  /* `pre` keeps the double space between ant, station and packet index, as in
+     the team's matplotlib panel titles. */
+  white-space: pre;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding: 0 0.1rem;
+  margin-bottom: 2px;
 }
 
-.snap-tile__nodata {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 0.65rem;
-  color: var(--chip-stale-fg);
-  pointer-events: none;
+.panel__title--bf {
+  color: var(--ink);
 }
 
-/* mapping: "mismatch" -- a daily/obs-restart validation pass disagrees with
- * the row=2*packet_idx formula for this input (docs/notes/kafka-bandpass-
- * schema.md). Not a rejection: the tile still shows the formula row's data,
- * this is only an operator-visible flag. */
-.snap-tile__badge--mismatch {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  font-size: 0.55rem;
-  line-height: 1;
-  padding: 0.1rem 0.25rem;
-  border-radius: 3px;
-  background: var(--chip-stale-bg);
-  color: var(--chip-stale-fg);
-  pointer-events: none;
-}
-
-.snap-subband-strip {
+.panel__empty {
+  color: var(--faint);
+  font-size: 12px;
   display: flex;
-  gap: 2px;
-}
-
-.snap-subband-cell {
-  font-size: 0.55rem;
-  padding: 0.1rem 0.25rem;
-  border-radius: 3px;
-  background: var(--chip-ok-bg);
-  color: var(--fg-dim);
-}
-
-.snap-subband-cell--ok {
-  background: var(--chip-ok-bg);
-}
-
-.snap-subband-cell--bad {
-  background: var(--chip-stale-bg);
-  color: var(--chip-stale-fg);
-}
-
-.snap-subband-cell--unknown {
-  background: var(--chip-warn-bg);
-  color: var(--chip-warn-fg);
-}
-
-.snap-rms-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.3rem;
-  margin-top: 0.3rem;
-}
-
-.snap-rms-bar {
-  position: relative;
-  height: 14px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  overflow: visible;
-}
-
-.snap-rms-bar__healthy,
-.snap-rms-bar__target {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  background: rgba(34, 88, 214, 0.12);
-}
-
-.snap-rms-bar__target {
-  background: rgba(34, 88, 214, 0.28);
-}
-
-.snap-rms-bar__marker {
-  position: absolute;
-  top: -2px;
-  bottom: -2px;
-  width: 2px;
-  background: var(--accent);
-}
-
-.snap-rms-bar__marker--bad {
-  background: var(--chip-stale-fg);
-}
-
-.snap-rms-bar__value {
-  position: absolute;
-  right: 3px;
-  top: 0;
-  font-size: 0.6rem;
-  color: var(--fg-dim);
-}
-
-.snap-expanded-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 2rem 1rem;
-  z-index: 900;
-  overflow-y: auto;
 }
 
-.snap-expanded-panel {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1rem 1.2rem;
-  max-width: 900px;
+/* --- expanded input view ----------------------------------------------- */
+
+.detail__back {
+  display: inline-block;
+  margin-bottom: var(--section-gap);
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--signal);
+  cursor: pointer;
+}
+
+.detail__title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: pre;
+}
+
+.detail__block {
+  margin-bottom: var(--section-gap);
+  max-width: 1100px;
+}
+
+.detail__caption {
+  margin: 8px 0 0;
+  color: var(--muted);
+  max-width: 90ch;
+}
+
+/* --- events table ------------------------------------------------------ */
+
+.events {
+  border-collapse: collapse;
   width: 100%;
 }
 
-.snap-expanded-panel__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.5rem;
+.events th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--faint);
+  padding: 0 24px 6px 0;
+  border-bottom: 1px solid var(--hairline);
 }
 
-.snap-expanded-panel__header h3 {
-  margin: 0;
-  font-size: 0.95rem;
-  font-family: var(--mono-font);
+.events td {
+  padding: 5px 24px 5px 0;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: baseline;
 }
 
-.snap-expanded-panel__header button,
-.snap-expanded-panel__toolbar {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--fg);
-  cursor: pointer;
-  padding: 0.2rem 0.6rem;
-  font-size: 0.78rem;
+.events td:first-child {
+  color: var(--muted);
+  white-space: nowrap;
 }
 
-.snap-expanded-panel__toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  cursor: default;
-  border: none;
-  padding: 0;
-  margin-bottom: 0.3rem;
+.events td:last-child {
+  color: var(--muted);
+  width: 55%;
 }
 
-.snap-expanded-panel section {
-  margin-bottom: 1rem;
+.events .kind-info {
+  color: var(--muted);
 }
 
-.snap-expanded-panel h4 {
-  font-size: 0.8rem;
-  color: var(--fg-dim);
-  margin: 0 0 0.3rem 0;
+.events .kind-warn {
+  color: var(--caution);
 }
 
-.snap-legend {
-  margin: 0;
-  padding-left: 1.2rem;
-  font-size: 0.8rem;
-  line-height: 1.6;
+.events .kind-error {
+  color: var(--alert);
 }

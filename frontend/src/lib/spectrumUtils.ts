@@ -53,24 +53,3 @@ export function convertSeries(
   return values.map(dbToLinear);
 }
 
-/** True if a trace is entirely null/NaN (never-collected input). */
-export function isAllNull(values: (number | null)[] | null | undefined): boolean {
-  if (!values) return true;
-  return values.every((v) => v === null || v === undefined || Number.isNaN(v));
-}
-
-/** Coarse diagnosis per docs/plan.md's legend, from a single spectrum. Best
- * effort / illustrative only — the real diagnosis lives server-side per the
- * Events tab step detector; this just labels the expanded panel. */
-export function diagnose(values: (number | null)[] | null | undefined): string | null {
-  if (isAllNull(values)) return null;
-  const nums = (values as number[]).filter((v) => v !== null && !Number.isNaN(v));
-  if (nums.length === 0) return null;
-  const min = Math.min(...nums);
-  const spread = Math.max(...nums) - min;
-  const mean = nums.reduce((a, b) => a + b, 0) / nums.length;
-  if (spread < 0.6) {
-    return mean < -40 ? "flat, low level — likely dead feed" : "flat, pinned constant — likely railed ADC";
-  }
-  return null;
-}

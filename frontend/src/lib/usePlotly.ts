@@ -13,13 +13,19 @@ const DEFAULT_CONFIG = { displayModeBar: false, responsive: true };
 
 export function usePlotly(data: any[], layout: any, config: any = DEFAULT_CONFIG) {
   const ref = useRef<HTMLDivElement | null>(null);
+  // The element Plotly was last drawn into. Kept separately from `ref` so
+  // the unmount cleanup can purge a div that only mounted later (the
+  // waterfall and trend divs render once their data arrives), and so it does
+  // not depend on when React detaches the ref.
+  const drawnEl = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     let disposed = false;
     import("./plotly").then(({ default: Plotly }) => {
-      if (disposed || !el) return;
+      if (disposed) return;
+      drawnEl.current = el;
       Plotly.react(el, data, layout, config);
     });
     return () => {
@@ -29,9 +35,10 @@ export function usePlotly(data: any[], layout: any, config: any = DEFAULT_CONFIG
   }, [data, layout, config]);
 
   useEffect(() => {
-    const el = ref.current;
     return () => {
+      const el = drawnEl.current;
       if (el) {
+        drawnEl.current = null;
         import("./plotly").then(({ default: Plotly }) => Plotly.purge(el));
       }
     };

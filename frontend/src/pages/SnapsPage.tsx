@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import Page from "../components/Page";
-import ToggleBar from "../components/ToggleBar";
+import Segmented from "../components/Segmented";
 import TimeRangePicker from "../components/TimeRangePicker";
-import BoardCard, { type BoardCardTileData } from "../components/snaps/BoardCard";
-import RelayCard from "../components/snaps/RelayCard";
-import ExpandedPanel from "../components/snaps/ExpandedPanel";
+import BoardSection, { type PanelData } from "../components/snaps/BoardSection";
+import InputDetail from "../components/snaps/InputDetail";
 import { useUrlParam } from "../lib/useUrlParam";
 import { resolveSince } from "../lib/timeRange";
+import { formatAge } from "../lib/snapConstants";
+import { orderInputs, relayLine } from "../lib/snapText";
+import { formatUnixUtc } from "../lib/statusSentence";
 import {
   getJob,
   getSnapBoardRead,
   getSnapBoards,
-  getSnapLive,
   getSnapHistory,
+  getSnapLive,
   postSnapBoardRead,
 } from "../lib/api";
 import {
@@ -24,7 +25,6 @@ import {
   mockGetSnapLive,
   mockPostSnapBoardRead,
 } from "../lib/mockSnaps";
-import { ANTENNA_IPS } from "../lib/snapConstants";
 import { emitError } from "../lib/toast";
 import type {
   SnapBoardInfo,
@@ -34,36 +34,28 @@ import type {
 } from "../lib/types";
 
 const LIVE_POLL_MS = 10_000;
-const CARD_NCHAN = 768;
+const PANEL_NCHAN = 768;
 const JOB_POLL_MS = 2_000;
-
-function useMockFlag(params: URLSearchParams): boolean {
-  return params.get("mock") === "1";
-}
-
-function tileLabel(board: SnapBoardInfo, adc: number): string {
-  const input = board.inputs?.find((i) => i.adc === adc);
-  if (!input || input.packet_idx === null) return `A${adc} (unwired)`;
-  const station = input.station ? ` ${input.station}` : "";
-  const ant = input.antenna !== null ? ` ant ${input.antenna}` : "";
-  return `A${adc}${ant}${station} in${input.packet_idx}`.trim();
-}
+/** Per-input cap for the history grid: 12 inputs x 4 boards are fetched at
+ * once, so ask the server for a coarse pyramid level, not the full window. */
+const HISTORY_MAX_CELLS = 40_000;
 
 export default function SnapsPage() {
   const [searchParams] = useSearchParams();
-  const useMock = useMockFlag(searchParams);
-  const [mode] = useUrlParam("mode", "live");
+  const useMock = searchParams.get("mock") === "1";
+  const [layer] = useUrlParam("layer", "correlator");
   const [units] = useUrlParam("units", "dB");
-  const [selectedIp, setSelectedIp] = useUrlParam("board", ANTENNA_IPS[0]);
+  const [mode] = useUrlParam("mode", "live");
+  const [showUnwired, setShowUnwired] = useUrlParam("unwired", "0");
+  const [selected, setSelected] = useUrlParam("input", "");
 
   const [boards, setBoards] = useState<SnapBoardInfo[] | null>(null);
   const [liveByIp, setLiveByIp] = useState<Record<string, SnapLiveResponse>>({});
-  const [boardReadByIp, setBoardReadByIp] = useState<Record<string, SnapBoardReadResponse>>({});
-  const [expanded, setExpanded] = useState<{ ip: string; adc: number } | null>(null);
+  const [readByIp, setReadByIp] = useState<Record<string, SnapBoardReadResponse>>({});
+  const [histByPacketIdx, setHistByPacketIdx] = useState<Record<number, SnapHistoryResponse>>({});
 
-  // "Read boards now" state: a single countdown/lock covers both the global
-  // and per-card buttons since the backend serializes reads with one
-  // 5-minute lock across all boards (docs/plan.md).
+  // "Read boards now": the backend serializes reads behind one lock, so a
+  // single reading/countdown state covers the whole page.
   const [reading, setReading] = useState(false);
   const [retryAfterS, setRetryAfterS] = useState<number | null>(null);
   const activeJobId = useRef<number | null>(null);
@@ -86,12 +78,12 @@ export default function SnapsPage() {
             postRead: postSnapBoardRead,
             job: (id: number) => getJob(id),
             history: (packetIdx: number, t0: string, t1: string, source: "kafka" | "board") =>
-              getSnapHistory({ packet_idx: packetIdx, t0, t1, source }),
+              getSnapHistory({ packet_idx: packetIdx, t0, t1, source, max_cells: HISTORY_MAX_CELLS }),
           },
     [useMock],
   );
 
-  // Board inventory: fetched once (cheap, semi-static per docs/api-snaps.md).
+  // Board inventory: fetched once (semi-static per docs/api-snaps.md).
   useEffect(() => {
     let cancelled = false;
     api
@@ -106,21 +98,27 @@ export default function SnapsPage() {
   }, [api]);
 
   const antennaBoards = useMemo(
-    () => (boards ?? []).filter((b) => b.role === "antenna").sort((a, b) => (a.feng_id ?? 0) - (b.feng_id ?? 0)),
+    () =>
+      (boards ?? [])
+        .filter((b) => b.role === "antenna")
+        .sort((a, b) => (a.feng_id ?? 0) - (b.feng_id ?? 0)),
     [boards],
   );
   const relayBoards = useMemo(() => (boards ?? []).filter((b) => b.role === "relay"), [boards]);
+  const allBoardIps = useMemo(
+    () => [...antennaBoards.map((b) => b.ip), ...relayBoards.map((b) => b.ip)],
+    [antennaBoards, relayBoards],
+  );
 
-  // Live-mode polling: correlator bandpass every 10s per antenna board, plus
-  // an initial board-read fetch for every board (never polled continuously —
-  // only refreshed hourly server-side or after a manual read job completes).
+  // Live layer: the correlator bandpass, polled every 10 s. The board layer
+  // is never polled — it changes hourly server-side or after a manual read.
   useEffect(() => {
     if (mode !== "live" || antennaBoards.length === 0) return;
     let cancelled = false;
     function pollLive() {
       for (const board of antennaBoards) {
         api
-          .live(board.ip, CARD_NCHAN)
+          .live(board.ip, PANEL_NCHAN)
           .then((r) => {
             if (!cancelled) setLiveByIp((prev) => ({ ...prev, [board.ip]: r }));
           })
@@ -135,14 +133,12 @@ export default function SnapsPage() {
     };
   }, [mode, antennaBoards, api]);
 
-  const allBoardIps = useMemo(() => [...antennaBoards.map((b) => b.ip), ...relayBoards.map((b) => b.ip)], [antennaBoards, relayBoards]);
-
   const fetchBoardReads = useCallback(
     (ips: string[]) => {
       for (const ip of ips) {
         api
           .boardRead(ip)
-          .then((r) => setBoardReadByIp((prev) => ({ ...prev, [ip]: r })))
+          .then((r) => setReadByIp((prev) => ({ ...prev, [ip]: r })))
           .catch(() => undefined);
       }
     },
@@ -152,8 +148,7 @@ export default function SnapsPage() {
   useEffect(() => {
     if (allBoardIps.length === 0) return;
     fetchBoardReads(allBoardIps);
-    // Intentionally not polled: board reads only change hourly server-side
-    // or after a manual "read boards now" job (handled below).
+    // Intentionally not polled; see above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allBoardIps.join(",")]);
 
@@ -181,7 +176,7 @@ export default function SnapsPage() {
             } else if (job.state === "failed" || job.state === "cancelled") {
               setReading(false);
               activeJobId.current = null;
-              emitError(`board read job ${jobId} ${job.state}`);
+              emitError(`The board read job ${jobId} ${job.state}.`);
             } else {
               setTimeout(poll, JOB_POLL_MS);
             }
@@ -196,140 +191,133 @@ export default function SnapsPage() {
     [api, fetchBoardReads],
   );
 
-  const handleReadNow = useCallback(
-    (ips: string[] | null) => {
-      if (reading || retryAfterS) return;
-      setReading(true);
-      api
-        .postRead(ips)
-        .then((res) => {
-          if (res.throttled) {
-            setReading(false);
-            setRetryAfterS(res.retryAfterS);
-            emitError(res.detail);
-            return;
-          }
-          activeJobId.current = res.jobId;
-          pollJob(res.jobId, ips ?? allBoardIps);
-        })
-        .catch(() => setReading(false));
-    },
-    [api, reading, retryAfterS, pollJob, allBoardIps],
-  );
+  const handleReadNow = useCallback(() => {
+    if (reading || retryAfterS) return;
+    setReading(true);
+    api
+      .postRead(null)
+      .then((res) => {
+        if (res.throttled) {
+          setReading(false);
+          setRetryAfterS(res.retryAfterS);
+          emitError(res.detail);
+          return;
+        }
+        activeJobId.current = res.jobId;
+        pollJob(res.jobId, allBoardIps);
+      })
+      .catch(() => setReading(false));
+  }, [api, reading, retryAfterS, pollJob, allBoardIps]);
 
-  // --- History mode --------------------------------------------------
+  // --- history mode ------------------------------------------------------
   const [histRange] = useUrlParam("hist_range_range", "24h");
   const [histFrom] = useUrlParam("hist_range_from", "");
-  const [histSliderIdx, setHistSliderIdx] = useUrlParam("hist_i", "0");
-  const selectedBoard = antennaBoards.find((b) => b.ip === selectedIp) ?? antennaBoards[0];
-  const layerParamKey = selectedBoard ? `layer_${selectedBoard.ip.split(".").pop()}` : "layer_x";
-  const [selectedLayer] = useUrlParam(layerParamKey, "correlator");
-  const [histByPacketIdx, setHistByPacketIdx] = useState<Record<number, SnapHistoryResponse>>({});
+  const [histIdx, setHistIdx] = useUrlParam("hist_i", "0");
 
   useEffect(() => {
-    if (mode !== "history" || !selectedBoard) return;
+    if (mode !== "history" || antennaBoards.length === 0) return;
     let cancelled = false;
     const t1 = new Date().toISOString();
     const t0 = resolveSince(histRange, histFrom) || new Date(Date.now() - 24 * 3600_000).toISOString();
-    const wiredInputs = (selectedBoard.inputs ?? []).filter((i) => i.packet_idx !== null);
+    const source = layer === "board" ? "board" : "kafka";
+    const wanted = antennaBoards.flatMap((b) =>
+      (b.inputs ?? []).filter((i) => i.packet_idx !== null).map((i) => i.packet_idx as number),
+    );
     Promise.all(
-      wiredInputs.map((i) =>
-        api
-          .history(i.packet_idx as number, t0, t1, selectedLayer === "board" ? "board" : "kafka")
-          .then((h) => [i.packet_idx as number, h] as const),
+      wanted.map((pidx) =>
+        api.history(pidx, t0, t1, source).then((h) => [pidx, h] as const).catch(() => null),
       ),
     )
       .then((entries) => {
         if (cancelled) return;
         const map: Record<number, SnapHistoryResponse> = {};
-        for (const [pidx, h] of entries) map[pidx] = h;
+        for (const entry of entries) {
+          if (entry) map[entry[0]] = entry[1];
+        }
         setHistByPacketIdx(map);
-        setHistSliderIdx("0");
+        setHistIdx("0");
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, selectedBoard?.ip, selectedLayer, histRange, histFrom]);
+  }, [mode, antennaBoards, layer, histRange, histFrom]);
 
-  const sliderMax = useMemo(() => {
-    const lens = Object.values(histByPacketIdx).map((h) => h.t.length);
-    return lens.length ? Math.max(...lens) - 1 : 0;
-  }, [histByPacketIdx]);
-  const sliderIdx = Math.min(parseInt(histSliderIdx, 10) || 0, sliderMax);
+  const histFrames = useMemo(() => Object.values(histByPacketIdx), [histByPacketIdx]);
+  const sliderMax = histFrames.length ? Math.max(...histFrames.map((h) => h.t.length)) - 1 : 0;
+  const sliderIdx = Math.min(Math.max(parseInt(histIdx, 10) || 0, 0), Math.max(sliderMax, 0));
+  const sliderTime = useMemo(() => {
+    const withT = histFrames.find((h) => h.t.length > sliderIdx);
+    return withT ? formatUnixUtc(withT.t[sliderIdx]) : null;
+  }, [histFrames, sliderIdx]);
 
-  function buildTiles(board: SnapBoardInfo, source: "correlator" | "board"): BoardCardTileData[] {
-    const inputs = board.inputs ?? [];
-    if (mode === "history") {
-      return inputs.map((input) => {
-        const hist = input.packet_idx !== null ? histByPacketIdx[input.packet_idx] : undefined;
-        const freqMhz = hist?.freq_mhz ?? (source === "board" ? [] : []);
-        const values = hist ? hist.z_db[Math.min(sliderIdx, hist.t.length - 1)] ?? null : null;
-        return {
-          adc: input.adc,
-          label: tileLabel(board, input.adc),
-          freqMhz,
-          values,
-          bold: input.in_bf,
-          dimmed: !input.functional,
-        };
-      });
-    }
-    if (source === "correlator") {
+  // --- panel data --------------------------------------------------------
+  const panelsFor = useCallback(
+    (board: SnapBoardInfo): PanelData[] => {
+      const inputs = orderInputs(board.inputs ?? [], showUnwired === "1");
+      const read = readByIp[board.ip];
       const live = liveByIp[board.ip];
       return inputs.map((input) => {
+        const rms = layer === "board" ? read?.adc_rms?.[input.adc] ?? null : null;
+        if (mode === "history") {
+          const hist = input.packet_idx !== null ? histByPacketIdx[input.packet_idx] : undefined;
+          const frame = hist ? hist.z_db[Math.min(sliderIdx, hist.t.length - 1)] ?? null : null;
+          return { input, freqMhz: hist?.freq_mhz ?? [], values: frame, rms };
+        }
+        if (layer === "board") {
+          return { input, freqMhz: read?.freq_mhz ?? [], values: read?.spectra?.[input.adc] ?? null, rms };
+        }
         const li = live?.inputs.find((x) => x.adc === input.adc);
-        return {
-          adc: input.adc,
-          label: tileLabel(board, input.adc),
-          freqMhz: live?.freq_mhz ?? [],
-          values: li?.bp ?? null,
-          bold: input.in_bf,
-          dimmed: !input.functional || li?.mapping === "unmapped",
-          mismatch: li?.mapping === "mismatch",
-        };
+        return { input, freqMhz: live?.freq_mhz ?? [], values: li?.bp ?? null, rms };
       });
-    }
-    const read = boardReadByIp[board.ip];
-    return inputs.map((input) => ({
-      adc: input.adc,
-      label: tileLabel(board, input.adc),
-      freqMhz: read?.freq_mhz ?? [],
-      values: read?.spectra?.[input.adc] ?? null,
-      bold: input.in_bf,
-      dimmed: !input.functional,
-    }));
-  }
+    },
+    [showUnwired, readByIp, liveByIp, layer, mode, histByPacketIdx, sliderIdx],
+  );
 
-  const expandedBoard = expanded ? (boards ?? []).find((b) => b.ip === expanded.ip) : null;
-  const expandedTile = useMemo(() => {
-    if (!expanded || !expandedBoard) return null;
-    const tiles = buildTiles(expandedBoard, mode === "history" ? (selectedLayer as "correlator" | "board") : "correlator");
-    return tiles.find((t) => t.adc === expanded.adc) ?? null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expanded, expandedBoard, liveByIp, boardReadByIp, histByPacketIdx, sliderIdx, mode, selectedLayer]);
+  // --- selection ---------------------------------------------------------
+  const selectedInput = useMemo(() => {
+    if (!selected) return null;
+    const [ip, adcStr] = selected.split(":");
+    const board = (boards ?? []).find((b) => b.ip === ip);
+    const input = board?.inputs?.find((i) => i.adc === Number(adcStr));
+    return board && input ? { board, input } : null;
+  }, [selected, boards]);
 
   if (!boards) {
+    return <p className="note">Loading the board inventory.</p>;
+  }
+
+  if (selectedInput) {
     return (
-      <Page title="SNAPs">
-        <p className="empty-note">loading board inventory…</p>
-      </Page>
+      <InputDetail
+        board={selectedInput.board}
+        input={selectedInput.input}
+        units={units as "dB" | "linear"}
+        layer={layer as "correlator" | "board"}
+        useMock={useMock}
+        onBack={() => setSelected("")}
+      />
     );
   }
 
+  const lastRead = Object.values(readByIp)
+    .map((r) => r.age_s)
+    .filter((a): a is number => a !== null)
+    .sort((a, b) => a - b)[0];
+
   return (
-    <Page title="SNAPs">
-      <div className="snap-page-toolbar">
-        <ToggleBar
-          paramKey="mode"
-          defaultValue="live"
+    <div>
+      <div className="toolbar">
+        <Segmented
+          paramKey="layer"
+          defaultValue="correlator"
           options={[
-            { value: "live", label: "live" },
-            { value: "history", label: "history" },
+            { value: "correlator", label: "correlator" },
+            { value: "board", label: "board" },
           ]}
         />
-        <ToggleBar
+        <Segmented
           paramKey="units"
           defaultValue="dB"
           options={[
@@ -337,106 +325,77 @@ export default function SnapsPage() {
             { value: "linear", label: "linear" },
           ]}
         />
-        {mode === "live" && (
-          <button className="snap-read-btn" onClick={() => handleReadNow(null)} disabled={reading || !!retryAfterS}>
-            {reading ? "reading…" : retryAfterS ? `read boards now (${retryAfterS}s)` : "read boards now (all)"}
+        <Segmented
+          paramKey="mode"
+          defaultValue="live"
+          options={[
+            { value: "live", label: "live" },
+            { value: "history", label: "history" },
+          ]}
+        />
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={showUnwired === "1"}
+            onChange={(e) => setShowUnwired(e.target.checked ? "1" : "0")}
+          />
+          show unwired inputs
+        </label>
+        <span>
+          <button className="text-button" onClick={handleReadNow} disabled={reading || !!retryAfterS} type="button">
+            {reading ? "reading boards" : "Read boards now"}
           </button>
-        )}
-        {mode === "history" && (
-          <>
-            <select value={selectedIp} onChange={(e) => setSelectedIp(e.target.value)}>
-              {antennaBoards.map((b) => (
-                <option key={b.ip} value={b.ip}>
-                  {b.ip} (feng {b.feng_id})
-                </option>
-              ))}
-            </select>
-            <TimeRangePicker paramPrefix="hist_range" defaultRange="24h" />
-          </>
-        )}
+          <span className="aside">
+            {retryAfterS
+              ? `not again for ${retryAfterS} s`
+              : lastRead !== undefined
+                ? `boards read ${formatAge(lastRead)}`
+                : "boards never read"}
+          </span>
+        </span>
+        {mode === "history" && <TimeRangePicker paramPrefix="hist_range" defaultRange="24h" />}
       </div>
 
-      {mode === "history" && selectedBoard && (
-        <div className="snap-history-slider">
+      {mode === "history" && (
+        <div className="slider">
           <input
             type="range"
             min={0}
-            max={sliderMax}
+            max={Math.max(sliderMax, 0)}
             value={sliderIdx}
-            onChange={(e) => setHistSliderIdx(e.target.value)}
+            onChange={(e) => setHistIdx(e.target.value)}
+            aria-label="history time"
           />
-          <span className="mono">
-            frame {sliderIdx + 1} / {sliderMax + 1}
-          </span>
+          <span>{sliderTime ?? "no frames in this window"}</span>
         </div>
       )}
 
-      <div className="snap-grid">
-        {mode === "live" &&
-          antennaBoards.map((board) => (
-            <BoardCard
-              key={board.ip}
-              board={board}
-              units={units as "dB" | "linear"}
-              correlatorAgeS={liveByIp[board.ip]?.age_s ?? null}
-              boardAgeS={boardReadByIp[board.ip]?.age_s ?? null}
-              correlatorTiles={buildTiles(board, "correlator")}
-              boardTiles={buildTiles(board, "board")}
-              adcRms={boardReadByIp[board.ip]?.adc_rms ?? null}
-              subbandsOk={liveByIp[board.ip]?.subbands_ok ?? null}
-              fengIdHw={boardReadByIp[board.ip]?.feng_id_hw ?? null}
-              eqEpoch={liveByIp[board.ip]?.eq_epoch ?? boardReadByIp[board.ip]?.eq_epoch ?? null}
-              onReadNow={() => handleReadNow([board.ip])}
-              readDisabled={!!retryAfterS}
-              readCountdownS={retryAfterS}
-              reading={reading}
-              onExpandTile={(adc) => setExpanded({ ip: board.ip, adc })}
-              historyMode={false}
-            />
-          ))}
-        {mode === "history" && selectedBoard && (
-          <BoardCard
-            key={selectedBoard.ip}
-            board={selectedBoard}
-            units={units as "dB" | "linear"}
-            correlatorAgeS={null}
-            boardAgeS={boardReadByIp[selectedBoard.ip]?.age_s ?? null}
-            correlatorTiles={buildTiles(selectedBoard, "correlator")}
-            boardTiles={buildTiles(selectedBoard, "board")}
-            adcRms={boardReadByIp[selectedBoard.ip]?.adc_rms ?? null}
-            subbandsOk={null}
-            fengIdHw={boardReadByIp[selectedBoard.ip]?.feng_id_hw ?? null}
-            eqEpoch={boardReadByIp[selectedBoard.ip]?.eq_epoch ?? null}
-            onReadNow={() => undefined}
-            readDisabled
-            readCountdownS={null}
-            reading={false}
-            onExpandTile={(adc) => setExpanded({ ip: selectedBoard.ip, adc })}
-            historyMode
-          />
-        )}
-        {mode === "live" && relayBoards.map((board) => <RelayCard key={board.ip} board={board} read={boardReadByIp[board.ip] ?? null} />)}
-      </div>
-
-      {expanded && expandedBoard && expandedTile && (
-        <ExpandedPanel
-          ip={expanded.ip}
-          adc={expanded.adc}
-          packetIdx={expandedBoard.inputs?.find((i) => i.adc === expanded.adc)?.packet_idx ?? null}
-          label={tileLabel(expandedBoard, expanded.adc)}
-          freqMhz={expandedTile.freqMhz}
-          values={expandedTile.values}
+      {antennaBoards.map((board) => (
+        <BoardSection
+          key={board.ip}
+          board={board}
+          read={readByIp[board.ip] ?? null}
+          live={mode === "history" ? null : liveByIp[board.ip] ?? null}
+          panels={panelsFor(board)}
           units={units as "dB" | "linear"}
-          mode={mode === "history" ? "history" : "live"}
-          sourceLayer={
-            (mode === "history"
-              ? selectedLayer
-              : searchParams.get(`layer_${expanded.ip.split(".").pop()}`) ?? "correlator") as "correlator" | "board"
-          }
-          useMock={useMock}
-          onClose={() => setExpanded(null)}
+          layer={layer as "correlator" | "board"}
+          onSelect={(adc) => setSelected(`${board.ip}:${adc}`)}
         />
+      ))}
+
+      {relayBoards.length > 0 && (
+        <section className="board">
+          {relayBoards.map((board) => (
+            <p key={board.ip} className="board__line">
+              {relayLine(board, readByIp[board.ip] ?? null)}
+            </p>
+          ))}
+          <p className="note">
+            Relay boards carry no antenna inputs and sit in the PPS timing path only; a board on the
+            golden image cannot report PPS at all, so silence here does not mean the chain skips the slot.
+          </p>
+        </section>
       )}
-    </Page>
+    </div>
   );
 }

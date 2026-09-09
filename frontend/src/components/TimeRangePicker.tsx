@@ -1,6 +1,6 @@
+import Segmented from "./Segmented";
 import { useUrlParam } from "../lib/useUrlParam";
 import { isValidDateInput } from "../lib/timeRange";
-import ToggleBar from "./ToggleBar";
 
 const PRESETS = [
   { value: "1h", label: "1h" },
@@ -12,18 +12,15 @@ const PRESETS = [
 
 export interface TimeRangePickerProps {
   /** Prefix for the URL params this control owns: "<prefix>_range",
-   * "<prefix>_from", "<prefix>_to". Defaults to "range". */
+   * "<prefix>_from", "<prefix>_to". */
   paramPrefix?: string;
   defaultRange?: string;
 }
 
-/**
- * Stub time-range control for tabs that will get a real history slider in
- * M1/M2: last 1h/6h/24h/7d, or custom start/end. State lives in the URL.
- */
+/** Four words and a custom escape hatch: 1h 6h 24h 7d custom. */
 export default function TimeRangePicker({
   paramPrefix = "range",
-  defaultRange = "1h",
+  defaultRange = "24h",
 }: TimeRangePickerProps) {
   const rangeKey = `${paramPrefix}_range`;
   const fromKey = `${paramPrefix}_from`;
@@ -33,37 +30,30 @@ export default function TimeRangePicker({
   const [from, setFrom] = useUrlParam(fromKey, "");
   const [to, setTo] = useUrlParam(toKey, "");
 
-  const fromInvalid = range === "custom" && from !== "" && !isValidDateInput(from);
-  const toInvalid = range === "custom" && to !== "" && !isValidDateInput(to);
+  const invalid =
+    range === "custom" &&
+    ((from !== "" && !isValidDateInput(from)) || (to !== "" && !isValidDateInput(to)));
 
   return (
-    <div className="time-range-picker">
-      <ToggleBar paramKey={rangeKey} options={PRESETS} defaultValue={defaultRange} />
+    <div className="range-picker">
+      <Segmented paramKey={rangeKey} options={PRESETS} defaultValue={defaultRange} />
       {range === "custom" && (
-        <>
-          <label htmlFor={`${fromKey}-input`}>from (local time)</label>
+        <div className="custom-range">
           <input
-            id={`${fromKey}-input`}
             type="datetime-local"
             value={from}
             onChange={(e) => setFrom(e.target.value)}
             aria-label="from (local time)"
           />
-          <span>–</span>
-          <label htmlFor={`${toKey}-input`}>to (local time)</label>
+          <span>to</span>
           <input
-            id={`${toKey}-input`}
             type="datetime-local"
             value={to}
             onChange={(e) => setTo(e.target.value)}
             aria-label="to (local time)"
           />
-          {(fromInvalid || toInvalid) && (
-            <span className="time-range-picker__warning" role="alert">
-              Enter a valid date/time (times are local, not UTC).
-            </span>
-          )}
-        </>
+          {invalid && <span style={{ color: "var(--alert)" }}>Enter a valid local date and time.</span>}
+        </div>
       )}
     </div>
   );

@@ -133,7 +133,7 @@ export function mockGetSnapLive(ip: string, nchan?: number): Promise<SnapLiveRes
     }
     const kind = feedKind(ip, inp.adc);
     // The cable-reflection-ripple demo feed also doubles as the "a validation
-    // pass disagrees with the formula" demo, so the red badge has something
+    // pass disagrees with the formula" demo, so the mismatch sentence has something
     // to show in the mock.
     return {
       adc: inp.adc,

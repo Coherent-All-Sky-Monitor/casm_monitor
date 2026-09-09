@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "plotly.js-basic-dist-min": "4.1.0",
+    "plotly.js-cartesian-dist-min": "4.1.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-router-dom": "6.30.6",

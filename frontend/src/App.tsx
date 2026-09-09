@@ -1,8 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import Clock from "./components/Clock";
-import StatusStrip from "./components/StatusStrip";
-import TabNav from "./components/TabNav";
-import ToastStack from "./components/ToastStack";
+import AlertLine from "./components/AlertLine";
+import Header from "./components/Header";
+import StatusLine from "./components/StatusLine";
 import EventsPage from "./pages/EventsPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
 import SnapsPage from "./pages/SnapsPage";
@@ -10,13 +9,10 @@ import SnapsPage from "./pages/SnapsPage";
 export default function App() {
   return (
     <>
-      <header className="app-header">
-        <h1>CASM monitor</h1>
-        <Clock />
-      </header>
-      <StatusStrip />
-      <TabNav />
-      <main className="app-main">
+      <Header />
+      <AlertLine />
+      <StatusLine />
+      <main className="main">
         <Routes>
           <Route path="/" element={<Navigate to="/snaps" replace />} />
           <Route path="/snaps" element={<SnapsPage />} />
@@ -29,7 +25,6 @@ export default function App() {
           <Route path="*" element={<Navigate to="/snaps" replace />} />
         </Routes>
       </main>
-      <ToastStack />
     </>
   );
 }

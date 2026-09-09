@@ -1,69 +1,40 @@
 import { useEffect, useState } from "react";
-import Page from "../components/Page";
+import Segmented from "../components/Segmented";
 import TimeRangePicker from "../components/TimeRangePicker";
 import { getEvents } from "../lib/api";
 import { resolveSince } from "../lib/timeRange";
 import { useUrlParam } from "../lib/useUrlParam";
+import { formatUtcStamp } from "../lib/statusSentence";
 import type { EventRecord } from "../lib/types";
 
 const REFRESH_MS = 30_000;
-const KIND_DEBOUNCE_MS = 300;
 
-function SeverityBadge({ severity }: { severity: string }) {
-  return <span className={`severity-${severity}`}>{severity}</span>;
-}
-
-function EventRow({ event }: { event: EventRecord }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <tr>
-        <td className="ts">{event.ts}</td>
-        <td className="severity">
-          <SeverityBadge severity={event.severity} />
-        </td>
-        <td>{event.kind}</td>
-        <td>{event.subject}</td>
-        <td>
-          <button className="event-detail-toggle" onClick={() => setOpen((o) => !o)}>
-            {open ? "hide" : "detail"}
-          </button>
-        </td>
-      </tr>
-      {open && (
-        <tr>
-          <td colSpan={5}>
-            <pre className="event-detail">{JSON.stringify(event.detail, null, 2)}</pre>
-          </td>
-        </tr>
-      )}
-    </>
-  );
+/** The detail object as one short line: "reason=manual, elapsed_s=9.4". */
+function oneLineDetail(detail: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(detail ?? {})) {
+    let text: string;
+    if (value === null || value === undefined) text = "none";
+    else if (Array.isArray(value)) text = `${value.length} items`;
+    else if (typeof value === "object") text = `${Object.keys(value).length} entries`;
+    else text = String(value);
+    parts.push(`${key} ${text}`);
+    if (parts.join(", ").length > 90) break;
+  }
+  return parts.join(", ");
 }
 
 export default function EventsPage() {
   const [events, setEvents] = useState<EventRecord[]>([]);
-  const [kind, setKind] = useUrlParam("kind", "");
-  const [severity, setSeverity] = useUrlParam("severity", "");
+  const [severity] = useUrlParam("severity", "");
   const [range] = useUrlParam("range_range", "24h");
   const [customFrom] = useUrlParam("range_from", "");
-
-  // The kind filter is a prefix/LIKE match against a table the user may be
-  // typing into character by character; debounce so we don't fire a request
-  // per keystroke.
-  const [debouncedKind, setDebouncedKind] = useState(kind);
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedKind(kind), KIND_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [kind]);
 
   useEffect(() => {
     let cancelled = false;
     function load() {
-      const since = resolveSince(range, customFrom);
       getEvents({
-        since: since || undefined,
-        kind: debouncedKind || undefined,
+        since: resolveSince(range, customFrom) || undefined,
         severity: severity || undefined,
         limit: 500,
       })
@@ -78,50 +49,47 @@ export default function EventsPage() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [debouncedKind, severity, range, customFrom]);
+  }, [severity, range, customFrom]);
 
   return (
-    <Page title="Events">
-      <p>
-        State-change timeline: input died/recovered, ADC railed, EQ/gain
-        changed, subband went dark, obs restarted, weights uploaded, cal job
-        run — replaces re-excavating incidents.md by hand.
-      </p>
-      <div className="events-toolbar">
-        <input
-          type="text"
-          placeholder="filter kind (prefix match)…"
-          value={kind}
-          onChange={(e) => setKind(e.target.value)}
+    <div>
+      <div className="toolbar">
+        <Segmented
+          paramKey="severity"
+          defaultValue=""
+          options={[
+            { value: "", label: "all" },
+            { value: "info", label: "info" },
+            { value: "warn", label: "warn" },
+            { value: "error", label: "error" },
+          ]}
         />
-        <select value={severity} onChange={(e) => setSeverity(e.target.value)}>
-          <option value="">all severities</option>
-          <option value="info">info</option>
-          <option value="warn">warn</option>
-          <option value="error">error</option>
-        </select>
         <TimeRangePicker paramPrefix="range" defaultRange="24h" />
       </div>
       {events.length === 0 ? (
-        <p className="empty-note">no events</p>
+        <p className="note">No events in this window.</p>
       ) : (
-        <table className="events-table">
+        <table className="events">
           <thead>
             <tr>
-              <th>Time</th>
-              <th>Severity</th>
-              <th>Kind</th>
-              <th>Subject</th>
-              <th></th>
+              <th>time</th>
+              <th>kind</th>
+              <th>subject</th>
+              <th>detail</th>
             </tr>
           </thead>
           <tbody>
             {events.map((event) => (
-              <EventRow key={event.id} event={event} />
+              <tr key={event.id}>
+                <td>{formatUtcStamp(event.ts)}</td>
+                <td className={`kind-${event.severity}`}>{event.kind}</td>
+                <td>{event.subject}</td>
+                <td>{oneLineDetail(event.detail)}</td>
+              </tr>
             ))}
           </tbody>
         </table>
       )}
-    </Page>
+    </div>
   );
 }

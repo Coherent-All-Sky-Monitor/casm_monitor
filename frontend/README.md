@@ -52,14 +52,30 @@ npm run preview
 Serves the production build locally without a backend, for a quick sanity
 check when :8060 isn't up.
 
+## Look
+
+`DESIGN.md` in this directory is the whole visual spec: white paper, a grid of
+equal panels, tiny grey panel titles, thin signal-blue lines, viridis
+waterfalls, and state written as sentences rather than badges. Tokens live in
+`src/lib/theme.ts` (for Plotly) and as CSS custom properties at the top of
+`src/styles.css` (for the page); keep the two copies identical.
+
 ## Layout
 
-- `src/lib/` — `api.ts` (typed fetch client), `types.ts` (API contract
-  types), `toast.ts` (error toast bus), `useStatus.ts` (WebSocket + polling
-  fallback for the status strip), `useUrlParam.ts` / `timeRange.ts` (URL-backed
-  toggle state), `plotly.ts` (single Plotly import point).
-- `src/components/` — app shell pieces (`Clock`, `StatusStrip`, `TabNav`,
-  `ToastStack`) and shared building blocks later tabs reuse (`Page`,
-  `ToggleBar`, `TimeRangePicker`, `SmokeSparkline`).
-- `src/pages/` — one page per tab; `PlaceholderPage` renders the M1-M5 stub
+- `src/lib/` — `api.ts` (typed fetch client), `types.ts` (API contract types),
+  `toast.ts` (error bus feeding the one alert sentence), `useStatus.ts`
+  (WebSocket + polling fallback), `statusSentence.ts` (status payload to
+  prose), `snapText.ts` (every string the SNAPs page says), `theme.ts` +
+  `plotStyle.ts` (design tokens and the shared Plotly styling), `useColumns.ts`
+  (grid columns, so only the bottom row and left column carry axis ticks),
+  `useUrlParam.ts` / `timeRange.ts` (URL-backed control state), `plotly.ts`
+  (single Plotly import point — the cartesian bundle, which is the smallest
+  dist carrying the `heatmap` trace the waterfalls need).
+- `src/components/` — `Header`, `StatusLine`, `AlertLine`, and the plain
+  controls (`Segmented`, `TimeRangePicker`); `components/snaps/` has
+  `SpectrumPanel` (one input), `BoardSection` (one board's line plus its
+  panels) and `InputDetail` (the expanded view that replaces the grid).
+- `src/pages/` — one page per tab; `PlaceholderPage` renders the one-sentence
   copy from `lib/placeholderCopy.ts`, `EventsPage` is the real M0 Events tab.
+- `?mock=1` on the SNAPs page serves synthetic boards from `lib/mockSnaps.ts`,
+  for working on the layout without the backend.
