@@ -87,7 +87,14 @@ KINDS: dict[str, JobKind] = {
     "render_figures": JobKind(
         name="render_figures",
         run=_render_figures,
-        timeout_s=900.0,
+        # 2026-09-08: raised from 900 s -- even after the imshow/single-render
+        # figure optimisation, 33 renders/set at MAX_WORKERS render concurrency
+        # (jobs/render_figures.py) need headroom above the synthetic-cube
+        # benchmark's per-figure numbers (see bench_render.py) on the live
+        # 24-input wired set. The renderer itself now writes manifests
+        # incrementally per kind (default view first), so a job that still
+        # overruns this leaves fresh, usable figures rather than nothing.
+        timeout_s=1800.0,
         # Belt and braces on top of the memory-bounded renderer itself (never
         # reads vis_full, never concatenates a whole vis_avg8 window): 16 GB
         # is generously above the ~3 GB/target peak RSS this renders at.

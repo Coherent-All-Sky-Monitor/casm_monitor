@@ -49,7 +49,13 @@ log = logging.getLogger("casm_monitor.jobs.render_figures")
 
 # Bounded, not the collector's 16: keeps a handful of Figure objects and their
 # canvases in flight at once, not sixteen 24 h-window renders at a time.
-MAX_WORKERS = 4
+# Raised 4 -> 8 alongside the 2026-09-08 imshow/single-render figure
+# optimisation: the jobs unit's CPUQuota is 1600% (16 cores), so 8 concurrent
+# renders is still well inside budget, and each render is now cheap enough
+# (matrix figure well under the 15 s target on a synthetic 24-input cube,
+# see bench_render.py) that the win from more parallel workers is real,
+# not just more contention. RLIMIT_AS stays 16G regardless (kinds.py).
+MAX_WORKERS = 8
 BASE_REFS = ("raw", "sun")
 
 TARGETS = ("vis", "snaps")
@@ -150,12 +156,47 @@ def _write_placeholder_set(
     return n
 
 
+# Rendered first within a set: the default view (``matrix_phase`` + ``autos``
+# for the ``raw`` reference) so a job that times out partway (``render_figures``
+# now 1800 s, but 33 renders/set is still a lot -- kinds.py) still leaves the
+# page most people load fresh, not whatever kinds happened to sort first.
+_PRIORITY_KINDS = ("matrix_phase", "autos")
+
+
+def _prioritized_vis_jobs(refs: list[str], kinds: tuple[str, ...]) -> list[tuple[str, str]]:
+    jobs = [(kind, ref) for ref in refs for kind in kinds]
+    return sorted(
+        jobs,
+        key=lambda job: (0 if job[1] == "raw" else 1, 0 if job[0] in _PRIORITY_KINDS else 1),
+    )
+
+
+def _seed_vis_entries(root: Path, set_name: str, ref: str) -> dict[str, dict[str, Any]]:
+    """Existing manifest entries, keyed by kind, so a kind this pass doesn't
+    reach (timeout, or simply not requested) keeps its last-good entry rather
+    than the manifest silently losing it."""
+    manifest = _read_manifest(root, set_name, ref)
+    if not manifest:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for kind, files in (manifest.get("files") or {}).items():
+        out[kind] = {
+            "kind": kind, "files": files, "t0": manifest.get("t0"), "t1": manifest.get("t1"),
+            "n_integrations": manifest.get("n_integrations"), "stream": manifest.get("stream"),
+            "obs": manifest.get("obs"),
+        }
+    return out
+
+
 def _render_vis_set(
     store: Store, settings: Settings, root: Path, set_name: str, refs: list[str], window: "Any"
 ) -> tuple[int, int]:
     vf = _vf()
-    jobs = [(kind, ref) for ref in refs for kind in vf.KINDS]
-    by_ref: dict[str, list[dict[str, Any]]] = {ref: [] for ref in refs}
+    jobs = _prioritized_vis_jobs(refs, vf.KINDS)
+    by_ref: dict[str, dict[str, dict[str, Any]]] = {
+        ref: _seed_vis_entries(root, set_name, ref) for ref in refs
+    }
+    rendered = 0
     failed = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futures = {
@@ -178,11 +219,12 @@ def _render_vis_set(
                     detail={"error": str(exc)},
                 )
                 continue
-            by_ref[ref].append(entry)
-    rendered = sum(len(v) for v in by_ref.values())
-    for ref, entries in by_ref.items():
-        if entries:
-            _write_manifest(root, set_name, ref, entries)
+            rendered += 1
+            by_ref[ref][kind] = entry
+            # Written after EVERY kind, not once at the end of the whole set:
+            # a job that hits its timeout partway through still leaves a
+            # manifest reflecting whatever finished, not nothing.
+            _write_manifest(root, set_name, ref, list(by_ref[ref].values()))
     return rendered, failed
 
 
@@ -303,10 +345,11 @@ def _render_snaps(store: Store, settings: Settings) -> dict[str, Any]:
         kinds = list(sf.KINDS) if (manifest is None or kafka_changed) else []
         if board_changed and "spectra_board" not in kinds:
             kinds.append("spectra_board")
-        rendered, failed = _render_snap_set(store, settings, outdir, set_name, kinds, boards)
+        rendered, failed = _render_snap_set(
+            store, settings, outdir, set_name, kinds, boards, manifest, board_read_ts, kafka_t1
+        )
         n_rendered += rendered
         n_failed += failed
-        _write_snap_manifest(outdir, set_name, manifest, board_read_ts, kafka_t1)
     total_s = time.time() - started
     peak_rss_mb = _peak_rss_mb()
     store.put_scalar("figures.snaps.render_s", round(total_s, 3))
@@ -321,6 +364,22 @@ def _render_snaps(store: Store, settings: Settings) -> dict[str, Any]:
     }
 
 
+def _seed_snap_entries(old_manifest: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Existing manifest entries, keyed by kind (same idea as the vis side's
+    ``_seed_vis_entries``): a kind this pass doesn't reach keeps its
+    last-good entry instead of the manifest silently losing it."""
+    if not old_manifest:
+        return {}
+    files_by_kind = old_manifest.get("files") or {}
+    return {
+        kind: {
+            "files": files, "t0": old_manifest.get("t0"), "t1": old_manifest.get("t1"),
+            "n_frames": old_manifest.get("n_frames"),
+        }
+        for kind, files in files_by_kind.items()
+    }
+
+
 def _render_snap_set(
     store: Store,
     settings: Settings,
@@ -328,10 +387,14 @@ def _render_snap_set(
     set_name: str,
     kinds: list[str],
     boards: list[dict[str, Any]],
+    old_manifest: dict[str, Any] | None,
+    board_read_ts: float | None,
+    kafka_t1: float | None,
 ) -> tuple[int, int]:
     if not kinds:
         return 0, 0
     outdir.mkdir(parents=True, exist_ok=True)
+    entries = _seed_snap_entries(old_manifest)
     rendered = 0
     failed = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
@@ -342,7 +405,7 @@ def _render_snap_set(
         for fut in concurrent.futures.as_completed(futures):
             kind = futures[fut]
             try:
-                fut.result()
+                entry = fut.result()
             except Exception as exc:
                 failed += 1
                 log.exception("render_figures: snap render failed for %s/%s", set_name, kind)
@@ -354,6 +417,12 @@ def _render_snap_set(
                 )
                 continue
             rendered += 1
+            entries[kind] = entry
+            # Written after EVERY kind, not once at the end of the whole set
+            # (see ``_render_vis_set``'s identical reasoning): a job that
+            # hits its timeout partway through still leaves a manifest
+            # reflecting whatever finished.
+            _write_snap_manifest(outdir, set_name, entries, board_read_ts, kafka_t1)
     return rendered, failed
 
 
@@ -364,7 +433,7 @@ def _render_snap_kind(
     set_name: str,
     kind: str,
     boards: list[dict[str, Any]],
-) -> None:
+) -> dict[str, Any]:
     sf = _sf()
     started = time.time()
     pngs, info = sf.render_kind(store, settings, kind, set_name, boards=boards)
@@ -374,42 +443,27 @@ def _render_snap_kind(
     )
     for suffix, data in pngs.items():
         _atomic_write(outdir / f"{kind}@{suffix}.png", data)
-    _store_snap_entry(outdir, kind, pngs, info, render_s)
-
-
-def _store_snap_entry(
-    outdir: Path, kind: str, pngs: dict[str, bytes], info: dict[str, Any], render_s: float
-) -> None:
-    entry = {
+    return {
         "files": {suf: f"{kind}@{suf}.png" for suf in pngs},
         "t0": info.get("t0"),
         "t1": info.get("t1"),
         "n_frames": info.get("n_frames"),
         "render_s": round(render_s, 3),
     }
-    path = outdir / f".entry-{safe_name(kind)}.json"
-    tmp = outdir / f".tmp-{os.getpid()}-entry-{safe_name(kind)}.json"
-    tmp.write_text(json.dumps(entry))
-    os.replace(tmp, path)
 
 
 def _write_snap_manifest(
     outdir: Path,
     set_name: str,
-    old_manifest: dict[str, Any] | None,
+    entries: dict[str, dict[str, Any]],
     board_read_ts: float | None,
     kafka_t1: float | None,
 ) -> None:
-    sf = _sf()
-    files: dict[str, Any] = dict((old_manifest or {}).get("files") or {})
-    t0 = (old_manifest or {}).get("t0")
-    t1 = (old_manifest or {}).get("t1")
-    n_frames = (old_manifest or {}).get("n_frames")
-    for kind in sf.KINDS:
-        entry_path = outdir / f".entry-{safe_name(kind)}.json"
-        entry = _read_json(entry_path)
-        if entry is None:
-            continue
+    if not entries:
+        return
+    t0 = t1 = n_frames = None
+    files: dict[str, Any] = {}
+    for kind, entry in entries.items():
         files[kind] = entry["files"]
         if entry.get("t0") is not None:
             t0 = entry["t0"] if t0 is None else min(t0, entry["t0"])
@@ -417,9 +471,6 @@ def _write_snap_manifest(
             t1 = entry["t1"] if t1 is None else max(t1, entry["t1"])
         if entry.get("n_frames") is not None:
             n_frames = max(n_frames or 0, entry["n_frames"])
-        entry_path.unlink(missing_ok=True)
-    if not files:
-        return
     manifest = {
         "rendered_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "set": set_name,

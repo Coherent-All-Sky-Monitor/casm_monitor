@@ -25,7 +25,9 @@ LAYOUT = (
     "1,0,0,0,1,1,N21,E1,192.168.120.52,A\n"
     "2,0,1,1,0,0,,,,\n"
     "3,0,2,2,1,0,N21,E4,192.168.120.52,A\n"
+    "9,0,8,8,1,0,N21,E1,192.168.120.52,A\n"
     "13,1,0,12,1,1,N11,E1,192.168.120.51,I\n"
+    "15,1,2,14,1,0,N11,E3,192.168.120.51,I\n"
 )
 SNAP_MAP = "chassis,slot,feng_id,snap_ip\n1,A,0,192.168.120.52\n1,I,1,192.168.120.51\n"
 
@@ -129,11 +131,30 @@ def test_panel_title_wired_and_unwired(settings, layouts):
     board = next(b for b in boards if b["ip"] == "192.168.120.52")
     wired = next(i for i in board["inputs"] if i["adc"] == 0)
     title, color = sf._panel_title(board, wired)
-    assert "ant 1" in title and "pkt 0" in title and "S0 A1" in title
+    # ``A<n>`` is the layout's own 0-indexed ``adc`` column (== packet_idx %
+    # 12), never ``adc + 1`` -- see the 2026-09-08 fix in ``_panel_title``.
+    assert "ant 1" in title and "pkt 0" in title and "S0 A0" in title
     unwired = next(i for i in board["inputs"] if i["adc"] == 5)
     title2, color2 = sf._panel_title(board, unwired)
     assert title2.endswith("unwired")
     assert color2 == sf.MUTED
+
+
+def test_panel_title_adc_label_is_not_off_by_one(settings, layouts):
+    """2026-09-08 regression: a stray ``+ 1`` mislabelled every ADC panel
+    (packet_idx 8 -- feng 0, adc 8, ant 9 -- read "S0 A9" instead of "S0 A8";
+    packet_idx 14 -- feng 1, adc 2, ant 15 -- read "S1 A3" instead of "S1 A2")."""
+    boards = sf.board_table()
+    board0 = next(b for b in boards if b["ip"] == "192.168.120.52")
+    item8 = next(i for i in board0["inputs"] if i["packet_idx"] == 8)
+    title, _color = sf._panel_title(board0, item8)
+    assert title == "ant 9  N21E1  (S0 A8, pkt 8)"
+
+    board1 = next(b for b in boards if b["ip"] == "192.168.120.51")
+    item14 = next(i for i in board1["inputs"] if i["packet_idx"] == 14)
+    title14, _color = sf._panel_title(board1, item14)
+    assert "S1 A2" in title14
+    assert "pkt 14" in title14
 
 
 def test_render_spectra_correlator(settings, layouts):

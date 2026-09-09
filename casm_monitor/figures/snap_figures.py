@@ -46,8 +46,15 @@ from ..collectors.kafka_bp import STREAM_SUB, SUB_CHAN_AVG, read_latest_frame
 from ..config import Settings
 from ..jobs.snap_read import latest_reads
 from ..store import ShardReader, Store
-from ..web.snaps import average_channels, average_db_axis0, board_table, db_to_linear, linear_to_db
-from ..web.snapread import freq_mhz as board_freq_mhz
+from ._png import render_pngs
+
+# ``..web.snaps``/``..web.snapread`` (and everything they drag in through
+# ``casm_monitor.web``'s ``__init__`` -> ``.app`` -> ``.web.figures``, which
+# imports THIS module for its ``KINDS``/``SETS`` constants) are imported
+# lazily inside the functions that call them, not at module scope -- a
+# module-level import here made ``casm_monitor.figures.snap_figures``
+# unimportable first in a fresh interpreter (circular import through
+# ``web.figures``), same fix as ``figures/vis_figures.py``.
 
 SETS: tuple[str, ...] = ("beamforming", "all12")
 KINDS: tuple[str, ...] = ("spectra_correlator", "spectra_board", "waterfall", "trend")
@@ -72,11 +79,24 @@ CORRELATOR_BAND_LO_MHZ = rowmap.FREQ_TOP_MHZ - rowmap.NCHAN * rowmap.CHAN_BW_MHZ
 N_INPUTS = 12
 N_CHANS_BOARD = 4096
 WATERFALL_MAX_ROWS = 720
-PANEL_H_IN = 1.55
+PANEL_H_IN = 1.8
 
 
 class NoData(RuntimeError):
     """Nothing cached yet -- not a rendering error."""
+
+
+def board_table() -> list[dict[str, Any]]:
+    """Lazy re-export of :func:`casm_monitor.web.snaps.board_table`.
+
+    Kept as a thin wrapper (rather than a module-level ``from ..web.snaps
+    import board_table``) so this module stays importable first in a fresh
+    interpreter -- see the lazy-import note above the ``SETS``/``KINDS``
+    constants.
+    """
+    from ..web.snaps import board_table as _board_table
+
+    return _board_table()
 
 
 # -- board/input selection ---------------------------------------------------
@@ -101,9 +121,18 @@ def _boards_inputs(boards: list[dict[str, Any]], set_name: str) -> list[tuple[di
 
 
 def _panel_title(board: dict[str, Any], item: dict[str, Any]) -> tuple[str, str]:
-    """``"ant 26  N16E1  (S2 A1, pkt 25)"`` / ``"S2 A7  unwired"``, ink if BF."""
+    """``"ant 26  N16E1  (S2 A1, pkt 25)"`` / ``"S2 A7  unwired"``, ink if BF.
+
+    ``A<n>`` is the layout's own 0-indexed ``adc`` column, which already
+    equals ``packet_idx % 12`` (``packet_idx = feng_id * 12 + adc``) -- it is
+    NOT ``adc + 1``. A stray ``+ 1`` here (fixed 2026-09-08, found against
+    ``antenna_layouts/current`` on the live ``spectra_correlator@1x.png``)
+    made packet_idx 8 (feng 0, adc 8 = ant 9, N21E1) read "S0 A9" instead of
+    the correct "S0 A8", and packet_idx 14 (feng 1, adc 2 = ant 15) read
+    "S1 A3" instead of "S1 A2".
+    """
     feng = board.get("feng_id")
-    adc_label = f"S{feng} A{int(item['adc']) + 1}"
+    adc_label = f"S{feng} A{int(item['adc'])}"
     packet_idx = item.get("packet_idx")
     if packet_idx is None:
         return f"{adc_label}  unwired", MUTED
@@ -122,41 +151,109 @@ def _board_label(board: dict[str, Any]) -> str:
 
 
 # -- grid layout --------------------------------------------------------
-def _board_grid(
-    boards_inputs: list[tuple[dict[str, Any], list[dict[str, Any]]]], ncols: int = 4
-) -> tuple[Figure, dict[tuple[str, int], Any]]:
-    """One figure, boards stacked vertically, each its own ``ncols``-wide grid.
+def _board_ncols(n_items: int, set_name: str, max_cols: int = 6) -> int:
+    """Columns for one board's block: dense, not a fixed-width grid with gaps.
 
-    Missing panels (a board with fewer ADCs than a full row) are hidden, not
-    left off the grid, so every board keeps the same column alignment.
+    ``beamforming`` (typically <= ``max_cols`` in-BF ADCs per board): one row,
+    exactly as many columns as inputs (a 5-input board is one row of 5, not a
+    4-wide grid with a stray wrapped row). ``all12`` always shows the full
+    twelve, so it is always ``max_cols`` wide (``max_cols x 2`` for 12).
+    """
+    if set_name == "beamforming":
+        return max(1, min(n_items, max_cols))
+    return max_cols
+
+
+@dataclass(frozen=True)
+class _BoardBlock:
+    ip: str
+    nrows: int
+    ncols: int
+    cells: list[tuple[Any, int, int]]  # (ax, row, col), populated cells only
+
+
+def _board_grid(
+    boards_inputs: list[tuple[dict[str, Any], list[dict[str, Any]]]], set_name: str
+) -> tuple[Figure, dict[tuple[str, int], Any], list[_BoardBlock]]:
+    """One figure, boards stacked vertically, each its own dense grid.
+
+    Each board's block is exactly as wide as it needs to be (see
+    ``_board_ncols``) and always spans the figure's full width -- filling
+    ``FIG_WIDTH_IN`` in wasted the page under the old fixed ``ncols=4`` (a
+    5-input board was a 4-wide grid with one wrapped, mostly-empty row).
+    Missing panels (fewer ADCs than a full row) are hidden, not left off the
+    grid. Returns the per-board cell geometry too, so a caller can apply
+    shared y-limits and outer-panel-only tick labels per board.
     """
     if not boards_inputs:
-        return _message_figure("no boards configured"), {}
-    nrows_list = [max(1, int(np.ceil(len(items) / ncols))) for _, items in boards_inputs]
+        return _message_figure("no boards configured"), {}, []
+    ncols_list = [_board_ncols(len(items), set_name) for _, items in boards_inputs]
+    nrows_list = [
+        max(1, int(np.ceil(len(items) / ncols))) for (_, items), ncols in zip(boards_inputs, ncols_list)
+    ]
     total_rows = sum(nrows_list)
-    fig_h = PANEL_H_IN * total_rows + 0.7 * len(boards_inputs) + 0.3
+    # 0.85 (not the tighter 0.55 first tried): outer-panel-only tick labels
+    # (``_finish_board_blocks``) put real x tick labels on each block's
+    # bottom row now, where before every tick was hidden -- the gap between
+    # blocks has to fit those labels PLUS the next block's board-name text,
+    # not just the text.
+    fig_h = PANEL_H_IN * total_rows + 0.85 * len(boards_inputs) + 0.5
     fig = Figure(figsize=(FIG_WIDTH_IN, fig_h))
     FigureCanvasAgg(fig)
-    gs = fig.add_gridspec(len(boards_inputs), 1, height_ratios=nrows_list, hspace=1.1)
+    gs = fig.add_gridspec(len(boards_inputs), 1, height_ratios=nrows_list, hspace=0.85)
     axes_map: dict[tuple[str, int], Any] = {}
+    blocks: list[_BoardBlock] = []
     for bi, (board, items) in enumerate(boards_inputs):
-        nrows = nrows_list[bi]
-        inner = gs[bi].subgridspec(nrows, ncols, hspace=0.75, wspace=0.35)
+        nrows, ncols = nrows_list[bi], ncols_list[bi]
+        inner = gs[bi].subgridspec(nrows, ncols, hspace=0.35, wspace=0.15)
         first_ax = None
+        cells: list[tuple[Any, int, int]] = []
         for k in range(nrows * ncols):
-            ax = fig.add_subplot(inner[k // ncols, k % ncols])
+            row, col = k // ncols, k % ncols
+            ax = fig.add_subplot(inner[row, col])
             if k < len(items):
                 axes_map[(board["ip"], int(items[k]["adc"]))] = ax
+                cells.append((ax, row, col))
                 if first_ax is None:
                     first_ax = ax
             else:
                 ax.set_visible(False)
         if first_ax is not None:
             first_ax.text(
-                0.0, 1.55, _board_label(board), transform=first_ax.transAxes,
+                0.0, 1.5, _board_label(board), transform=first_ax.transAxes,
                 ha="left", va="bottom", fontsize=9, color=MUTED,
             )
-    return fig, axes_map
+        blocks.append(_BoardBlock(ip=board["ip"], nrows=nrows, ncols=ncols, cells=cells))
+    return fig, axes_map, blocks
+
+
+def _finish_board_blocks(blocks: list[_BoardBlock]) -> None:
+    """Shared y-limits per board, tick labels on the outer panels only.
+
+    Called once all panels in every board's block have been plotted (line
+    plots autoscale their own y-range on ``ax.plot``, so this reads that
+    per-axis autoscaled range back before overriding it). The row/column each
+    cell occupies is the block's own grid position, not just "last row of the
+    board" -- the bottom-most row that actually has a populated cell in that
+    column keeps its x tick labels, every other row hides them; only column 0
+    keeps y tick labels.
+    """
+    for block in blocks:
+        if not block.cells:
+            continue
+        lo = min(ax.get_ylim()[0] for ax, _r, _c in block.cells)
+        hi = max(ax.get_ylim()[1] for ax, _r, _c in block.cells)
+        if hi <= lo:
+            hi = lo + 1.0
+        last_row_in_col: dict[int, int] = {}
+        for _ax, row, col in block.cells:
+            last_row_in_col[col] = max(row, last_row_in_col.get(col, row))
+        for ax, row, col in block.cells:
+            ax.set_ylim(lo, hi)
+            ax.tick_params(
+                labelbottom=(row == last_row_in_col[col]), labelleft=(col == 0),
+                labelsize=6,
+            )
 
 
 def _flat_grid(
@@ -216,6 +313,8 @@ def load_kafka_sub_window(
     single-row ``/history`` route) -- the SNAPs figures need every wired
     input's history in the same 30 min tick.
     """
+    from ..web.snaps import average_channels
+
     shards = ShardReader(store)
     t1 = time.time()
     t0 = t1 - float(hours) * 3600.0
@@ -267,6 +366,8 @@ def _median_db(z_db_one_row: np.ndarray) -> np.ndarray:
     """
     import warnings
 
+    from ..web.snaps import db_to_linear, linear_to_db
+
     with warnings.catch_warnings(), np.errstate(invalid="ignore"):
         warnings.simplefilter("ignore", category=RuntimeWarning)
         return linear_to_db(np.nanmean(db_to_linear(z_db_one_row), axis=0))
@@ -275,6 +376,8 @@ def _median_db(z_db_one_row: np.ndarray) -> np.ndarray:
 def _decimate_time(z_db: np.ndarray, times: np.ndarray, max_rows: int) -> tuple[np.ndarray, np.ndarray]:
     if times.size <= max_rows:
         return z_db, times
+    from ..web.snaps import average_channels, average_db_axis0
+
     z2 = average_db_axis0(z_db, max_rows)
     t2 = average_channels(times, max_rows)
     return z2, t2
@@ -294,7 +397,7 @@ def render_spectra_correlator(
             window = None
     frame = read_latest_frame(settings)
     freq_full = rowmap.freq_axis_mhz()
-    fig, axes_map = _board_grid(boards_inputs, ncols=4)
+    fig, axes_map, blocks = _board_grid(boards_inputs, set_name)
     handled_legend = False
     for board, items in boards_inputs:
         for item in items:
@@ -307,8 +410,6 @@ def render_spectra_correlator(
             ax.set_xlim(freq_full.max(), freq_full.min())
             packet_idx = item.get("packet_idx")
             if packet_idx is None:
-                ax.set_xticks([])
-                ax.set_yticks([])
                 continue
             row = 2 * int(packet_idx)
             if window is not None and row in window.rows:
@@ -320,7 +421,11 @@ def render_spectra_correlator(
                 ax.plot(freq_full, frame["power_db"][k], color=SIGNAL, linewidth=0.6, label="latest")
             if not handled_legend and ax.get_legend_handles_labels()[0]:
                 handled_legend = True
-                fig.legend(*ax.get_legend_handles_labels(), loc="upper right", fontsize=7, frameon=False)
+                fig.legend(
+                    *ax.get_legend_handles_labels(), loc="upper center",
+                    bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize=7, frameon=False,
+                )
+    _finish_board_blocks(blocks)
     info = {
         "t0": window.t0 if window is not None else None,
         "t1": window.t1 if window is not None else None,
@@ -334,6 +439,9 @@ def render_spectra_correlator(
 def render_spectra_board(
     store: Store, settings: Settings, set_name: str, boards: list[dict[str, Any]]
 ) -> tuple[Figure, dict[str, Any]]:
+    from ..web.snaps import linear_to_db
+    from ..web.snapread import freq_mhz as board_freq_mhz
+
     reads = latest_reads(store)
     if not reads:
         return _message_figure("no board read yet"), {
@@ -352,7 +460,7 @@ def render_spectra_board(
         spectra_by_ip[ip] = (np.asarray(array, dtype=np.float64), summary)
 
     boards_inputs = _boards_inputs(boards, set_name)
-    fig, axes_map = _board_grid(boards_inputs, ncols=4)
+    fig, axes_map, blocks = _board_grid(boards_inputs, set_name)
     freq_board = np.asarray(board_freq_mhz(N_CHANS_BOARD), dtype=np.float64)
     for board, items in boards_inputs:
         for item in items:
@@ -379,6 +487,7 @@ def render_spectra_board(
             ax.set_title(f"{title}{suffix}", fontsize=9, color=color)
             _style_axes(ax)
             ax.set_xlim(freq_board.max(), freq_board.min())
+    _finish_board_blocks(blocks)
     board_read_ts = max((float(s.get("ts") or 0.0) for s in reads.values()), default=None)
     info = {
         "t0": board_read_ts, "t1": board_read_ts, "n_frames": len(reads), "board_read_ts": board_read_ts,
@@ -421,7 +530,19 @@ def render_waterfall(
         if t.size < 2:
             continue
         time_h = (t - window.times[0]) / 3600.0
-        ax.pcolormesh(window.freq_mhz, time_h, z, cmap=cmap, shading="auto")
+        # imshow (not pcolormesh) over an explicit extent: identical visual
+        # result on this regular (uniform channel/time) grid but much
+        # cheaper to rasterize, same reasoning as ``vis_figures.render_matrix``.
+        # ``z``'s row 0 is the earliest time -> ``origin="lower"`` so it lands
+        # at the bottom, matching pcolormesh's own placement of an ascending
+        # Y array; the x-axis is inverted afterwards (descending frequency,
+        # unchanged from before) via ``set_xlim``, independent of the extent.
+        f_lo, f_hi = float(window.freq_mhz.min()), float(window.freq_mhz.max())
+        t_lo, t_hi = float(time_h[0]), float(time_h[-1]) if time_h[-1] > time_h[0] else float(time_h[0]) + 1.0
+        ax.imshow(
+            z, cmap=cmap, extent=(f_lo, f_hi, t_lo, t_hi), origin="lower",
+            aspect="auto", interpolation="nearest", rasterized=True,
+        )
         ax.set_xlim(window.freq_mhz.max(), window.freq_mhz.min())
     info = {
         "t0": window.t0 if window is not None else None,
@@ -491,6 +612,11 @@ def figure_to_png(fig: Figure, dpi: float) -> bytes:
     return buf.getvalue()
 
 
+def _figure_to_pngs(fig: Figure) -> dict[str, bytes]:
+    """``{"1x": ..., "2x": ...}``, drawing the figure only once (see ``_png``)."""
+    return render_pngs(fig, DPI_2X, DPI_1X, facecolor=PAPER)
+
+
 _RENDERERS = {
     "spectra_correlator": render_spectra_correlator,
     "spectra_board": render_spectra_board,
@@ -517,14 +643,14 @@ def render_kind(
     renderer = _RENDERERS.get(kind)
     if renderer is None:
         raise ValueError(f"unknown figure kind {kind!r}")
-    boards = boards if boards is not None else board_table()
+    if boards is None:
+        boards = board_table()
     fig, info = renderer(store, settings, set_name, boards)
     try:
-        png_1x = figure_to_png(fig, DPI_1X)
-        png_2x = figure_to_png(fig, DPI_2X)
+        pngs = _figure_to_pngs(fig)
     finally:
         fig.clear()
-    return {"1x": png_1x, "2x": png_2x}, info
+    return pngs, info
 
 
 __all__ = [

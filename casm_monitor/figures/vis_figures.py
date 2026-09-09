@@ -47,7 +47,7 @@ import io
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import matplotlib
 
@@ -63,14 +63,19 @@ from .. import vis_ops
 from ..collectors.vis import STREAM_AVG8, input_sets
 from ..config import Settings
 from ..store import Store
-from ..web.vis import (
-    Selection,
-    VisStore,
-    apply_reference,
-    freq_axis,
-    load_baseline_rows,
-    select_baselines,
-)
+from ._png import render_pngs
+
+# ``..web.vis`` (and everything it drags in -- ``casm_monitor.web``, whose
+# ``__init__`` imports ``.app``, which imports ``.web.figures``, which
+# imports THIS module for its ``KINDS``/``REFS``/``SETS`` constants) is
+# imported lazily inside the functions that actually call it, not at module
+# scope: a module-level import here made ``casm_monitor.figures.vis_figures``
+# unimportable first in a fresh interpreter (circular import through
+# ``web.figures``). ``from __future__ import annotations`` means the
+# ``Selection`` type hints below never need the real symbol at runtime, only
+# for static type checkers (``TYPE_CHECKING``).
+if TYPE_CHECKING:
+    from ..web.vis import Selection
 
 # -- constants ------------------------------------------------------------
 SETS: tuple[str, ...] = ("live", "wired")
@@ -164,6 +169,8 @@ def load_window(
     worth of data, and never falls back to ``vis_full`` to get more.
     """
     from casm_io.correlator.baselines import triu_flat_index
+
+    from ..web.vis import VisStore, freq_axis, load_baseline_rows, select_baselines
 
     vis_store = VisStore(settings, store)
     newest = vis_store.latest()
@@ -295,6 +302,8 @@ def compute_quantity(
     ``apply_reference`` call over the combined auto+cross cube is exact for
     both the requested cross quantity and the diagonal's own autopower.
     """
+    from ..web.vis import apply_reference
+
     v_ref, ref_meta = apply_reference(
         window.z, ref, settings=settings, selection=window.selection,
         freq_mhz=window.freq_mhz, times_unix=window.times,
@@ -351,44 +360,85 @@ def _window_title(window: WindowData, quantity: str, units: str, ref: str, set_n
 
 
 # -- matrix figure ------------------------------------------------------
+def _time_freq_extent(time_h: np.ndarray, freq_mhz: np.ndarray) -> tuple[float, float, float, float]:
+    """``(left, right, bottom, top)`` for an ``imshow`` with ``origin="upper"``.
+
+    ``freq_mhz`` is always descending (``freq_axis``'s own contract, see its
+    docstring) so ``freq_mhz[0]`` -- the highest frequency, row 0 of every
+    ``(F, T)`` image array here -- belongs at the TOP of the image, which is
+    what ``origin="upper"`` does with the extent's own top value. Degenerate
+    (single-sample/single-channel) windows get a 1-unit-wide box rather than
+    a zero-area extent, matching ``pcolormesh``'s own tolerance of that case.
+    """
+    t0, t1 = float(time_h[0]), float(time_h[-1])
+    if t1 <= t0:
+        t1 = t0 + 1.0
+    f_lo, f_hi = float(freq_mhz[-1]), float(freq_mhz[0])
+    if f_hi <= f_lo:
+        f_hi = f_lo + 1.0
+    return (t0, t1, f_lo, f_hi)
+
+
 def render_matrix(
     window: WindowData, quantity: str, units: str, qdata: QuantityData, set_name: str, ref: str
 ) -> Figure:
-    """The upper-triangle waterfall matrix: time (h) x freq (MHz, descending)."""
+    """The upper-triangle waterfall matrix: time (h) x freq (MHz, descending).
+
+    ``imshow`` (not ``pcolormesh``) over an explicit ``extent``: identical
+    visual result on this module's regular (uniform time-bin, uniform
+    channel) grids, but an order of magnitude cheaper to rasterize -- a
+    ``QuadMesh`` builds and paints one polygon per cell, an ``AxesImage``
+    blits one array. Every panel gets the SAME fixed ``extent``, so there is
+    nothing to autoscale/share: panels are deliberately NOT ``sharex``/
+    ``sharey``-linked (measured 2026-09-08: linking ~300 panels' axes through
+    matplotlib's ``Grouper`` cost 16 s of pure bookkeeping before a single
+    pixel was drawn -- each join walks the whole existing group, so it is
+    quadratic in panel count -- while setting each axis's limits directly
+    from ``extent`` is O(1) per panel and gives the identical fixed view).
+    Only the lower triangle is skipped entirely (no ``Axes`` object ever
+    created for it, rather than created-then-hidden). Panel labels are
+    lightweight ``ax.text`` calls, not ``set_title`` (title placement costs a
+    text-extent computation that ``fig.tight_layout`` -- also dropped in
+    favour of one fixed ``subplots_adjust`` -- would otherwise redo per
+    panel).
+    """
     n = len(window.inputs)
     fig = Figure(figsize=(PANEL_IN * n, PANEL_IN * n + 0.3))
     FigureCanvasAgg(fig)
-    axes = fig.subplots(n, n, squeeze=False)
+    gs = fig.add_gridspec(n, n, wspace=0.06, hspace=0.06)
     time_h = (window.times - window.times[0]) / 3600.0
+    extent = _time_freq_extent(time_h, window.freq_mhz)
     norm, cmap = _matrix_norm_cmap(quantity, units, qdata.values)
     diag_cmap = _cmap("viridis")
     for i in range(n):
-        for j in range(n):
-            ax = axes[i][j]
-            if j < i:
-                ax.set_visible(False)
-                continue
+        for j in range(i, n):
+            ax = fig.add_subplot(gs[i, j])
             ax.set_xticks([])
             ax.set_yticks([])
+            ax.set_xlim(extent[0], extent[1])
+            ax.set_ylim(extent[2], extent[3])
             for spine in ax.spines.values():
                 spine.set_color(HAIRLINE)
             if i == j:
-                ax.pcolormesh(
-                    time_h, window.freq_mhz, qdata.diag_db[i].T, cmap=diag_cmap, shading="auto"
-                )
-                ax.set_title(f"ant {window.antennas[i]}", fontsize=6, color=INK)
+                img, use_cmap, use_norm = qdata.diag_db[i], diag_cmap, None
+                label, color = f"ant {window.antennas[i]}", INK
             else:
-                vals = qdata.values[(i, j)]
-                ax.pcolormesh(time_h, window.freq_mhz, vals.T, cmap=cmap, shading="auto", norm=norm)
-                ax.set_title(
-                    f"ant {window.antennas[i]} × ant {window.antennas[j]}",
-                    fontsize=5, color=MUTED,
-                )
+                img, use_cmap, use_norm = qdata.values[(i, j)], cmap, norm
+                label = f"ant {window.antennas[i]} × ant {window.antennas[j]}"
+                color = MUTED
+            ax.imshow(
+                img.T, cmap=use_cmap, norm=use_norm, extent=extent, origin="upper",
+                aspect="auto", interpolation="nearest", rasterized=True,
+            )
+            ax.text(
+                0.04, 0.93, label, transform=ax.transAxes, ha="left", va="top",
+                fontsize=6 if i == j else 5, color=color,
+            )
     fig.text(
         0.5, 0.997, _window_title(window, quantity, units, ref, set_name),
         ha="center", va="top", fontsize=8, color=MUTED,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.subplots_adjust(left=0.01, right=0.99, top=0.965, bottom=0.01, wspace=0.06, hspace=0.06)
     return fig
 
 
@@ -400,33 +450,40 @@ def render_spectra(
     n = len(window.inputs)
     fig = Figure(figsize=(PANEL_IN * n, PANEL_IN * n + 0.3))
     FigureCanvasAgg(fig)
-    axes = fig.subplots(n, n, squeeze=False)
+    gs = fig.add_gridspec(n, n, wspace=0.06, hspace=0.06)
+    # Every panel plots the same ``window.freq_mhz`` x-range, so the x-limits
+    # are set directly on each axis rather than via ``sharex`` (measured
+    # 2026-09-08, see ``render_matrix``'s docstring: linking ~300 panels
+    # through matplotlib's ``Grouper`` is quadratic in panel count). Y is
+    # left on its per-panel default autoscale, same as before this change --
+    # each panel's own value range is what is worth seeing here.
+    x_lo, x_hi = float(window.freq_mhz.min()), float(window.freq_mhz.max())
     for i in range(n):
-        for j in range(n):
-            ax = axes[i][j]
-            if j < i:
-                ax.set_visible(False)
-                continue
+        for j in range(i, n):
+            ax = fig.add_subplot(gs[i, j])
             ax.set_xticks([])
             ax.set_yticks([])
+            ax.set_xlim(x_lo, x_hi)
             for spine in ax.spines.values():
                 spine.set_color(HAIRLINE)
             ax.grid(True, color=HAIRLINE, linewidth=0.5, alpha=0.7)
             if i == j:
                 y = np.nanmedian(qdata.diag_db[i], axis=0)
-                ax.set_title(f"ant {window.antennas[i]}", fontsize=6, color=INK)
+                label, color = f"ant {window.antennas[i]}", INK
             else:
                 y = np.nanmedian(qdata.values[(i, j)], axis=0)
-                ax.set_title(
-                    f"ant {window.antennas[i]} × ant {window.antennas[j]}",
-                    fontsize=5, color=MUTED,
-                )
+                label = f"ant {window.antennas[i]} × ant {window.antennas[j]}"
+                color = MUTED
             ax.plot(window.freq_mhz, y, color=SIGNAL, linewidth=0.5)
+            ax.text(
+                0.04, 0.93, label, transform=ax.transAxes, ha="left", va="top",
+                fontsize=6 if i == j else 5, color=color,
+            )
     fig.text(
         0.5, 0.997, _window_title(window, quantity, units, ref, set_name),
         ha="center", va="top", fontsize=8, color=MUTED,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.subplots_adjust(left=0.01, right=0.99, top=0.965, bottom=0.01, wspace=0.06, hspace=0.06)
     return fig
 
 
@@ -494,6 +551,11 @@ def figure_to_png(fig: Figure, dpi: float) -> bytes:
     return buf.getvalue()
 
 
+def _figure_to_pngs(fig: Figure) -> dict[str, bytes]:
+    """``{"1x": ..., "2x": ...}``, drawing the figure only once (see ``_png``)."""
+    return render_pngs(fig, DPI_2X, DPI_1X, facecolor=PAPER)
+
+
 def render_kind(
     store: Store,
     settings: Settings,
@@ -529,8 +591,7 @@ def render_kind(
     else:
         raise ValueError(f"unknown figure kind {kind!r}")
     try:
-        png_1x = figure_to_png(fig, DPI_1X)
-        png_2x = figure_to_png(fig, DPI_2X)
+        pngs = _figure_to_pngs(fig)
     finally:
         fig.clear()
     info = {
@@ -546,14 +607,14 @@ def render_kind(
         "obs": window.obs,
         "inputs": window.inputs,
     }
-    return {"1x": png_1x, "2x": png_2x}, info
+    return pngs, info
 
 
 def render_placeholder_kind(message: str, set_name: str, kind: str) -> dict[str, bytes]:
     """PNG bytes for the "not enough data yet" placeholder, one kind."""
     fig = render_placeholder(message, set_name, kind)
     try:
-        return {"1x": figure_to_png(fig, DPI_1X), "2x": figure_to_png(fig, DPI_2X)}
+        return _figure_to_pngs(fig)
     finally:
         fig.clear()
 
