@@ -47,15 +47,46 @@ cadences:
   gpus: 60
   weights: 120
   sky: 60
+  # The Kafka bandpass consumer polls once a second inside the runner;
+  # kafka_bp_frame is the 10 s frame cadence the status strip grades against.
+  kafka_bp: 1
+  kafka_bp_frame: 30
+  # cheap tick: one SQLite query; the hourly gate is inside the collector
+  snapread: 60
   store: 300
 
 zapdos_min_interval_s: 3600
 
-# Per-stream shard time-to-live in days, used by the retention helper.
+# SNAP board reads over zapdos. Strictly sequential, one ssh session, at most
+# once an hour from the scheduler (read_interval_s is clamped to >= 3600 in
+# code) and otherwise only on an operator click, itself rate-limited to one per
+# manual_min_interval_s. The antenna board list is deliberately NOT duplicated
+# here: it is read from the SNAP map CSV at runtime.
+snap:
+  antenna_boards:
+    from_csv: /home/casm/software/dev/antenna_layouts/casm_snap_map.csv
+  # Antenna-less relay boards in the PPS chain, shown as PPS-only cards.
+  relay_boards:
+    - 192.168.120.59
+    - 192.168.120.68
+    - 192.168.120.69
+  # Layout CSV giving (snap, adc) -> packet_idx / antenna for the scalars.
+  # Same file the /api/snaps/boards table reads (rowmap.LAYOUT_CSV): the
+  # ``current`` symlink, so casm-layout apply is picked up everywhere at once.
+  layout_csv: /home/casm/software/dev/antenna_layouts/current
+  read_interval_s: 3600
+  manual_min_interval_s: 300
+  per_board_timeout_s: 60
+
+# Per-stream shard time-to-live in days, used by the retention helper. Every
+# shard stream and its TTL (a stream with no key here is kept forever):
+#   kafka_bp_full   14 d    60 s full-resolution frames (3072 ch)
+#   kafka_bp_sub    90 d    10 s frames reduced to 96 channels
+#   kafka_bp_night  none    the 02:00-05:00 PT nightly median
+#   snap_read       none    board-side reads over zapdos (never expires)
 shard_ttl_days:
-  kafka_bandpass_full: 14
-  kafka_bandpass_subband: 90
-  snap_board_read: 36500
+  kafka_bp_full: 14
+  kafka_bp_sub: 90
   vis_reduced: 3
   vis_reduced_chanavg: 60
 

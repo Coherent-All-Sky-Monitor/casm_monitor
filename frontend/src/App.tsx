@@ -5,6 +5,7 @@ import TabNav from "./components/TabNav";
 import ToastStack from "./components/ToastStack";
 import EventsPage from "./pages/EventsPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
+import SnapsPage from "./pages/SnapsPage";
 
 export default function App() {
   return (
@@ -18,7 +19,7 @@ export default function App() {
       <main className="app-main">
         <Routes>
           <Route path="/" element={<Navigate to="/snaps" replace />} />
-          <Route path="/snaps" element={<PlaceholderPage slug="snaps" showSmokeTest />} />
+          <Route path="/snaps" element={<SnapsPage />} />
           <Route path="/vis" element={<PlaceholderPage slug="vis" />} />
           <Route path="/search" element={<PlaceholderPage slug="search" />} />
           <Route path="/imaging" element={<PlaceholderPage slug="imaging" />} />

@@ -30,6 +30,8 @@ from .. import __version__
 from ..config import Settings, load_settings
 from ..store import Store
 from ..util import iso, parse_iso
+from .snaps import build_router as build_snaps_router
+from .snapread import build_router as build_snapread_router
 from .status import build_status, collect_age_s
 
 log = logging.getLogger("casm_monitor.web")
@@ -117,6 +119,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.reader = reader
     app.state.writer = writer
     app.state.ws_tasks = ws_tasks
+
+    # SNAPs tab (M1): boards, live Kafka bandpass, history, trends. Read-only
+    # handle; snaps.py's 501 board-read stubs auto-disable once this module is
+    # importable (see its module docstring), so the real board-read router
+    # below is the only one ever mounted.
+    app.include_router(build_snaps_router(settings, reader))
+    app.include_router(build_snapread_router(reader, writer, settings))
 
     def status_payload() -> dict[str, Any]:
         return build_status(reader.latest_scalars(), settings.cadences)

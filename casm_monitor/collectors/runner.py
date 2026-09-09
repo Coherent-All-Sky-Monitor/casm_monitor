@@ -32,10 +32,12 @@ from ..config import Settings, load_settings
 from ..store import ShardWriter, Store, apply_retention
 from .base import Collector, CollectorContext
 from .hella import HellaCollector
+from .kafka_bp import KafkaBandpassCollector
 from .nodes import DisksCollector, GpusCollector, StoreCollector
 from .obs import ObsCollector
 from .services import ServicesCollector, ZapdosCollector
 from .sky import SkyCollector
+from .snapread import SnapReadCollector
 from .weights import WeightsCollector
 
 log = logging.getLogger("casm_monitor.collect")
@@ -51,11 +53,13 @@ def default_collectors(settings: Settings) -> list[Collector]:
         HellaCollector(settings, node="corr1"),
         HellaCollector(settings, node="corr2", cadence_s=settings.cadence("hella_corr2", 600.0)),
         ServicesCollector(settings),
+        KafkaBandpassCollector(settings),
         ZapdosCollector(settings),
         DisksCollector(settings),
         GpusCollector(settings),
         WeightsCollector(settings),
         SkyCollector(settings),
+        SnapReadCollector(settings),
         StoreCollector(settings),
     ]
 
@@ -208,6 +212,16 @@ class CollectorRunner:
         self._stop.set()
 
     def close(self) -> None:
+        # Give every collector a chance to flush anything buffered in memory
+        # (e.g. KafkaBandpassCollector's shard buffers) before the store
+        # closes, so an orderly SIGTERM/stop loses nothing. Isolated per
+        # collector, same as a collect() failure: one broken close() must not
+        # stop the others or the shutdown itself.
+        for collector in self.collectors:
+            try:
+                collector.close(self.ctx)
+            except Exception:
+                log.exception("collector %s close() failed", collector.name)
         # wait=False: a collector thread stuck in a syscall must not stop the
         # process from exiting (systemd would kill us anyway).
         self._pool.shutdown(wait=False, cancel_futures=True)

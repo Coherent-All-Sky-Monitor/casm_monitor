@@ -35,6 +35,9 @@ DEFAULT_CADENCES: dict[str, float] = {
     "gpus": 60.0,
     "weights": 120.0,
     "sky": 60.0,
+    "kafka_bp": 1.0,        # one poll per second inside the runner
+    "kafka_bp_frame": 30.0,  # frame cadence used to grade the status strip
+    "snapread": 60.0,
     "store": 300.0,
 }
 
@@ -66,6 +69,21 @@ class Settings:
     disks: tuple[str, ...] = ("/mnt/nvme3", "/mnt/nvme4", "/mnt/nvme5")
     cadences: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_CADENCES))
     zapdos_min_interval_s: float = 3600.0
+    # SNAP board reads (zapdos). The antenna board list is never duplicated in
+    # the YAML: it is read from ``snap_map_csv`` at runtime.
+    snap_map_csv: Path = Path("/home/casm/software/dev/antenna_layouts/casm_snap_map.csv")
+    # Same file board_table() reads (casm_monitor.collectors.rowmap.LAYOUT_CSV):
+    # the ``current`` symlink, never the stale antenna_layout_current.csv.
+    snap_layout_csv: Path = Path("/home/casm/software/dev/antenna_layouts/current")
+    snap_antenna_boards: tuple[str, ...] = ()  # empty = take them from the CSV
+    snap_relay_boards: tuple[str, ...] = (
+        "192.168.120.59",
+        "192.168.120.68",
+        "192.168.120.69",
+    )
+    snap_read_interval_s: float = 3600.0
+    snap_manual_min_interval_s: float = 300.0
+    snap_per_board_timeout_s: float = 60.0
     shard_ttl_days: dict[str, float] = field(default_factory=dict)
     allow_upload: bool = False
     config_path: Path | None = None
@@ -117,6 +135,18 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
     web = raw.get("web") or {}
     kafka = raw.get("kafka") or {}
     hosts = raw.get("hosts") or {}
+    snap = raw.get("snap") or {}
+    # ``antenna_boards`` is either ``{from_csv: <path>}`` (the normal case: the
+    # boards come from the SNAP map at runtime) or an explicit list of IPs used
+    # to override it. Only the second form ends up in ``snap_antenna_boards``.
+    snap_antenna_boards = snap.get("antenna_boards")
+    if isinstance(snap_antenna_boards, dict):
+        from_csv = snap_antenna_boards.get("from_csv")
+        if from_csv:
+            snap["snap_map_csv"] = from_csv
+        snap_antenna_boards = ()
+    elif snap_antenna_boards is None:
+        snap_antenna_boards = ()
     cadences = dict(DEFAULT_CADENCES)
     cadences.update({str(k): float(v) for k, v in (raw.get("cadences") or {}).items()})
 
@@ -143,6 +173,21 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         # again in code and takes the slot with an atomic compare-and-set).
         zapdos_min_interval_s=max(
             float(raw.get("zapdos_min_interval_s", defaults.zapdos_min_interval_s)), 3600.0
+        ),
+        snap_map_csv=Path(snap.get("snap_map_csv", defaults.snap_map_csv)),
+        snap_layout_csv=Path(snap.get("layout_csv", defaults.snap_layout_csv)),
+        snap_antenna_boards=tuple(str(x) for x in snap_antenna_boards),
+        snap_relay_boards=tuple(str(x) for x in snap.get("relay_boards", defaults.snap_relay_boards)),
+        # Clamped exactly like the zapdos probe: the hour is a floor, a config
+        # that asks for less is raised to it (the collector clamps again).
+        snap_read_interval_s=max(
+            float(snap.get("read_interval_s", defaults.snap_read_interval_s)), 3600.0
+        ),
+        snap_manual_min_interval_s=float(
+            snap.get("manual_min_interval_s", defaults.snap_manual_min_interval_s)
+        ),
+        snap_per_board_timeout_s=float(
+            snap.get("per_board_timeout_s", defaults.snap_per_board_timeout_s)
         ),
         shard_ttl_days={str(k): float(v) for k, v in (raw.get("shard_ttl_days") or {}).items()},
         allow_upload=_as_bool(raw.get("allow_upload", defaults.allow_upload)),

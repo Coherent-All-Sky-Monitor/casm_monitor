@@ -438,3 +438,303 @@ pre.event-detail {
   color: var(--fg-dim);
   font-style: italic;
 }
+
+/* SNAPs tab */
+
+.snap-page-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.snap-page-toolbar select {
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+.snap-history-slider {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.snap-history-slider input[type="range"] {
+  flex: 1;
+  max-width: 500px;
+}
+
+.snap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 0.75rem;
+}
+
+.snap-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem;
+}
+
+.snap-card--relay {
+  max-width: 420px;
+}
+
+.snap-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.3rem;
+}
+
+.snap-card__title {
+  font-family: var(--mono-font);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.snap-card__badges {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+.snap-card__relay-note {
+  color: var(--fg-dim);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  margin: 0.4rem 0 0 0;
+}
+
+.snap-read-btn {
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.snap-read-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.snap-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.snap-tile {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem;
+  position: relative;
+  cursor: pointer;
+}
+
+.snap-tile--bold {
+  border-color: var(--accent);
+}
+
+.snap-tile--dim {
+  opacity: 0.55;
+}
+
+.snap-tile__title {
+  font-size: 0.62rem;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 0.1rem;
+}
+
+.snap-tile__nodata {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.65rem;
+  color: var(--chip-stale-fg);
+  pointer-events: none;
+}
+
+/* mapping: "mismatch" -- a daily/obs-restart validation pass disagrees with
+ * the row=2*packet_idx formula for this input (docs/notes/kafka-bandpass-
+ * schema.md). Not a rejection: the tile still shows the formula row's data,
+ * this is only an operator-visible flag. */
+.snap-tile__badge--mismatch {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-size: 0.55rem;
+  line-height: 1;
+  padding: 0.1rem 0.25rem;
+  border-radius: 3px;
+  background: var(--chip-stale-bg);
+  color: var(--chip-stale-fg);
+  pointer-events: none;
+}
+
+.snap-subband-strip {
+  display: flex;
+  gap: 2px;
+}
+
+.snap-subband-cell {
+  font-size: 0.55rem;
+  padding: 0.1rem 0.25rem;
+  border-radius: 3px;
+  background: var(--chip-ok-bg);
+  color: var(--fg-dim);
+}
+
+.snap-subband-cell--ok {
+  background: var(--chip-ok-bg);
+}
+
+.snap-subband-cell--bad {
+  background: var(--chip-stale-bg);
+  color: var(--chip-stale-fg);
+}
+
+.snap-subband-cell--unknown {
+  background: var(--chip-warn-bg);
+  color: var(--chip-warn-fg);
+}
+
+.snap-rms-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+}
+
+.snap-rms-bar {
+  position: relative;
+  height: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: visible;
+}
+
+.snap-rms-bar__healthy,
+.snap-rms-bar__target {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(34, 88, 214, 0.12);
+}
+
+.snap-rms-bar__target {
+  background: rgba(34, 88, 214, 0.28);
+}
+
+.snap-rms-bar__marker {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--accent);
+}
+
+.snap-rms-bar__marker--bad {
+  background: var(--chip-stale-fg);
+}
+
+.snap-rms-bar__value {
+  position: absolute;
+  right: 3px;
+  top: 0;
+  font-size: 0.6rem;
+  color: var(--fg-dim);
+}
+
+.snap-expanded-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2rem 1rem;
+  z-index: 900;
+  overflow-y: auto;
+}
+
+.snap-expanded-panel {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  max-width: 900px;
+  width: 100%;
+}
+
+.snap-expanded-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.snap-expanded-panel__header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-family: var(--mono-font);
+}
+
+.snap-expanded-panel__header button,
+.snap-expanded-panel__toolbar {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  cursor: pointer;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.78rem;
+}
+
+.snap-expanded-panel__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  cursor: default;
+  border: none;
+  padding: 0;
+  margin-bottom: 0.3rem;
+}
+
+.snap-expanded-panel section {
+  margin-bottom: 1rem;
+}
+
+.snap-expanded-panel h4 {
+  font-size: 0.8rem;
+  color: var(--fg-dim);
+  margin: 0 0 0.3rem 0;
+}
+
+.snap-legend {
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}

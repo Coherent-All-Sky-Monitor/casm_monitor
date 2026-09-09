@@ -249,11 +249,13 @@ def test_default_collector_set_names(settings):
         "hella",
         "hella_corr2",
         "services",
+        "kafka_bp",
         "zapdos",
         "disks",
         "gpus",
         "weights",
         "sky",
+        "snapread",
         "store",
     ]
 

@@ -40,12 +40,34 @@ def _noop(params: dict[str, Any]) -> dict[str, Any]:
     return {"slept_s": seconds, "elapsed_s": round(elapsed, 3), "message": params.get("message")}
 
 
+def _snap_read(params: dict[str, Any]) -> dict[str, Any]:
+    """One serialized read-only pass over the SNAP boards through zapdos.
+
+    Imported lazily so the registry (and therefore the web process) does not
+    pull numpy/zarr in just to list the kinds.
+    """
+    from .snap_read import run as run_snap_read
+
+    return run_snap_read(params)
+
+
 KINDS: dict[str, JobKind] = {
     "noop": JobKind(
         name="noop",
         run=_noop,
         timeout_s=600.0,
         description="sleep N seconds; smoke-tests the job worker",
+    ),
+    "snap_read": JobKind(
+        name="snap_read",
+        run=_snap_read,
+        # 7 boards x 60 s budget plus ssh and store writes, with margin; the
+        # remote script enforces the per-board budget itself.
+        timeout_s=900.0,
+        description=(
+            "read-only SNAP board read via zapdos (spectra, ADC stats, EQ, PPS); "
+            'params {"ips": [...]|null, "reason": "scheduled"|"manual"}'
+        ),
     ),
 }
 

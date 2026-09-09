@@ -97,3 +97,9 @@ class Collector:
 
     def collect(self, ctx: CollectorContext) -> None:  # pragma: no cover - abstract
         raise NotImplementedError
+
+    def close(self, ctx: CollectorContext) -> None:
+        """Orderly-shutdown hook, called once by the runner on SIGTERM/stop
+        (before the store is closed). No-op by default; a collector that
+        buffers anything in memory (e.g. ``KafkaBandpassCollector``'s shard
+        buffers) overrides this to flush it so a restart loses nothing."""

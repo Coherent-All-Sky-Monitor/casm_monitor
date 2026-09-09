@@ -50,6 +50,16 @@ def _above(limit: float) -> Callable[[Any], bool]:
     return check
 
 
+def _below(limit: float) -> Callable[[Any], bool]:
+    def check(value: Any) -> bool:
+        try:
+            return float(value) < limit
+        except (TypeError, ValueError):
+            return False
+
+    return check
+
+
 @dataclass(frozen=True)
 class StatusItem:
     key: str
@@ -107,6 +117,22 @@ ITEMS: tuple[StatusItem, ...] = (
         "services",
         "services",
         warn_if=_is_zero,
+    ),
+    StatusItem(
+        "kafka_bp_ok",
+        "kafka_bp.ok",
+        "kafka bandpass consumer",
+        "services",
+        "kafka_bp_frame",
+        error_if=_is_zero,
+    ),
+    StatusItem(
+        "kafka_bp_subbands_ok",
+        "kafka_bp.subbands_ok",
+        "kafka subbands (of 6)",
+        "services",
+        "kafka_bp_frame",
+        warn_if=_below(6.0),
     ),
     StatusItem("t2d_ok", "services.t2d_ok", "t2d", "services", "services", warn_if=_is_zero),
     StatusItem("zapdos_ok", "services.zapdos_ok", "zapdos ssh", "services", "zapdos", warn_if=_is_zero),

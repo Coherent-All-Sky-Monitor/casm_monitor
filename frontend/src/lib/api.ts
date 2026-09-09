@@ -6,8 +6,16 @@ import type {
   EventRecord,
   EventsResponse,
   HealthResponse,
+  JobDetail,
   JobsResponse,
   ScalarsResponse,
+  SnapBoardReadResponse,
+  SnapBoardsResponse,
+  SnapHistoryResponse,
+  SnapHistorySource,
+  SnapLiveResponse,
+  SnapReadJobResponse,
+  SnapTrendResponse,
   StatusResponse,
 } from "./types";
 
@@ -91,6 +99,113 @@ export function getScalars(query: ScalarsQuery): Promise<ScalarsResponse> {
 
 export function getJobs(): Promise<JobsResponse> {
   return request<JobsResponse>("/api/jobs");
+}
+
+export function getJob(id: string | number): Promise<JobDetail> {
+  return request<JobDetail>(`/api/jobs/${id}`);
+}
+
+// --- SNAPs (M1) ---------------------------------------------------------
+// See docs/api-snaps.md for the full contract.
+
+export function getSnapBoards(): Promise<SnapBoardsResponse> {
+  return request<SnapBoardsResponse>("/api/snaps/boards");
+}
+
+export function getSnapLive(ip: string, nchan?: number): Promise<SnapLiveResponse> {
+  const params = new URLSearchParams();
+  params.set("ip", ip);
+  if (nchan !== undefined) params.set("nchan", String(nchan));
+  return request<SnapLiveResponse>(`/api/snaps/live?${params.toString()}`);
+}
+
+export function getSnapBoardRead(ip: string): Promise<SnapBoardReadResponse> {
+  const params = new URLSearchParams();
+  params.set("ip", ip);
+  return request<SnapBoardReadResponse>(`/api/snaps/board-read?${params.toString()}`);
+}
+
+export interface SnapReadThrottled {
+  throttled: true;
+  detail: string;
+  retryAfterS: number;
+}
+
+export interface SnapReadAccepted {
+  throttled: false;
+  jobId: number;
+}
+
+/**
+ * POST a board-read request. Unlike `request()`, a 429 here is an expected,
+ * handled outcome (the 5-minute manual-read limit / hourly lock) rather than
+ * an error to toast, so this bypasses the shared error path for that status
+ * only and lets the caller decide how to present the countdown.
+ */
+export async function postSnapBoardRead(ips: string[] | null): Promise<SnapReadThrottled | SnapReadAccepted> {
+  let res: Response;
+  try {
+    res = await fetch("/api/snaps/board-read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ips }),
+    });
+  } catch (err) {
+    const message = `network error contacting /api/snaps/board-read: ${(err as Error).message}`;
+    emitError(message);
+    throw new ApiError(message, 0);
+  }
+  if (res.status === 429) {
+    const body = (await res.json().catch(() => ({}))) as Partial<{
+      detail: string;
+      retry_after_s: number;
+    }>;
+    return {
+      throttled: true,
+      detail: body.detail ?? "board read rate-limited",
+      retryAfterS: body.retry_after_s ?? 300,
+    };
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    const message = `/api/snaps/board-read failed: ${res.status} ${res.statusText}${body ? ` — ${body}` : ""}`;
+    emitError(message);
+    throw new ApiError(message, res.status);
+  }
+  const payload = (await res.json()) as SnapReadJobResponse;
+  return { throttled: false, jobId: payload.job_id };
+}
+
+export interface SnapHistoryQuery {
+  packet_idx: number;
+  t0: string;
+  t1: string;
+  source: SnapHistorySource;
+  max_cells?: number;
+}
+
+export function getSnapHistory(query: SnapHistoryQuery): Promise<SnapHistoryResponse> {
+  const params = new URLSearchParams();
+  params.set("packet_idx", String(query.packet_idx));
+  params.set("t0", query.t0);
+  params.set("t1", query.t1);
+  params.set("source", query.source);
+  if (query.max_cells !== undefined) params.set("max_cells", String(query.max_cells));
+  return request<SnapHistoryResponse>(`/api/snaps/history?${params.toString()}`);
+}
+
+export interface SnapTrendQuery {
+  packet_idx: number;
+  t0: string;
+  t1: string;
+}
+
+export function getSnapTrend(query: SnapTrendQuery): Promise<SnapTrendResponse> {
+  const params = new URLSearchParams();
+  params.set("packet_idx", String(query.packet_idx));
+  params.set("t0", query.t0);
+  params.set("t1", query.t1);
+  return request<SnapTrendResponse>(`/api/snaps/trend?${params.toString()}`);
 }
 
 export function statusWebSocketUrl(): string {

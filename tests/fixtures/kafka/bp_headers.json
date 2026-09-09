@@ -1,0 +1,19 @@
+{
+ "note": "Record headers of a live casm_antenna_bp message (2026-09-08, group-less read-only consume). Values are hex of the raw header bytes; the same header set applies to casm_antenna_bp.bin, which has the identical body size and was captured the same day. offset/nsig/npol/ndim/nbin/ndat/nchan are int32 LE, bw/out_bw/freq/tsamp float64 LE, timestamp int64 LE.",
+ "body_bytes": 270336,
+ "create_time_ms": 1788909236013,
+ "headers_hex": {
+  "offset": "000a0000",
+  "nsig": "42000000",
+  "npol": "02000000",
+  "ndim": "02000000",
+  "nbin": "10000000",
+  "ndat": "00020000",
+  "nchan": "00020000",
+  "bw": "0000000000402fc0",
+  "out_bw": "0000000000402fc0",
+  "freq": "0000000000e77840",
+  "tsamp": "fca9f1d24d626040",
+  "timestamp": "5496a06a00000000"
+ }
+}

@@ -9,7 +9,7 @@ strings live side by side).
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS scalars (
@@ -75,6 +75,24 @@ CREATE TABLE IF NOT EXISTS collector_heartbeat (
     last_ok     REAL,
     last_err    TEXT,
     last_err_ts REAL
+);
+
+-- Kafka bandpass row -> correlator input mapping (M1). The formula
+-- ``row = 2 * packet_idx`` (isig=packet_idx, pol 0) is the PRIMARY mapping for
+-- every wired input; this table holds the daily/obs-restart VALIDATION result
+-- against the measured shape correlation. One row per wired input's formula
+-- row; ``status`` is 'formula' (not yet validated / vis unavailable),
+-- 'formula+verified' (validation's argmax agrees) or 'mismatch' (it does
+-- not). The correlation scores are kept for the API even though they no
+-- longer gate the mapping.
+CREATE TABLE IF NOT EXISTS kafka_row_map (
+    row        INTEGER PRIMARY KEY,
+    packet_idx INTEGER,           -- NULL when unmapped
+    corr       REAL,
+    runner_up  REAL,
+    status     TEXT NOT NULL,
+    ts         REAL NOT NULL,
+    source     TEXT               -- json: obs, file index, n inputs, thresholds
 );
 
 CREATE TABLE IF NOT EXISTS store_meta (
