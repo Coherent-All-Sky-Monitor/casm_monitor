@@ -225,6 +225,41 @@ def test_render_trend(settings, layouts):
     assert info["n_frames"] == 30
 
 
+def test_finish_board_blocks_autoscales_per_panel(settings, layouts):
+    """2026-09-08 fix: a dead/railed input's flat, far-off spectrum used to
+    widen the whole board's *shared* y-range, squashing every healthy panel
+    on that board to a flat line (see ``spectra_correlator@1x.png``, ant 12
+    at -60 dB and ant 33's ripple down to 10 dB). Each panel must now get its
+    own robust range instead."""
+    fig = sf.Figure()
+    sf.FigureCanvasAgg(fig)
+    ax_healthy = fig.add_subplot(1, 2, 1)
+    ax_dead = fig.add_subplot(1, 2, 2)
+    freq = np.linspace(400.0, 500.0, 64)
+    healthy = 2.0 * np.sin(freq / 5.0)  # a few dB of real bandpass shape
+    dead = np.full_like(freq, -60.0)  # railed input, way off the healthy range
+    ax_healthy.plot(freq, healthy, color=sf.SIGNAL)
+    ax_dead.plot(freq, dead, color=sf.SIGNAL)
+    block = sf._BoardBlock(
+        ip="1.2.3.4", nrows=1, ncols=2,
+        cells=[(ax_healthy, 0, 0), (ax_dead, 0, 1)],
+    )
+    sf._finish_board_blocks([block])
+
+    lo_h, hi_h = ax_healthy.get_ylim()
+    lo_d, hi_d = ax_dead.get_ylim()
+    # The dead panel's range must not leak into the healthy one: the healthy
+    # panel's range should stay near its own data, not stretch down to -60 dB.
+    assert lo_h > -20.0
+    assert hi_h - lo_h >= sf.PANEL_YLIM_MIN_SPAN_DB
+    # The dead panel gets its own (flat-input) range, at least the minimum span.
+    assert lo_d < -50.0
+    assert hi_d - lo_d >= sf.PANEL_YLIM_MIN_SPAN_DB
+    # y tick labels stay on every panel now (values genuinely differ).
+    assert all(t.get_visible() for t in ax_healthy.yaxis.get_ticklabels())
+    assert all(t.get_visible() for t in ax_dead.yaxis.get_ticklabels())
+
+
 def test_render_kind_bad_set_or_kind(settings, layouts):
     store = Store(settings.db_path, store_root=settings.store_root)
     try:

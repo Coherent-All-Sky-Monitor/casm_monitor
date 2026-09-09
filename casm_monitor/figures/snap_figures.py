@@ -227,31 +227,64 @@ def _board_grid(
     return fig, axes_map, blocks
 
 
-def _finish_board_blocks(blocks: list[_BoardBlock]) -> None:
-    """Shared y-limits per board, tick labels on the outer panels only.
+PANEL_YLIM_MIN_SPAN_DB = 6.0
 
-    Called once all panels in every board's block have been plotted (line
-    plots autoscale their own y-range on ``ax.plot``, so this reads that
-    per-axis autoscaled range back before overriding it). The row/column each
-    cell occupies is the block's own grid position, not just "last row of the
+
+def _robust_panel_ylim(ax: Any, min_span: float = PANEL_YLIM_MIN_SPAN_DB) -> tuple[float, float]:
+    """``[p1 - 1, p99 + 1]`` dB of this panel's latest spectrum, >= ``min_span`` tall.
+
+    House-grid convention (``casm_vis_analysis/plotting/autocorr.py``): each
+    panel autoscales off its own data, not a shared board-wide range -- a
+    shared range let one dead/railed input (e.g. an ADC pegged at -60 dB, or
+    one with a ripple down to 10 dB) squash every healthy panel on that board
+    to a flat line. The "latest" line is the ``SIGNAL``-colored one (plotted
+    last in both ``render_spectra_correlator`` and ``render_spectra_board``);
+    percentiles (not min/max) keep a single spiky channel from blowing out
+    the range the way the old shared min/max did. Falls back to the axis's
+    own autoscaled range if there is no signal line yet (e.g. no board read
+    cached), still widened to ``min_span``.
+    """
+    y = None
+    for line in ax.get_lines():
+        if line.get_color() == SIGNAL:
+            data = np.asarray(line.get_ydata(), dtype=np.float64)
+            data = data[np.isfinite(data)]
+            if data.size:
+                y = data
+                break
+    if y is not None:
+        lo, hi = np.percentile(y, [1.0, 99.0])
+        lo, hi = float(lo) - 1.0, float(hi) + 1.0
+    else:
+        lo, hi = ax.get_ylim()
+    if hi - lo < min_span:
+        mid = 0.5 * (lo + hi)
+        lo, hi = mid - min_span / 2.0, mid + min_span / 2.0
+    return lo, hi
+
+
+def _finish_board_blocks(blocks: list[_BoardBlock]) -> None:
+    """Per-panel y-limits, tick labels on the outer x axes only.
+
+    Called once all panels in every board's block have been plotted. Each
+    panel gets its own robust y-range (``_robust_panel_ylim``) rather than a
+    board-wide shared one, so a dead or railed input's panel no longer
+    squashes its healthy neighbours; y tick labels stay on every panel since
+    the values now genuinely differ panel to panel. The row/column each cell
+    occupies is the block's own grid position, not just "last row of the
     board" -- the bottom-most row that actually has a populated cell in that
-    column keeps its x tick labels, every other row hides them; only column 0
-    keeps y tick labels.
+    column keeps its x tick labels, every other row hides them.
     """
     for block in blocks:
         if not block.cells:
             continue
-        lo = min(ax.get_ylim()[0] for ax, _r, _c in block.cells)
-        hi = max(ax.get_ylim()[1] for ax, _r, _c in block.cells)
-        if hi <= lo:
-            hi = lo + 1.0
         last_row_in_col: dict[int, int] = {}
         for _ax, row, col in block.cells:
             last_row_in_col[col] = max(row, last_row_in_col.get(col, row))
         for ax, row, col in block.cells:
-            ax.set_ylim(lo, hi)
+            ax.set_ylim(*_robust_panel_ylim(ax))
             ax.tick_params(
-                labelbottom=(row == last_row_in_col[col]), labelleft=(col == 0),
+                labelbottom=(row == last_row_in_col[col]), labelleft=True,
                 labelsize=6,
             )
 
