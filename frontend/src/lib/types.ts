@@ -596,3 +596,154 @@ export interface CalStatusResponse {
   ledger_row: CalLedgerRow | null;
   active_job: CalActiveJob | null;
 }
+
+// Candidates tab (M5). Kept in sync by hand with docs/api-cands.md.
+
+export type CandLabel = "frb" | "pulsar" | "rfi" | "unsure";
+export type CandView = "candidates" | "all";
+
+export interface CandEventRow {
+  name: string;
+  event_utc: string;
+  snr: number;
+  dm: number;
+  width: number;
+  beam: number;
+  tier: string;
+  tags: string[];
+  n_beams: number;
+  n_members: number;
+  alt_deg: number | null;
+  az_deg: number | null;
+  label: CandLabel | null;
+  outcome: string | null;
+}
+
+export interface CandEventsResponse {
+  events: CandEventRow[];
+}
+
+export interface CandLabelRecord {
+  id: number;
+  name: string;
+  label: CandLabel;
+  who: string;
+  notes: string;
+  created_utc: string;
+}
+
+export interface CandTriggerRecord {
+  id: number;
+  candname: string;
+  stream: number;
+  kind: string;
+  action: string;
+  detail: string;
+  dump_utc_start: string | null;
+  dump_utc_stop: string | null;
+  bytes_written: number | null;
+  cleaned_utc: string | null;
+  created_utc: string;
+}
+
+export interface CandEventDetailResponse {
+  event: Record<string, unknown>;
+  tags_display: string[];
+  triggers: CandTriggerRecord[];
+  labels: CandLabelRecord[];
+  plots: string[];
+  meta: Record<string, unknown>;
+  data_status: string;
+  label_choices: CandLabel[];
+}
+
+export interface CandLabelPostResponse {
+  name: string;
+  label: CandLabel;
+  labels: CandLabelRecord[];
+}
+
+export interface CandTransitSource {
+  name: string;
+  alt: number;
+  az: number;
+  dec: number;
+  transit: string;
+}
+
+export interface CandNowSnapshot {
+  epoch_ms: number;
+  lst_h: number;
+  sources: CandTransitSource[];
+}
+
+export interface CandWindowStats {
+  gulps: number;
+  cands: number;
+  clusters: number;
+  stored: number;
+  would: number;
+  ms: number | null;
+  cands_s: number;
+}
+
+export interface CandGulpStatsRow {
+  gulp_utc: string;
+  n_jobs: number;
+  n_cands: number;
+  n_clusters: number;
+  n_stored: number;
+  n_would: number;
+  clustering_ms: number;
+}
+
+export interface CandStatsResponse {
+  hours: number;
+  win_label: string;
+  presets: { hours: number; label: string }[];
+  hour: CandWindowStats;
+  win: CandWindowStats;
+  now: CandNowSnapshot | null;
+  rows: CandGulpStatsRow[];
+}
+
+export interface CandInjectionRow {
+  id: number;
+  inject_utc: string;
+  beam: number;
+  dm: number;
+  amp: number;
+  sigma_ms: number;
+  est_snr: number | null;
+  rec_snr: number | null;
+  rec_dm: number | null;
+  gate_t1: number | null;
+  gate_t2: number | null;
+  gate_trigger: number | null;
+  event_name: string | null;
+  fail_reason: string | null;
+}
+
+export interface CandInjectionsResponse {
+  injections: CandInjectionRow[];
+  day: { n: number; t1: number | null; t2: number | null; tr: number | null; done: number };
+}
+
+export interface CandFrbRow {
+  name: string;
+  event_utc: string;
+  snr: number;
+  dm: number;
+  width: number;
+  beam: number;
+  notes: string;
+  created_utc: string;
+}
+
+export interface CandFrbsResponse {
+  frbs: CandFrbRow[];
+}
+
+export interface CandTransitsResponse {
+  snapshot: CandNowSnapshot | null;
+}

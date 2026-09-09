@@ -85,6 +85,9 @@ class Settings:
     vis_dir: Path = Path("/mnt/nvme4/data/casm/visibilities_64ant")
     hella_cands_dir: Path = Path("/mnt/nvme4/data/casm/hella_cands")
     t2_db: Path = Path("/mnt/nvme5/casm_pipeline/db/t2.sqlite")
+    # Candidates tab (M5): T2/T3's plot/meta tree, same directory casm_t3's
+    # web app reads (its ``CANDIDATES_DIR``).
+    candidates_dir: Path = Path("/mnt/nvme5/casm_pipeline/candidates")
     registry_dir: Path = Path("/mnt/nvme5/casm_pipeline/weights/registry")
     deployed_weights_csv: Path = Path("/home/casm/software/dev/casm-wiki/deployed_weights.csv")
     medusa_cfg: Path = Path("/home/casm/software/fourier-space/opt/casm/share/common/medusa.cfg")
@@ -241,6 +244,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         vis_dir=Path(vis.get("dir", paths.get("vis_dir", defaults.vis_dir))),
         hella_cands_dir=Path(paths.get("hella_cands_dir", defaults.hella_cands_dir)),
         t2_db=Path(paths.get("t2_db", defaults.t2_db)),
+        candidates_dir=Path(paths.get("candidates_dir", defaults.candidates_dir)),
         registry_dir=Path(paths.get("registry_dir", defaults.registry_dir)),
         deployed_weights_csv=Path(paths.get("deployed_weights_csv", defaults.deployed_weights_csv)),
         medusa_cfg=Path(paths.get("medusa_cfg", defaults.medusa_cfg)),

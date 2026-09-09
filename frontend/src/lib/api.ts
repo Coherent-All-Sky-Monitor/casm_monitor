@@ -12,6 +12,15 @@ import type {
   CalStatusResponse,
   CalUploadAcceptedResponse,
   CalUploadRequest,
+  CandEventDetailResponse,
+  CandEventsResponse,
+  CandFrbsResponse,
+  CandInjectionsResponse,
+  CandLabel,
+  CandLabelPostResponse,
+  CandStatsResponse,
+  CandTransitsResponse,
+  CandView,
   EventRecord,
   EventsResponse,
   HealthResponse,
@@ -570,6 +579,71 @@ export function postCalUpload(
     body,
     { [CSRF_HEADER]: csrfToken() },
   );
+}
+
+// --- Candidates (M5) -----------------------------------------------------
+// See docs/api-cands.md for the full contract.
+
+export interface CandEventsQuery {
+  tier?: string;
+  tag?: string;
+  view?: CandView;
+  limit?: number;
+  since?: string;
+}
+
+export function getCandEvents(query: CandEventsQuery = {}): Promise<CandEventsResponse> {
+  const params = new URLSearchParams();
+  if (query.tier) params.set("tier", query.tier);
+  if (query.tag) params.set("tag", query.tag);
+  if (query.view) params.set("view", query.view);
+  if (query.limit !== undefined) params.set("limit", String(query.limit));
+  if (query.since) params.set("since", query.since);
+  const qs = params.toString();
+  return request<CandEventsResponse>(`/api/cands/events${qs ? `?${qs}` : ""}`);
+}
+
+export function getCandEvent(name: string): Promise<CandEventDetailResponse> {
+  return request<CandEventDetailResponse>(`/api/cands/events/${encodeURIComponent(name)}`);
+}
+
+export function candPlotUrl(name: string, fname: string): string {
+  return `/api/cands/events/${encodeURIComponent(name)}/plot/${encodeURIComponent(fname)}`;
+}
+
+/** Same CSRF double-submit cookie the Calibration tab mints
+ * (`casm_monitor_csrf` — `GET /api/cands/events` also mints it, so the tab
+ * always has one by the time a label button is clickable). */
+export function postCandLabel(
+  name: string,
+  label: CandLabel,
+  note: string,
+): Promise<CalActionResult<CandLabelPostResponse>> {
+  return postJson<CandLabelPostResponse>(
+    `/api/cands/events/${encodeURIComponent(name)}/label`,
+    { label, note },
+    { [CSRF_HEADER]: csrfToken() },
+  );
+}
+
+export function getCandStats(hours: number): Promise<CandStatsResponse> {
+  return request<CandStatsResponse>(`/api/cands/stats?hours=${hours}`);
+}
+
+export function candStatsPlotUrl(hours: number): string {
+  return `/api/cands/stats/plot.png?hours=${hours}`;
+}
+
+export function getCandInjections(limit = 200): Promise<CandInjectionsResponse> {
+  return request<CandInjectionsResponse>(`/api/cands/injections?limit=${limit}`);
+}
+
+export function getCandFrbs(): Promise<CandFrbsResponse> {
+  return request<CandFrbsResponse>("/api/cands/frbs");
+}
+
+export function getCandTransits(): Promise<CandTransitsResponse> {
+  return request<CandTransitsResponse>("/api/cands/transits");
 }
 
 export function statusWebSocketUrl(): string {

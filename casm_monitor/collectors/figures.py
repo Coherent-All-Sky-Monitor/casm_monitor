@@ -16,8 +16,9 @@ vis_figures.py``'s docstrings).
 
 This collector is cheap and does no I/O beyond a couple of SQLite queries:
 
-* every :data:`CADENCE_S` (60 s) it submits a ``render_figures`` job for both
-  targets, but only every :data:`SUBMIT_INTERVAL_S` (30 min), refusing (via
+* every :data:`CADENCE_S` (60 s) it submits a ``render_figures`` job for all
+  of :data:`SCHEDULED_TARGETS` (vis, snaps and, since M4, imaging), but only
+  every :data:`SUBMIT_INTERVAL_S` (30 min), refusing (via
   ``Store.submit_job_atomic``'s ``refuse_if_pending``) while one is already
   queued or running;
 * it additionally submits a ``snaps``-only job, independent of that 30 min
@@ -40,6 +41,11 @@ from .base import Collector, CollectorContext
 log = logging.getLogger("casm_monitor.collect.figures")
 
 RENDER_FIGURES_KIND = "render_figures"
+#: Targets of the half-hourly scheduled render. ``imaging`` (M4) joined the
+#: pair in 2026-09-09: its own pass is incremental (it images at most 64 new
+#: integrations into a frame cache and rebuilds the cheap products from it),
+#: so adding it does not lengthen the job by a 24 h re-render.
+SCHEDULED_TARGETS = ["vis", "snaps", "imaging"]
 SUBMIT_INTERVAL_S = 1800.0  # 30 min
 LAST_SUBMIT_STREAM = "figures"
 LAST_SUBMIT_KEY = "last_submit_ts"
@@ -56,7 +62,7 @@ class FigureScheduler(Collector):
         now = time.time()
         job_id, refusal = ctx.store.submit_job_atomic(
             RENDER_FIGURES_KIND,
-            {"targets": ["vis", "snaps"], "reason": "scheduled"},
+            {"targets": SCHEDULED_TARGETS, "reason": "scheduled"},
             refuse_if_pending=True,
             claim_slot=(LAST_SUBMIT_STREAM, LAST_SUBMIT_KEY, SUBMIT_INTERVAL_S),
             require_slot=True,
@@ -75,7 +81,7 @@ class FigureScheduler(Collector):
                 severity="info",
                 subject=f"job {job_id} ({RENDER_FIGURES_KIND})",
                 detail={"job_id": job_id, "kind": RENDER_FIGURES_KIND, "reason": "scheduled",
-                        "targets": ["vis", "snaps"]},
+                        "targets": SCHEDULED_TARGETS},
             )
             ctx.scalar("figures.scheduled_job_id", job_id)
             ctx.scalar("figures.scheduled_skipped", 0)

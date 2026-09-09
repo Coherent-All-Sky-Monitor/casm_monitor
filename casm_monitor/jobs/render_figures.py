@@ -32,6 +32,7 @@ number is the true peak for that phase).
 from __future__ import annotations
 
 import concurrent.futures
+import io
 import json
 import logging
 import os
@@ -58,7 +59,7 @@ log = logging.getLogger("casm_monitor.jobs.render_figures")
 MAX_WORKERS = 8
 BASE_REFS = ("raw", "sun")
 
-TARGETS = ("vis", "snaps")
+TARGETS = ("vis", "snaps", "imaging")
 
 
 def _vf():
@@ -512,6 +513,311 @@ def _newest_kafka_t1(store: Store) -> float | None:
     return float(value) if value is not None else None
 
 
+# -- Imaging tab ------------------------------------------------------------
+# The imaging pass is INCREMENTAL at the integration level, unlike the vis and
+# snaps passes (which re-render a whole set when its watermark moves): one
+# all-sky snapshot costs ~5 s (MEASURED 2026-09-09, plan.md), so re-imaging a
+# whole 24 h day (~629 integrations) every half hour would be an hour of CPU
+# per pass. Instead every integration is imaged ONCE into a frame cache
+# (``figures/imaging/frames/<unix>@1x.png`` plus a ``.npz`` of the image), and
+# the latest/strip/movie products are rebuilt from that cache, which is cheap.
+# A pass images at most MAX_IMAGING_FRAMES new integrations, oldest first, so
+# a long outage catches up over several passes instead of one job that blows
+# its timeout.
+MAX_IMAGING_FRAMES = 64
+
+
+def _if():
+    from ..figures import imaging_figures
+    return imaging_figures
+
+
+def _frames_dir(root: Path) -> Path:
+    return ensure_contained(root / "frames", root)
+
+
+def _cached_frame_ts(frames_dir: Path) -> list[int]:
+    """Unix timestamps of COMPLETE cached frames (PNG *and* npz), ascending.
+
+    A frame missing either half is not listed: the history route promises only
+    files that actually exist on disk, and the strip/movie need the npz.
+    """
+    if not frames_dir.is_dir():
+        return []
+    out: list[int] = []
+    for png in frames_dir.glob("*@1x.png"):
+        stem = png.name[: -len("@1x.png")]
+        if not stem.isdigit():
+            continue
+        if (frames_dir / f"{stem}.npz").is_file():
+            out.append(int(stem))
+    return sorted(out)
+
+
+def _write_frame(frames_dir: Path, snap: dict[str, Any]) -> int:
+    """Cache one integration: the scrub PNG and the image itself.
+
+    The npz is float32 (half the bytes of the float64 the imager returns, and
+    a dirty image has nowhere near 7 significant digits of meaning) and holds
+    everything the strip/movie need to redraw the frame without re-imaging it.
+    """
+    import numpy as np
+
+    ts = int(round(float(snap["time_unix"])))
+    _atomic_write(frames_dir / f"{ts}@1x.png", _if().render_frame(snap))
+    names = list((snap.get("sources") or {}).keys())
+    lma = (
+        np.asarray([list(snap["sources"][n]) for n in names], dtype=np.float32)
+        if names
+        else np.zeros((0, 3), dtype=np.float32)
+    )
+    buf = io.BytesIO()
+    np.savez_compressed(
+        buf,
+        time_unix=np.float64(float(snap["time_unix"])),
+        image=np.asarray(snap["image"], dtype=np.float32),
+        l_axis=np.asarray(snap["l_axis"], dtype=np.float32),
+        m_axis=np.asarray(snap["m_axis"], dtype=np.float32),
+        src_names=np.asarray(names, dtype="U16"),
+        src_lma=lma,
+    )
+    _atomic_write(frames_dir / f"{ts}.npz", buf.getvalue())
+    return ts
+
+
+def _load_frame(frames_dir: Path, ts: int) -> dict[str, Any] | None:
+    """One cached frame back as an ``allsky_snapshots``-shaped dict."""
+    import numpy as np
+
+    path = frames_dir / f"{ts}.npz"
+    try:
+        with np.load(path, allow_pickle=False) as z:
+            names = [str(n) for n in z["src_names"]]
+            lma = np.asarray(z["src_lma"], dtype=float)
+            return {
+                "time_unix": float(z["time_unix"]),
+                "image": np.asarray(z["image"], dtype=float),
+                "l_axis": np.asarray(z["l_axis"], dtype=float),
+                "m_axis": np.asarray(z["m_axis"], dtype=float),
+                "sources": {n: tuple(float(x) for x in lma[i]) for i, n in enumerate(names)},
+            }
+    except (OSError, ValueError, KeyError):
+        log.warning("render_figures: unreadable imaging frame %s", path)
+        return None
+
+
+def _expire_frames(frames_dir: Path, now: float, retention_days: float) -> int:
+    """Delete cached frames older than the retention window; returns the count."""
+    cutoff = now - float(retention_days) * 86400.0
+    n = 0
+    for ts in _cached_frame_ts(frames_dir):
+        if ts >= cutoff:
+            continue
+        for name in (f"{ts}@1x.png", f"{ts}.npz"):
+            try:
+                (frames_dir / name).unlink()
+            except OSError:
+                continue
+        n += 1
+    return n
+
+
+def _strip_selection(frame_ts: list[int], t0: float, t1: float) -> list[int]:
+    """One frame per 30-min slot across ``[t0, t1]``, nearest the slot centre."""
+    imaging = _if()
+    slot_s = imaging.STRIP_SLOT_S
+    chosen: list[int] = []
+    # The STRIP_MAX slots TILE [t1 - 24 h, t1] (48 x 30 min = exactly 24 h),
+    # so the slot centres sit half a slot inside each end -- anchoring them on
+    # t1 itself would leave the oldest half hour of the window unrepresented.
+    for k in range(imaging.STRIP_MAX):
+        centre = t1 - (imaging.STRIP_MAX - k - 0.5) * slot_s
+        if centre + slot_s / 2.0 < t0:
+            continue
+        window = [ts for ts in frame_ts if abs(ts - centre) <= slot_s / 2.0]
+        if not window:
+            continue
+        best = min(window, key=lambda ts: abs(ts - centre))
+        if best not in chosen:
+            chosen.append(best)
+    return chosen
+
+
+def _render_imaging(store: Store, settings: Settings) -> dict[str, Any]:
+    """All-sky imaging: catch the frame cache up, then rebuild the products."""
+    imaging = _if()
+    root = ensure_contained(
+        Path(settings.store_root) / "figures" / "imaging", settings.store_root
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    frames_dir = _frames_dir(root)
+    frames_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        config = imaging.imaging_config(settings)
+    except Exception as exc:  # depends on the live ledger/cal/layout files
+        log.info("render_figures: imaging unavailable this pass: %s", exc)
+        store.put_scalar("figures.imaging.skipped", 1)
+        return {"skipped": str(exc)}
+
+    started = time.time()
+    now = started
+    window_t0 = now - imaging.WINDOW_HOURS * 3600.0
+    n_expired = _expire_frames(frames_dir, now, imaging.FRAME_RETENTION_DAYS)
+
+    old_manifest = _read_json(root / "manifest.json") or {}
+    # Where the last pass stopped ASKING, not where it last succeeded: a data
+    # gap (every step in the range skipped) must still advance the resume
+    # point, or every future pass re-requests the same 64 dead integrations
+    # for ever.
+    scan_t1 = float(old_manifest.get("scan_t1") or 0.0)
+    cached = _cached_frame_ts(frames_dir)
+    resume = max(scan_t1, float(cached[-1]) + imaging.INTEGRATION_S if cached else 0.0)
+    t0 = max(window_t0, resume)
+    t1 = min(now, t0 + MAX_IMAGING_FRAMES * imaging.INTEGRATION_S)
+
+    n_new = 0
+    if t1 - t0 >= imaging.INTEGRATION_S:
+        print(
+            f"render_figures: imaging {imaging.utc_iso(t0)} .. {imaging.utc_iso(t1)} "
+            f"(cal {config.cal_file}, {len(config.antennas)} antennas)",
+            flush=True,
+        )
+        snaps = imaging.image_window(store, settings, t0, t1, config=config)
+        known = set(cached)
+        for snap in snaps:
+            ts = int(round(float(snap["time_unix"])))
+            if ts in known:
+                continue
+            _write_frame(frames_dir, snap)
+            known.add(ts)
+            n_new += 1
+        cached = sorted(known)
+    else:
+        t1 = max(t1, scan_t1)
+
+    in_window = [ts for ts in cached if ts >= window_t0]
+    result: dict[str, Any] = {
+        "n_frames_rendered": n_new,
+        "n_frames_cached": len(cached),
+        "n_frames_expired": n_expired,
+        "scan_t0": t0,
+        "scan_t1": t1,
+    }
+    if not in_window:
+        log.info("render_figures: no imaging frames in the last 24 h yet")
+        result["render_s"] = round(time.time() - started, 3)
+        result["peak_rss_mb"] = _peak_rss_mb()
+        store.put_scalar("figures.imaging.render_s", result["render_s"])
+        store.put_scalar("figures.imaging.peak_rss_mb", result["peak_rss_mb"])
+        _write_imaging_manifest(
+            root, config, None, [], None, window_t0, now, len(cached), scan_t1=t1
+        )
+        return result
+
+    latest_ts = in_window[-1]
+    latest_snap = _load_frame(frames_dir, latest_ts)
+    if latest_snap is not None:
+        pngs = imaging.render_latest(
+            latest_snap, {"cal_file": config.cal_file, "n_ant": len(config.antennas)}
+        )
+        for suffix, data in pngs.items():
+            _atomic_write(root / f"latest@{suffix}.png", data)
+
+    strip_ts = _strip_selection(in_window, window_t0, now)
+    strip_snaps = [s for s in (_load_frame(frames_dir, ts) for ts in strip_ts) if s]
+    strip_pngs = imaging.render_strip(strip_snaps)
+    for suffix, data in strip_pngs.items():
+        _atomic_write(root / f"strip24h@{suffix}.png", data)
+
+    movie_name = None
+    if imaging.ffmpeg_available():
+        movie_snaps = [s for s in (_load_frame(frames_dir, ts) for ts in in_window) if s]
+        try:
+            movie_path = imaging.render_movie(movie_snaps, root)
+        except Exception:  # a movie is never worth failing the whole pass over
+            log.exception("render_figures: imaging movie render failed")
+            movie_path = None
+        if movie_path is not None:
+            movie_name = movie_path.name
+    else:
+        log.info("render_figures: ffmpeg not on PATH; imaging movie skipped")
+
+    _write_imaging_manifest(
+        root, config,
+        latest_ts if latest_snap is not None else None,
+        strip_ts, movie_name, window_t0, now, len(cached), scan_t1=t1,
+    )
+
+    render_s = round(time.time() - started, 3)
+    peak_rss_mb = _peak_rss_mb()
+    store.put_scalar("figures.imaging.render_s", render_s)
+    store.put_scalar("figures.imaging.peak_rss_mb", peak_rss_mb)
+    store.put_scalar("figures.imaging.n_frames_rendered", n_new)
+    store.put_scalar("figures.imaging.n_frames_cached", len(cached))
+    result.update(
+        {
+            "render_s": render_s,
+            "peak_rss_mb": peak_rss_mb,
+            "n_strip": len(strip_ts),
+            "movie": movie_name,
+            "latest_ts": latest_ts,
+        }
+    )
+    return result
+
+
+def _write_imaging_manifest(
+    root: Path,
+    config: "Any",
+    latest_ts: int | None,
+    strip_ts: list[int],
+    movie_name: str | None,
+    t0: float,
+    t1: float,
+    n_cached: int,
+    scan_t1: float | None = None,
+) -> None:
+    """The manifest docs/api-imaging.md specifies, exactly.
+
+    ``psf_ceiling_snr`` is null by design: the dirty-beam ceiling is a second
+    full hemisphere beamform per render and nothing on the page uses it yet
+    (the contract explicitly allows null "when not computed for this render").
+    ``scan_t1``/``n_frames_cached`` are the monitor's own bookkeeping, not part
+    of the contract -- ``scan_t1`` is where the next pass resumes imaging.
+    """
+    imaging = _if()
+    manifest: dict[str, Any] = {
+        "rendered_utc": imaging.utc_iso(time.time()),
+        "cal_file": config.cal_file,
+        "antennas": list(config.antennas),
+        "latest": None
+        if latest_ts is None
+        else {
+            "ts": imaging.utc_iso(latest_ts),
+            "ts_unix": int(latest_ts),
+            "file_1x": "latest@1x.png",
+            "file_2x": "latest@2x.png",
+        },
+        "strip": {
+            "t0": imaging.utc_iso(t0),
+            "t1": imaging.utc_iso(t1),
+            "n": len(strip_ts),
+            "file_1x": "strip24h@1x.png",
+            "file_2x": "strip24h@2x.png",
+        },
+        "movie": {"file": movie_name, "fps": imaging.MOVIE_FPS},
+        "sources": imaging.source_marks(time.time()),
+        "psf_ceiling_snr": None,
+        "n_frames_cached": n_cached,
+        "scan_t1": float(t1 if scan_t1 is None else scan_t1),
+    }
+    path = root / "manifest.json"
+    tmp = root / f".tmp-{os.getpid()}-manifest.json"
+    tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    os.replace(tmp, path)
+
+
 # -- job entry point --------------------------------------------------------
 def run(params: dict[str, Any]) -> dict[str, Any]:
     """Job entry point (runs in the job subprocess, see jobs/run_job.py)."""
@@ -533,6 +839,10 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
             print("render_figures: rendering snaps", flush=True)
             result["snaps"] = _render_snaps(store, settings)
             print(f"render_figures: snaps done: {result['snaps']}", flush=True)
+        if "imaging" in targets:
+            print("render_figures: rendering imaging", flush=True)
+            result["imaging"] = _render_imaging(store, settings)
+            print(f"render_figures: imaging done: {result['imaging']}", flush=True)
         result["elapsed_s"] = round(time.time() - started, 3)
         store.add_event(
             "render_figures",

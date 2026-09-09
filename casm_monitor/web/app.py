@@ -31,6 +31,7 @@ from ..config import Settings, load_settings
 from ..store import Store
 from ..util import iso, parse_iso
 from .cal import build_router as build_cal_router
+from .cands import build_router as build_cands_router
 from .snaps import build_router as build_snaps_router
 from .snapread import build_router as build_snapread_router
 from .status import build_status, collect_age_s
@@ -141,6 +142,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(build_cal_router(reader, writer, settings))
     app.include_router(build_search_router(reader, settings))
     app.include_router(build_figures_router(settings))
+
+    # Candidates tab (M5): a prefix-aware router over casm_t3's own T2 event
+    # store (mount only — see casm_monitor.web.cands module docstring for why
+    # t3-web's app itself is never mounted). No reader/writer handle: it opens
+    # the T2 sqlite directly through casm_t3's own helpers.
+    app.include_router(build_cands_router(settings))
 
     def status_payload() -> dict[str, Any]:
         return build_status(reader.latest_scalars(), settings.cadences)

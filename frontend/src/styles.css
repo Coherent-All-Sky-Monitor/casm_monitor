@@ -420,6 +420,14 @@ select {
   color: var(--muted);
 }
 
+.events tr.clickable {
+  cursor: pointer;
+}
+
+.events tr.clickable:hover td {
+  color: var(--ink);
+}
+
 .events .kind-warn {
   color: var(--caution);
 }
@@ -726,4 +734,53 @@ select {
 
 .text-button--alert:hover:not(:disabled) {
   border-bottom-color: var(--alert);
+}
+
+/* --- Candidates tab ------------------------------------------------------ */
+
+.def-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 16px;
+  margin: 0;
+  max-width: 720px;
+}
+
+.def-list dt {
+  color: var(--faint);
+  grid-column: 1;
+}
+
+.def-list dd {
+  margin: 0;
+  color: var(--muted);
+  grid-column: 2;
+}
+
+.def-list dd.ink {
+  color: var(--ink);
+}
+
+.label-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.label-row .text-button.selected {
+  color: var(--ink);
+  border-bottom-color: var(--signal);
+}
+
+.label-row input[type="text"] {
+  flex: 1;
+  min-width: 220px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink);
+  font: inherit;
+  padding: 0 0 2px;
 }

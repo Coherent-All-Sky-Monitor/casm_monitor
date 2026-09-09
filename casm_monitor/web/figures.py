@@ -1,6 +1,6 @@
-"""The Visibilities and SNAPs server-rendered figures API.
+"""The Visibilities, SNAPs and Imaging server-rendered figures API.
 
-Read-only: every route reads a ``store_root/figures/<vis|snaps>/...`` tree
+Read-only: every route reads a ``store_root/figures/<vis|snaps|imaging>/...`` tree
 :mod:`casm_monitor.collectors.figures` writes (manifest + PNGs), and nothing
 here ever touches a shard, a board or a file outside that tree. Path
 components (``set``, ``ref``, ``kind``) are validated against the exact
@@ -18,13 +18,18 @@ hit -- the two together are what makes the "one <img> per view" page fast.
 
 The SNAPs tree has one fewer path component than the Vis one (no ``ref``):
 ``store_root/figures/snaps/<set>/<kind>@{1x,2x}.png`` plus one
-``manifest.json`` per ``<set>``.
+``manifest.json`` per ``<set>``. The Imaging tree (M4) is flatter still --
+``store_root/figures/imaging/`` holds one manifest, the four products it names
+(``latest@{1x,2x}.png``, ``strip24h@{1x,2x}.png``, ``allsky24h.mp4``) and a
+``frames/<unix>@1x.png`` cache the scrub view browses through
+``GET /api/imaging/history``.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from email.utils import formatdate
 from pathlib import Path
 from typing import Any
@@ -102,7 +107,13 @@ def _validated_png_path(outdir: Path, filename: str, kinds: tuple[str, ...] = KI
     return path
 
 
-def _png_response(path: Path, request: Request) -> Response:
+def _file_response(
+    path: Path,
+    request: Request,
+    media_type: str = "image/png",
+    extra_headers: dict[str, str] | None = None,
+) -> Response:
+    """One rendered file with the ETag/max-age/304 contract every tab shares."""
     data = path.read_bytes()
     etag = hashlib.sha256(data).hexdigest()[:ETAG_BYTES]
     inm = request.headers.get("if-none-match")
@@ -111,9 +122,14 @@ def _png_response(path: Path, request: Request) -> Response:
         "Cache-Control": "public, max-age=1800",
         "Last-Modified": formatdate(path.stat().st_mtime, usegmt=True),
     }
+    headers.update(extra_headers or {})
     if inm and etag in {tag.strip().strip('"') for tag in inm.split(",")}:
         return Response(status_code=304, headers=headers)
-    return Response(content=data, media_type="image/png", headers=headers)
+    return Response(content=data, media_type=media_type, headers=headers)
+
+
+def _png_response(path: Path, request: Request) -> Response:
+    return _file_response(path, request, "image/png")
 
 
 def _build_vis_router(settings: Settings) -> APIRouter:
@@ -231,12 +247,131 @@ def _build_snaps_router(settings: Settings) -> APIRouter:
     return router
 
 
+# -- Imaging figures ----------------------------------------------------
+# The imaging tree is flat (``store_root/figures/imaging/``): the manifest, the
+# four products the manifest names, and a ``frames/`` cache of one PNG per
+# imaged integration for the scrub view. Serving is whitelist-driven exactly
+# like the other two: the four product names are a literal set and a history
+# frame must match ``frames/<digits>@1x.png`` -- the ONE route that takes a
+# path with a "/" in it, which is why the pattern is anchored and the digits
+# are re-joined into the name rather than the request's own string being
+# pasted into a path (docs/api-imaging.md: "never an arbitrary path").
+IMAGING_PRODUCTS: frozenset[str] = frozenset(
+    {"latest@1x.png", "latest@2x.png", "strip24h@1x.png", "strip24h@2x.png", "allsky24h.mp4"}
+)
+IMAGING_FRAME_RE = re.compile(r"^frames/(\d{1,12})@1x\.png$")
+_MEDIA_TYPES = {".png": "image/png", ".mp4": "video/mp4"}
+
+
+def _imaging_root(settings: Settings) -> Path:
+    return ensure_contained(
+        Path(settings.store_root) / "figures" / "imaging", Path(settings.store_root)
+    )
+
+
+def _validated_imaging_path(root: Path, filename: str) -> Path:
+    if filename in IMAGING_PRODUCTS:
+        name = filename
+    else:
+        m = IMAGING_FRAME_RE.fullmatch(filename)
+        if m is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "file must be one of "
+                    f"{'|'.join(sorted(IMAGING_PRODUCTS))} or frames/<unix>@1x.png"
+                ),
+            )
+        name = f"frames/{m.group(1)}@1x.png"
+    try:
+        path = ensure_contained(root / name, root)
+    except UnsafePathError as exc:  # pragma: no cover - name already whitelisted
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"{name} has not been rendered yet")
+    return path
+
+
+def _imaging_frames(root: Path) -> list[int]:
+    """Unix timestamps of the cached frame PNGs on disk, ascending."""
+    frames_dir = root / "frames"
+    if not frames_dir.is_dir():
+        return []
+    out: list[int] = []
+    for png in frames_dir.glob("*@1x.png"):
+        stem = png.name[: -len("@1x.png")]
+        if stem.isdigit():
+            out.append(int(stem))
+    return sorted(out)
+
+
+def _build_imaging_router(settings: Settings) -> APIRouter:
+    """The Imaging figures router (docs/api-imaging.md). Read-only."""
+    router = APIRouter(prefix="/api/figures/imaging", tags=["figures"])
+
+    @router.get("/manifest")
+    def manifest() -> dict[str, Any]:
+        root = _imaging_root(settings)
+        path = root / "manifest.json"
+        try:
+            return json.loads(path.read_text())
+        except (OSError, ValueError) as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="no imaging figures rendered yet (the render job may not have run)",
+            ) from exc
+
+    # Declared after /manifest so the literal route wins; ``:path`` is what
+    # lets a history frame's own ``frames/<unix>@1x.png`` arrive as one value.
+    @router.get("/{filename:path}")
+    def figure(filename: str, request: Request) -> Response:
+        root = _imaging_root(settings)
+        path = _validated_imaging_path(root, filename)
+        media_type = _MEDIA_TYPES.get(path.suffix, "application/octet-stream")
+        # ``Accept-Ranges`` on the movie so a browser's <video> element knows
+        # it may seek; the body is served whole (the 24 h mp4 is a few MB).
+        extra = {"Accept-Ranges": "bytes"} if path.suffix == ".mp4" else None
+        return _file_response(path, request, media_type, extra)
+
+    return router
+
+
+def _build_imaging_history_router(settings: Settings) -> APIRouter:
+    """``GET /api/imaging/history?t0&t1`` -- the scrub view's frame list."""
+    router = APIRouter(prefix="/api/imaging", tags=["imaging"])
+
+    @router.get("/history")
+    def history(t0: str | None = None, t1: str | None = None) -> dict[str, Any]:
+        from ..figures.imaging_figures import parse_utc, utc_iso
+
+        root = _imaging_root(settings)
+        try:
+            start = parse_utc(t0) if t0 else 0.0
+            end = parse_utc(t1) if t1 else float("inf")
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"t0/t1 must be ISO-8601 timestamps: {exc}"
+            ) from exc
+        frames = [
+            {"ts": utc_iso(ts), "ts_unix": ts, "file_1x": f"frames/{ts}@1x.png"}
+            for ts in _imaging_frames(root)
+            if start <= ts <= end
+        ]
+        # An empty window is NOT a 404 (docs/api-imaging.md: same "empty series
+        # is not an error" convention as the vis/search contracts).
+        return {"frames": frames}
+
+    return router
+
+
 def build_router(settings: Settings) -> APIRouter:
-    """The figures router (Vis + SNAPs). Read-only; every path component is
-    whitelisted against the exact kinds/sets the collector renders."""
+    """The figures router (Vis + SNAPs + Imaging). Read-only; every path
+    component is whitelisted against the exact files the render job writes."""
     router = APIRouter()
     router.include_router(_build_vis_router(settings))
     router.include_router(_build_snaps_router(settings))
+    router.include_router(_build_imaging_router(settings))
+    router.include_router(_build_imaging_history_router(settings))
     return router
 
 

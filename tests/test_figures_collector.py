@@ -110,7 +110,7 @@ def test_scheduler_submits_render_figures_job(settings, store):
     assert len(jobs) == 1
     assert jobs[0]["kind"] == RENDER_FIGURES_KIND
     params = json.loads(jobs[0]["params"])
-    assert set(params["targets"]) == {"vis", "snaps"}
+    assert set(params["targets"]) == {"vis", "snaps", "imaging"}
     assert params["reason"] == "scheduled"
     job_id = store.latest_scalar("figures.scheduled_job_id")
     assert job_id is not None
