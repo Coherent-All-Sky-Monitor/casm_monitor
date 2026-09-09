@@ -76,11 +76,34 @@ class Store:
                 self._conn.execute("PRAGMA journal_mode=WAL")
                 self._conn.execute("PRAGMA synchronous=NORMAL")
                 self._conn.executescript(SCHEMA)
+                self._migrate()
                 self._conn.execute(
                     "INSERT OR REPLACE INTO store_meta (key, value) VALUES ('schema_version', ?)",
                     (str(SCHEMA_VERSION),),
                 )
                 self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns a live store predates (``CREATE TABLE IF NOT EXISTS``
+        never alters an existing table).
+
+        Only additive column adds: the service is running against a store that
+        already holds M0-M3 history, so a schema bump must not require a
+        rebuild. Called with ``self._lock`` held, inside ``__init__``'s
+        transaction.
+        """
+        have = {
+            str(r["name"])
+            for r in self._conn.execute("PRAGMA table_info(uploads)").fetchall()
+        }
+        for name, ddl in (
+            ("state", "ALTER TABLE uploads ADD COLUMN state TEXT NOT NULL DEFAULT 'started'"),
+            ("auth_id", "ALTER TABLE uploads ADD COLUMN auth_id INTEGER"),
+            ("registry", "ALTER TABLE uploads ADD COLUMN registry TEXT"),
+            ("hashes", "ALTER TABLE uploads ADD COLUMN hashes TEXT"),
+        ):
+            if name not in have:
+                self._conn.execute(ddl)
 
     # -- lifecycle ------------------------------------------------------
     def close(self) -> None:
@@ -544,6 +567,126 @@ class Store:
                 raise
         return job_id, refusal
 
+    # -- upload authorizations ------------------------------------------
+    def submit_upload_job_authorized(
+        self,
+        kind: str,
+        *,
+        build_tag: str,
+        confirm_tag: str,
+        stage_digest: str,
+        note: str | None = None,
+        save_defaults: bool = False,
+        refuse_if_pending: bool = True,
+        now: float | None = None,
+    ) -> tuple[int | None, int | None, dict[str, Any] | None]:
+        """Create a single-use upload authorization AND the job that may spend
+        it, in ONE ``BEGIN IMMEDIATE`` transaction; returns
+        ``(job_id, auth_id, refusal)``.
+
+        The two must be atomic: an authorization with no job is a live
+        capability nobody is watching, and a job with no authorization is a job
+        that fails at run time for a reason the operator never saw. The job's
+        params carry ONLY the authorization id (plus ``build_tag``, which the
+        job list displays and the worker cross-checks against the row rather
+        than trusts) — everything that decides whether bytes move is read from
+        the authorization row or re-derived from disk by the worker
+        (2026-09-09 security review, finding 1).
+        """
+        t = time.time() if now is None else now
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                if refuse_if_pending:
+                    row = self._conn.execute(
+                        "SELECT id, state FROM jobs WHERE kind = ? "
+                        "AND state IN ('queued', 'running') ORDER BY id DESC LIMIT 1",
+                        (kind,),
+                    ).fetchone()
+                    if row is not None:
+                        self._conn.rollback()
+                        return None, None, {
+                            "reason": "pending",
+                            "job_id": int(row["id"]),
+                            "state": str(row["state"]),
+                            "retry_after_s": 10,
+                        }
+                cur = self._conn.execute(
+                    "INSERT INTO upload_authorizations "
+                    "(build_tag, stage_digest, confirm_tag, note, save_defaults, created) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        str(build_tag),
+                        str(stage_digest),
+                        str(confirm_tag),
+                        None if note is None else str(note),
+                        1 if save_defaults else 0,
+                        t,
+                    ),
+                )
+                auth_id = int(cur.lastrowid or 0)
+                cur = self._conn.execute(
+                    "INSERT INTO jobs (kind, params, state, created) VALUES (?, ?, 'queued', ?)",
+                    (
+                        kind,
+                        _jdump({"authorization_id": auth_id, "build_tag": str(build_tag)}),
+                        t,
+                    ),
+                )
+                job_id = int(cur.lastrowid or 0)
+                self._conn.execute(
+                    "UPDATE upload_authorizations SET job_id = ? WHERE id = ?", (job_id, auth_id)
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        return job_id, auth_id, None
+
+    def consume_upload_authorization(
+        self, auth_id: int, *, now: float | None = None
+    ) -> dict[str, Any] | None:
+        """Spend an authorization exactly once; returns the row, or None.
+
+        The UPDATE carries the ``consumed IS NULL`` predicate, so of any number
+        of claimants (a replayed job, a hand-inserted row, two workers) exactly
+        one sees ``rowcount == 1`` and gets the row back; every other one gets
+        None and must refuse.
+        """
+        t = time.time() if now is None else now
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                cur = self._conn.execute(
+                    "UPDATE upload_authorizations SET consumed = ? "
+                    "WHERE id = ? AND consumed IS NULL",
+                    (t, int(auth_id)),
+                )
+                if cur.rowcount != 1:
+                    self._conn.rollback()
+                    return None
+                row = self._conn.execute(
+                    "SELECT * FROM upload_authorizations WHERE id = ?", (int(auth_id),)
+                ).fetchone()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        if row is None:
+            return None
+        out = dict(row)
+        out["save_defaults"] = bool(out.get("save_defaults"))
+        return out
+
+    def upload_authorization(self, auth_id: int) -> dict[str, Any] | None:
+        """The authorization row as it stands, consumed or not (read-only)."""
+        rows = self.query("SELECT * FROM upload_authorizations WHERE id = ?", (int(auth_id),))
+        if not rows:
+            return None
+        out = dict(rows[0])
+        out["save_defaults"] = bool(out.get("save_defaults"))
+        return out
+
     # -- weights upload audit -------------------------------------------
     def add_upload(
         self,
@@ -560,17 +703,25 @@ class Store:
         scale: int | None = None,
         ib_scale: int | None = None,
         ts: float | None = None,
+        state: str = "started",
+        auth_id: int | None = None,
+        registry: str | None = None,
+        hashes: dict[str, Any] | None = None,
     ) -> int:
         """Record one Upload click (see the ``uploads`` table comment).
 
-        Written whether the deploy tool succeeded or not: the question the row
-        answers is "who pushed which bytes, when, and what came back", and a
-        failed push is exactly as interesting as a successful one.
+        Written whether the deploy tool succeeded or not, and written BEFORE
+        the tool runs (``state='started'``, no exit code yet): the question the
+        row answers is "who pushed which bytes, when, and what came back", and
+        an upload whose worker died mid-push is exactly the case where that
+        question matters most (2026-09-09 security review, finding 7).
+        :meth:`update_upload` finalises it.
         """
         cur = self.execute(
             "INSERT INTO uploads (ts, build_tag, job_id, note, md5s, command, exit_code, "
-            "output_tail, product_id, save_defaults, scale, ib_scale) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "output_tail, product_id, save_defaults, scale, ib_scale, state, auth_id, "
+            "registry, hashes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 time.time() if ts is None else float(ts),
                 str(build_tag),
@@ -584,9 +735,45 @@ class Store:
                 1 if save_defaults else 0,
                 None if scale is None else int(scale),
                 None if ib_scale is None else int(ib_scale),
+                str(state),
+                None if auth_id is None else int(auth_id),
+                registry,
+                _jdump(hashes) if hashes is not None else None,
             ),
         )
         return int(cur.lastrowid or 0)
+
+    def update_upload(
+        self,
+        upload_id: int,
+        *,
+        state: str,
+        exit_code: int | None = None,
+        output_tail: str | None = None,
+        product_id: str | None = None,
+        registry: str | None = None,
+        hashes: dict[str, Any] | None = None,
+    ) -> None:
+        """Finalise the audit row that was written before the deploy tool ran.
+
+        Only outcome fields move: ``ts``, ``command``, ``md5s`` and the
+        pre-exec part of ``hashes`` were written before the push and are never
+        rewritten into a different story than the one the row started with.
+        """
+        self.execute(
+            "UPDATE uploads SET state = ?, exit_code = ?, output_tail = ?, "
+            "product_id = COALESCE(?, product_id), registry = COALESCE(?, registry), "
+            "hashes = COALESCE(?, hashes) WHERE id = ?",
+            (
+                str(state),
+                None if exit_code is None else int(exit_code),
+                output_tail,
+                product_id,
+                registry,
+                _jdump(hashes) if hashes is not None else None,
+                int(upload_id),
+            ),
+        )
 
     def uploads(self, *, build_tag: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         sql = "SELECT * FROM uploads"
@@ -601,6 +788,7 @@ class Store:
             row = dict(r)
             row["md5s"] = _jload(row.get("md5s")) or {}
             row["command"] = _jload(row.get("command")) or []
+            row["hashes"] = _jload(row.get("hashes")) or {}
             row["save_defaults"] = bool(row.get("save_defaults"))
             rows.append(row)
         return rows

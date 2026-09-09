@@ -33,6 +33,16 @@ class JobKind:
     # gets killed well under the worker's 256G cgroup instead of taking the
     # whole service down.
     address_space_limit_bytes: int | None = None
+    # A privileged kind may NOT be submitted through the generic
+    # ``POST /api/jobs`` (which takes an arbitrary kind and an arbitrary
+    # params object): it either moves bytes to the live pipeline
+    # (``deploy_upload``), points a foreign tool at a directory
+    # (``deploy_stage``) or runs the cal driver over a validated parameter
+    # set (``cal_build``). Each has its own route in
+    # :mod:`casm_monitor.web.cal` that validates the request and, for the
+    # upload, mints the single-use authorization the worker must consume
+    # (2026-09-09 security review, finding 1).
+    privileged: bool = False
 
 
 def _noop(params: dict[str, Any]) -> dict[str, Any]:
@@ -122,6 +132,7 @@ KINDS: dict[str, JobKind] = {
         # measured peak and well under the worker's 256G cgroup, so a regression
         # dies as a failed job instead of an OOM on the node.
         address_space_limit_bytes=64 * 1024 * 1024 * 1024,
+        privileged=True,
         description=(
             "canonical cal + 512-beam exact-grid weights via "
             "bf_weights_generator.make_cal_and_weights; params {source, source_window, "
@@ -132,6 +143,7 @@ KINDS: dict[str, JobKind] = {
         name="deploy_stage",
         run=_deploy_stage,
         timeout_s=900.0,
+        privileged=True,
         description=(
             "dry-run deploy_bf_weights.py (no --upload) into the build's stage dir, "
             'record md5s + the upload command; params {"build_tag": ...}'
@@ -141,9 +153,11 @@ KINDS: dict[str, JobKind] = {
         name="deploy_upload",
         run=_deploy_upload,
         timeout_s=900.0,
+        privileged=True,
         description=(
             "the gated live weights upload (human click only); params "
-            '{"build_tag", "confirm_tag", "save_defaults", "note"}'
+            '{"authorization_id", "build_tag"} — every other gate value comes '
+            "from the single-use upload_authorizations row, not the params"
         ),
     ),
     "render_figures": JobKind(

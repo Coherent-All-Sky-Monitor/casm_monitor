@@ -141,6 +141,12 @@ class Settings:
     cal_ib_generator_script: Path = Path(
         "/home/casm/scratch/bf_experiment_v1/scripts/gen_ib_from_cb.py"
     )
+    # sha256 of the APPROVED contents of that script. cal_build refuses to run
+    # a generator whose path is not the configured one or whose bytes are not
+    # this hash: the script lives in a scratch directory anyone can edit, and
+    # cal_build executes it in-process (2026-09-09 security review, finding 8).
+    # An empty pin is not "no check": it is a refusal.
+    cal_ib_generator_sha256: str = ""
     allow_upload: bool = False
     config_path: Path | None = None
 
@@ -286,6 +292,9 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         cal_ib_generator_script=Path(
             cal.get("ib_generator_script", defaults.cal_ib_generator_script)
         ),
+        cal_ib_generator_sha256=str(
+            cal.get("ib_generator_sha256", defaults.cal_ib_generator_sha256)
+        ).strip(),
         # ``cal.allow_upload`` is the M3 spelling; the top-level key is the M0
         # one. Either being false is enough to keep the upload handler shut.
         allow_upload=_as_bool(

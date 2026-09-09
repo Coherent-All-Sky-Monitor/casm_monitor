@@ -201,7 +201,7 @@ Conclusion: the Visibilities tab is feasible on the current node with no new
 hardware; the only thing that would not be feasible is caching all 8256
 baselines, which nobody needs.
 
-Imaging cost is the one unknown: `allsky_snapshots` is CPU-parallel
+Imaging cost MEASURED 2026-09-09: allsky_snapshots (241 px, 17 ant, deployed cal, freq_avg 32, 8 workers) = 5 snapshots in 26 s, peak RSS 142 MB, i.e. ~5 s per integration; imaging every integration costs ~1 CPU-hour/day. Imaging cost was the one unknown: `allsky_snapshots` is CPU-parallel
 (`workers`), `freq_avg=32`; must be benchmarked (target < 60 s per 137 s
 integration on 16 cores; fall back to every 2nd/4th integration). GPUs 4/8/9
 are idle if needed later, but do not plan on them.

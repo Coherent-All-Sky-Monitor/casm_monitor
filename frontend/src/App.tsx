@@ -5,6 +5,7 @@ import StatusLine from "./components/StatusLine";
 import CalBuildPage from "./pages/CalBuildPage";
 import CalPage from "./pages/CalPage";
 import EventsPage from "./pages/EventsPage";
+import ImagingPage from "./pages/ImagingPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
 import SearchPage from "./pages/SearchPage";
 import SnapsPage from "./pages/SnapsPage";
@@ -22,7 +23,7 @@ export default function App() {
           <Route path="/snaps" element={<SnapsPage />} />
           <Route path="/vis" element={<VisPage />} />
           <Route path="/search" element={<SearchPage />} />
-          <Route path="/imaging" element={<PlaceholderPage slug="imaging" />} />
+          <Route path="/imaging" element={<ImagingPage />} />
           <Route path="/cal" element={<CalPage />} />
           <Route path="/cal/:tag" element={<CalBuildPage />} />
           <Route path="/cands" element={<PlaceholderPage slug="cands" />} />

@@ -16,10 +16,13 @@ Fixed by this job, not exposed as knobs:
 * ``diagnostics``/``notebook``/``execute_notebook`` — every product ships with
   the executed diagnostics notebook (weights-and-deploy.md).
 * ``layout_csv`` — the ``current`` symlink, snapshotted BYTE FOR BYTE into the
-  build directory with its sha256 before the run. ``deploy_upload`` compares
-  that sha against the layout in force at upload time, so a layout repoint
-  between build and upload cannot pass unnoticed (plan.md M3
-  layout-provenance check), and the snapshot survives a later repoint.
+  build directory before the run; the sha256 that is recorded is THE COPY's,
+  and the copy is what ``RecipeParams`` solves against (hashing the live file
+  and copying afterwards left a window in which the two disagreed, 2026-09-09
+  security review, finding 5). ``deploy_upload`` compares that sha against the
+  layout in force at upload time AND re-hashes the copy, so neither a layout
+  repoint between build and upload nor an edited snapshot passes unnoticed
+  (plan.md M3 layout-provenance check).
 * ``out_dir`` — ``store_root/cal_builds/<tag>/``, refused if it resolves
   outside the store root. Nothing is written anywhere else.
 
@@ -31,7 +34,11 @@ After the driver produces the CB weights, this job ALSO generates the paired
 IB (incoherent-beam) mask for exactly this build's antenna set, calling
 ``settings.cal_ib_generator_script``'s ``main()`` (``gen_ib_from_cb.py``, the
 only IB-mask generator this service is allowed to run — never hand-rolled
-here, casm-wiki ``weights-and-deploy.md`` step 6). The mask is saved as
+here, casm-wiki ``weights-and-deploy.md`` step 6). It is executed in-process,
+so both its path and its sha256 are pinned (``cal.ib_generator_script`` and
+``cal.ib_generator_sha256``) and checked when the request is validated as well
+as when it is loaded; an unpinned or edited script refuses the build. The mask
+is saved as
 ``ib_<tag>_<n_ant>ant.h5`` in the build directory and recorded at
 ``summary["paths"]["ib_h5"]``; ``deploy_stage`` stages THAT file, not the
 deployed one, so a new antenna set never gets staged with a stale IB.
@@ -49,7 +56,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..cal_defaults import deployed_product, layout_info
+from ..cal_defaults import deployed_cb_antennas, deployed_product, layout_info, sha256_file
 from ..config import Settings, load_settings
 from ..store import Store
 from ..store.shards import ensure_contained, safe_name
@@ -63,8 +70,20 @@ N_BEAMS = 512
 #: (the deployed products); anything beyond six hours is a typo, not a request.
 MIN_WINDOW_S = 60.0
 MAX_WINDOW_S = 6 * 3600.0
+#: How far back a solve window may reach. Data older than this is not on the
+#: nvme4 spool any more, and a window that far back is a typo or a replayed
+#: request, not a solve somebody means to deploy.
+MAX_WINDOW_AGE_S = 30 * 86400.0
 
-TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+#: Tag charset and length, the same string that becomes a directory name under
+#: ``cal_builds_root`` and a filename component of every product.
+TAG_RE = re.compile(r"[A-Za-z0-9_.-]{3,64}")
+
+#: The ONE calibrator this service may solve on. ``cal.sources_enabled`` can
+#: only ever narrow this, never widen it: a config edit must not be able to
+#: turn on a source the array cannot solve on (2026-09-09 security review,
+#: finding 8). Adding one is a code change plus a config change, on purpose.
+ALLOWED_SOURCES = ("sun",)
 
 #: Report keys copied into summary.json's ``numbers`` block verbatim.
 REPORT_NUMBER_KEYS = (
@@ -103,21 +122,67 @@ class IBGenerationError(RuntimeError):
     """The IB companion mask could not be built for a finished CB weights file."""
 
 
-def _load_ib_generator(script_path: str | Path) -> Any:
-    """Load ``gen_ib_from_cb.py`` (or whatever script is configured) as a
-    module, by path: it lives outside any installed package (a scratch
-    script, casm-wiki ``weights-and-deploy.md`` step 6), so it is imported by
-    file location rather than name.
-    """
-    import importlib.util
+def ib_generator_refusal(
+    script_path: str | Path, configured_path: str | Path, expected_sha256: str | None
+) -> str | None:
+    """Why this IB generator must not be executed, or None.
 
+    The generator lives in a scratch directory anyone can edit and cal_build
+    execs it IN-PROCESS, so two things are checked before it is loaded: the
+    path is exactly the configured one, and its bytes hash to the value pinned
+    in the config (``cal.ib_generator_sha256``). An absent pin is a refusal,
+    not a bypass (2026-09-09 security review, finding 8).
+    """
     path = Path(script_path)
+    configured = Path(configured_path)
+    if path.is_symlink() or configured.is_symlink():
+        return f"IB mask generator {path} is a symlink; refusing to execute it"
+    if str(path) != str(configured):
+        return (
+            f"IB mask generator {path} is not the configured "
+            f"cal.ib_generator_script {configured}"
+        )
     if not path.is_file():
-        raise IBGenerationError(
+        return (
             f"IB mask generator {path} does not exist; cal.ib_generator_script "
             f"must point at gen_ib_from_cb.py (casm-wiki weights-and-deploy.md "
             f"step 6 has its current location)"
         )
+    if not expected_sha256:
+        return (
+            f"no cal.ib_generator_sha256 pinned in the config for {path}; refusing to "
+            f"execute an unpinned generator (pin the reviewed script's sha256)"
+        )
+    actual = sha256_file(path)
+    if actual != str(expected_sha256).strip():
+        return (
+            f"IB mask generator {path} sha256 {actual} does not match the pinned "
+            f"cal.ib_generator_sha256 {expected_sha256}; the script changed — review "
+            f"it and re-pin before building"
+        )
+    return None
+
+
+def _load_ib_generator(
+    script_path: str | Path,
+    *,
+    configured_path: str | Path | None = None,
+    expected_sha256: str | None = None,
+) -> Any:
+    """Load ``gen_ib_from_cb.py`` (or whatever script is configured) as a
+    module, by path: it lives outside any installed package (a scratch
+    script, casm-wiki ``weights-and-deploy.md`` step 6), so it is imported by
+    file location rather than name — after :func:`ib_generator_refusal` has
+    approved that exact path and those exact bytes.
+    """
+    import importlib.util
+
+    path = Path(script_path)
+    refusal = ib_generator_refusal(
+        path, configured_path if configured_path is not None else path, expected_sha256
+    )
+    if refusal is not None:
+        raise IBGenerationError(refusal)
     spec = importlib.util.spec_from_file_location("_casm_monitor_gen_ib_from_cb", path)
     if spec is None or spec.loader is None:
         raise IBGenerationError(f"could not load the IB mask generator from {path}")
@@ -132,6 +197,8 @@ def generate_ib_mask(
     tag: str,
     n_ant: int,
     script_path: str | Path,
+    expected_sha256: str | None = None,
+    configured_path: str | Path | None = None,
 ) -> Path:
     """Build this build's OWN IB companion from its OWN CB weights file.
 
@@ -140,7 +207,11 @@ def generate_ib_mask(
     antenna set from the CB file's ``array_config/active_mask``, so the mask
     is guaranteed matched to this build, not the deployed one.
     """
-    module = _load_ib_generator(script_path)
+    module = _load_ib_generator(
+        script_path,
+        configured_path=configured_path if configured_path is not None else script_path,
+        expected_sha256=expected_sha256,
+    )
     out_path = Path(out_dir) / f"ib_{tag}_{int(n_ant)}ant.h5"
     if not hasattr(module, "main"):
         raise IBGenerationError(f"{script_path} has no main(cb_h5, out_h5, bf_scale) function")
@@ -173,7 +244,14 @@ def _parse_utc(value: Any, field: str) -> tuple[float, str]:
         raise ParamError(f"{field} {value!r} is not a UTC timestamp: {exc}") from exc
 
 
-def _window(value: Any, field: str) -> list[str]:
+def _window(value: Any, field: str, *, now: float | None = None) -> tuple[list[str], float, float]:
+    """``([driver spelling, driver spelling], t0, t1)``, or :class:`ParamError`.
+
+    Besides the length bounds, the window must lie in the observable past: not
+    in the future (there are no visibilities for it) and not further back than
+    :data:`MAX_WINDOW_AGE_S` (2026-09-09 security review, finding 8).
+    """
+    t_now = time.time() if now is None else now
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ParamError(f"{field} must be [start, end] in UTC")
     t0, s0 = _parse_utc(value[0], f"{field}[0]")
@@ -184,7 +262,14 @@ def _window(value: Any, field: str) -> list[str]:
         raise ParamError(f"{field} is shorter than {MIN_WINDOW_S:.0f} s")
     if t1 - t0 > MAX_WINDOW_S:
         raise ParamError(f"{field} is longer than {MAX_WINDOW_S / 3600:.0f} h")
-    return [s0, s1]
+    if t1 > t_now:
+        raise ParamError(f"{field} ends in the future ({s1} UTC); there is no data for it yet")
+    if t0 < t_now - MAX_WINDOW_AGE_S:
+        raise ParamError(
+            f"{field} starts {(t_now - t0) / 86400.0:.1f} days ago, beyond the "
+            f"{MAX_WINDOW_AGE_S / 86400.0:.0f}-day limit"
+        )
+    return [s0, s1], t0, t1
 
 
 def validate(params: dict[str, Any], settings: Settings) -> dict[str, Any]:
@@ -197,23 +282,46 @@ def validate(params: dict[str, Any], settings: Settings) -> dict[str, Any]:
 
     source = str(p.get("source") or "").strip().lower()
     enabled = [s.lower() for s in settings.cal_sources_enabled]
-    if source not in enabled:
+    # BOTH gates, not either: the config can narrow the list, never widen it
+    # past ALLOWED_SOURCES.
+    if source not in ALLOWED_SOURCES or source not in enabled:
         raise ParamError(
-            f"source {source or '(missing)'!r} is not enabled; the array solves on "
-            f"{', '.join(enabled)} today (config cal.sources_enabled)"
+            f"source {source or '(missing)'!r} is not enabled; this service solves on "
+            f"{', '.join(ALLOWED_SOURCES)} only (config cal.sources_enabled currently "
+            f"lists {', '.join(enabled) or 'nothing'})"
         )
 
     tag = str(p.get("tag") or "").strip()
     if not TAG_RE.fullmatch(tag):
-        raise ParamError("tag must match [A-Za-z0-9][A-Za-z0-9_.-]*")
+        raise ParamError("tag must match [A-Za-z0-9_.-]{3,64}")
     safe_name(tag, "build tag")
 
-    source_window = _window(p.get("source_window"), "source_window")
+    source_window, src_t0, src_t1 = _window(p.get("source_window"), "source_window")
     raw_static = p.get("static_window")
-    static = None if raw_static in (None, [], ()) else _window(raw_static, "static_window")
+    static: list[str] | None = None
+    if raw_static not in (None, [], ()):
+        static, st_t0, st_t1 = _window(raw_static, "static_window")
+        # An off-source template taken DURING the solve window is not a static
+        # template at all: it carries the source (weights-verification.md's
+        # static-amplitude trap).
+        if src_t0 < st_t1 and st_t0 < src_t1:
+            raise ParamError(
+                f"source_window {source_window} and static_window {static} overlap; "
+                f"the static template must come from an off-source window"
+            )
 
     layout = layout_info(settings.layout_csv)
-    allowed = set(layout["antennas"])
+    bf_set = set(layout["antennas"])
+    wired = set(layout["wired_antennas"])
+    deployed = deployed_product(settings)
+    deployed_set = set(deployed_cb_antennas(deployed.get("weights_file")).get("antennas") or [])
+    # Beamforming-capable OR what is actually deployed (the layout column can
+    # be edited after the last build; the live product is the other truth),
+    # but ALWAYS inside the wired set: an antenna that is not wired has no
+    # signal, and the weights stage would silently drop it into a near-empty
+    # file that still passes the driver's own verification (casm-wiki
+    # incidents.md 2026-08-31).
+    allowed = (bf_set | deployed_set) & wired
     antennas = p.get("antennas")
     if not isinstance(antennas, (list, tuple)) or not antennas:
         raise ParamError("antennas must be a non-empty list of antenna ids")
@@ -221,14 +329,17 @@ def validate(params: dict[str, Any], settings: Settings) -> dict[str, Any]:
         ants = sorted({int(a) for a in antennas})
     except (TypeError, ValueError) as exc:
         raise ParamError(f"antennas must be integers: {exc}") from exc
+    not_wired = [a for a in ants if a not in wired]
+    if not_wired:
+        raise ParamError(
+            f"antennas {not_wired} are not functional=1 (wired) in {layout['path']}"
+        )
     outside = [a for a in ants if a not in allowed]
     if outside:
-        # The weights stage intersects the antenna list with this same column
-        # and produces a near-empty file that still PASSES driver verification
-        # (casm-wiki incidents.md 2026-08-31), so the mismatch is refused here.
         raise ParamError(
-            f"antennas {outside} are not include_in_beamforming=1 in "
-            f"{layout['path']}; the weights stage would silently drop them"
+            f"antennas {outside} are neither include_in_beamforming=1 in "
+            f"{layout['path']} nor populated in the deployed CB product; the "
+            f"weights stage would silently drop them"
         )
     ref_ant = p.get("ref_ant")
     try:
@@ -251,9 +362,20 @@ def validate(params: dict[str, Any], settings: Settings) -> dict[str, Any]:
                 f"diagnostics notebook (casm-wiki weights-and-deploy.md)"
             )
 
+    # The build ends by EXECUTING the IB generator in-process, so its path and
+    # bytes are approved here, before a job row exists, not at the end of a
+    # 10-minute solve.
+    ib_refusal = ib_generator_refusal(
+        settings.cal_ib_generator_script,
+        settings.cal_ib_generator_script,
+        settings.cal_ib_generator_sha256,
+    )
+    if ib_refusal is not None:
+        raise ParamError(ib_refusal)
+
     prev_cal = p.get("prev_cal_path")
     if prev_cal is None:
-        prev_cal = deployed_product(settings).get("cal_file")
+        prev_cal = deployed.get("cal_file")
     if prev_cal is not None:
         prev_cal = str(prev_cal)
         if not Path(prev_cal).is_file():
@@ -342,11 +464,31 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
 
     # Layout provenance FIRST: the snapshot and its sha are what the upload
     # gate compares against, so they are written before anything can fail.
+    #
+    # Copy, then hash THE COPY, then solve against THE COPY. Hashing the live
+    # ``current`` symlink and copying afterwards left a window in which the
+    # file could change between the two, so the recorded sha described bytes
+    # nobody ever used (2026-09-09 security review, finding 5). The copy's sha
+    # is the ONE recorded hash: ``deploy_upload`` compares the live layout to
+    # it AND re-hashes the copy itself.
     layout = layout_info(p["layout_csv"])
     snapshot = out_dir / "layout_snapshot.csv"
-    if Path(layout["resolved"]).is_file():
-        shutil.copyfile(layout["resolved"], snapshot)
+    resolved = Path(layout["resolved"])
+    if not resolved.is_file():
+        raise ParamError(f"the antenna layout {p['layout_csv']} does not resolve to a file")
+    shutil.copyfile(resolved, snapshot)
+    snapshot_sha = sha256_file(snapshot)
+    if snapshot_sha != sha256_file(resolved):
+        # The live file changed while it was being copied: the snapshot may be
+        # torn, so there is nothing to bind the product to.
+        raise ParamError(
+            f"the antenna layout {resolved} changed while it was being snapshotted; retry"
+        )
     layout["snapshot"] = str(snapshot)
+    layout["live_sha256_at_build"] = layout["sha256"]
+    layout["sha256"] = snapshot_sha
+    # The solver reads the snapshot, never the live symlink.
+    p["layout_csv_used"] = str(snapshot)
 
     deployed = deployed_product(settings)
     started = time.time()
@@ -367,7 +509,7 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
             static_window=None if p["static_window"] is None else tuple(p["static_window"]),
             antennas=tuple(p["antennas"]),
             ref_ant=p["ref_ant"],
-            layout_csv=p["layout_csv"],
+            layout_csv=p["layout_csv_used"],
             grid_mode=GRID_MODE,
             n_beams=N_BEAMS,
             prev_cal_path=p["prev_cal_path"],
@@ -381,7 +523,8 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
         print(
             f"[cal_build] tag {tag}\n"
             f"  out_dir {out_dir}\n"
-            f"  layout {layout['path']} -> {layout['resolved']} sha256 {layout['sha256']}\n"
+            f"  layout {layout['path']} -> {layout['resolved']}\n"
+            f"  solved against the snapshot {snapshot} sha256 {layout['sha256']}\n"
             f"  {len(p['antennas'])} antennas {p['antennas']} ref {p['ref_ant']}\n"
             f"  source {p['source']} {p['source_window'][0]} -> {p['source_window'][1]} UTC\n"
             f"  static {p['static_window']}\n"
@@ -407,6 +550,8 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
                 out_dir,
                 tag,
                 len(p["antennas"]),
+                settings.cal_ib_generator_script,
+                settings.cal_ib_generator_sha256,
                 settings.cal_ib_generator_script,
             )
             ib_file = str(ib_path)

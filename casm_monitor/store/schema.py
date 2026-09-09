@@ -9,7 +9,7 @@ strings live side by side).
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS scalars (
@@ -113,9 +113,45 @@ CREATE TABLE IF NOT EXISTS uploads (
     product_id    TEXT,           -- weights registry product id, when known
     save_defaults INTEGER NOT NULL DEFAULT 0,
     scale         INTEGER,
-    ib_scale      INTEGER
+    ib_scale      INTEGER,
+    -- Durability (2026-09-09 security review, finding 7): the row is written
+    -- with state 'started' BEFORE the deploy tool is executed and updated to
+    -- 'done'/'failed' afterwards, so a crash mid-upload still leaves the
+    -- record that bytes may have moved. ``registry`` is 'ok'/'failed'/
+    -- 'skipped': a failed registration is recorded and reported, never
+    -- swallowed. ``hashes`` is the json bundle of everything the gate bound
+    -- to (staged md5s + payload md5s before and after the run, source HDF5
+    -- sha/md5, layout sha256s, stage digest).
+    state         TEXT NOT NULL DEFAULT 'started'
+                    CHECK (state IN ('started', 'done', 'failed')),
+    auth_id       INTEGER,        -- upload_authorizations.id that was consumed
+    registry      TEXT,
+    hashes        TEXT            -- json object
 );
 CREATE INDEX IF NOT EXISTS uploads_tag_ts ON uploads (build_tag, ts);
+
+-- Single-use upload authorizations (2026-09-09 security review, finding 1).
+-- A row is created ONLY by the browser upload route, inside the same
+-- BEGIN IMMEDIATE transaction that inserts the deploy_upload job, and the
+-- job params carry nothing but its id: every gate value the worker uses
+-- comes from this row (or is re-derived from disk), never from the job's
+-- params. ``stage_digest`` is sha256 over the staged file md5s and the
+-- recorded upload command as they were when the human clicked, so a
+-- stage.json edited between click and run is refused. The worker consumes
+-- the row atomically (UPDATE ... WHERE consumed IS NULL), so a replayed or
+-- hand-inserted job finds nothing to consume and fails immediately.
+CREATE TABLE IF NOT EXISTS upload_authorizations (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    build_tag     TEXT NOT NULL,
+    stage_digest  TEXT NOT NULL,
+    confirm_tag   TEXT NOT NULL,
+    note          TEXT,
+    save_defaults INTEGER NOT NULL DEFAULT 0,
+    job_id        INTEGER,
+    created       REAL NOT NULL,
+    consumed      REAL            -- NULL until a worker consumes it, once
+);
+CREATE INDEX IF NOT EXISTS upload_auth_tag ON upload_authorizations (build_tag);
 
 CREATE TABLE IF NOT EXISTS store_meta (
     key   TEXT PRIMARY KEY,

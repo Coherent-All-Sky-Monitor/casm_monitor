@@ -375,6 +375,57 @@ export interface SnapFigureListResponse {
   combos: SnapFigureListCombo[];
 }
 
+// Imaging tab (M4) server-rendered figures. Kept in sync by hand with
+// docs/api-imaging.md.
+
+export type ImagingSourceName = "sun" | "cyg-a" | "cas-a" | "tau-a";
+
+export interface ImagingLatest {
+  ts: string;
+  file_1x: string;
+  file_2x: string;
+}
+
+export interface ImagingStrip {
+  t0: string;
+  t1: string;
+  n: number;
+  file_1x: string;
+  file_2x: string;
+}
+
+export interface ImagingMovie {
+  file: string | null;
+  fps: number;
+}
+
+export interface ImagingSourceInfo {
+  name: ImagingSourceName;
+  alt_deg: number;
+  az_deg: number;
+  up: boolean;
+}
+
+export interface ImagingManifest {
+  rendered_utc: string;
+  cal_file: string;
+  antennas: number[];
+  latest: ImagingLatest;
+  strip: ImagingStrip;
+  movie: ImagingMovie;
+  sources: ImagingSourceInfo[];
+  psf_ceiling_snr: number | null;
+}
+
+export interface ImagingHistoryFrame {
+  ts: string;
+  file_1x: string;
+}
+
+export interface ImagingHistoryResponse {
+  frames: ImagingHistoryFrame[];
+}
+
 // Calibration tab (M3). Kept in sync by hand with docs/api-cal.md.
 
 export interface CalSourceInfo {

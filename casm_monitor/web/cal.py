@@ -12,11 +12,17 @@ Writes: exactly three POSTs, each of which only ever inserts a job row through
   validator refuses, 409 when a build with that tag exists or one is running);
 * ``POST /api/cal/builds/{tag}/stage`` -> a ``deploy_stage`` job (the dry run);
 * ``POST /api/cal/builds/{tag}/upload`` -> a ``deploy_upload`` job. 403 when
-  uploads are disabled (with the env flag named in the detail), 400 when the
-  typed ``confirm_tag`` does not match, 409 when the build is not staged or any
-  other safeguard fails. The job re-checks every one of those conditions itself
-  at run time; this route exists to give the browser a useful status code, not
-  to be the gate.
+  uploads are disabled (with the env flag named in the detail) or when the
+  CSRF double-submit token is missing/mismatched, 400 when the typed
+  ``confirm_tag`` does not match, 409 when the build is not staged or any
+  other safeguard fails. This route ALSO mints the single-use
+  ``upload_authorizations`` row, in the same transaction as the job, and the
+  job's params carry nothing but its id: the worker consumes it atomically and
+  re-derives every gate itself, so this route gives the browser a useful
+  status code without being the only gate (2026-09-09 security review).
+
+The three cal job kinds are ``privileged`` and are refused by the generic
+``POST /api/jobs`` (403): these routes are the only way in.
 
 Nothing here runs the deploy tool, the driver, or ssh: those live in the job
 worker (:mod:`casm_monitor.jobs.cal_build`, :mod:`casm_monitor.jobs.deploy`).
@@ -25,6 +31,8 @@ worker (:mod:`casm_monitor.jobs.cal_build`, :mod:`casm_monitor.jobs.deploy`).
 from __future__ import annotations
 
 import hashlib
+import hmac
+import secrets
 import time
 from email.utils import formatdate
 from pathlib import Path
@@ -44,10 +52,13 @@ from ..jobs.cal_build import (
     validate,
 )
 from ..jobs.deploy import (
+    CasmTrackCheckError,
+    DeployError,
     casm_track_processes,
     load_stage,
+    stage_digest,
     stage_json_path,
-    upload_refusal,
+    upload_plan,
 )
 from ..store import Store
 from ..store.shards import UnsafePathError
@@ -60,6 +71,18 @@ JOB_KINDS = (BUILD_KIND, STAGE_KIND, UPLOAD_KIND)
 #: How many recent jobs the build list looks back over when pairing jobs to tags.
 JOB_SCAN_LIMIT = 500
 ETAG_BYTES = 16
+
+#: CSRF double-submit (2026-09-09 security review, finding 1). ``GET
+#: /api/cal/status`` — which the tab polls before it can offer the button —
+#: sets this cookie; the upload POST must echo the same value in the header,
+#: and the two are compared with :func:`hmac.compare_digest`. The service
+#: binds 127.0.0.1 and has no login, so this does not authenticate anybody:
+#: what it proves is that the request came from something that had read the
+#: page's own status response, not from a blind POST (a curl one-liner pasted
+#: into the wrong terminal, another page in the same browser).
+CSRF_COOKIE = "casm_monitor_csrf"
+CSRF_HEADER = "X-CSRF-Token"
+CSRF_TOKEN_BYTES = 32
 
 
 #: Titles for the driver's figure stems, in the order the frontend renders them
@@ -288,8 +311,29 @@ def build_router(reader: Store, writer: Store, settings: Settings) -> APIRouter:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get("/status")
-    def status() -> dict[str, Any]:
-        tracks = casm_track_processes()
+    def status(request: Request, response: Response) -> dict[str, Any]:
+        # The CSRF cookie is minted here (and only here): the tab always polls
+        # this route, so by the time the upload button exists the browser holds
+        # a token to echo. An existing cookie is left alone so two open tabs
+        # do not invalidate each other.
+        token = request.cookies.get(CSRF_COOKIE)
+        if not token:
+            token = secrets.token_urlsafe(CSRF_TOKEN_BYTES)
+            response.set_cookie(
+                CSRF_COOKIE,
+                token,
+                httponly=False,  # the SPA must read it to echo it
+                samesite="strict",
+                path="/",
+            )
+        track_error = None
+        try:
+            tracks = casm_track_processes()
+        except CasmTrackCheckError as exc:
+            # Fails CLOSED, here too: an unusable ps is reported as "running"
+            # so the tab keeps the button disabled and says why.
+            tracks = []
+            track_error = str(exc)
         active = None
         for job in reader.list_jobs(limit=50):
             if str(job.get("kind")) in JOB_KINDS and job.get("state") in ("queued", "running"):
@@ -303,8 +347,11 @@ def build_router(reader: Store, writer: Store, settings: Settings) -> APIRouter:
         return {
             "allow_upload": bool(settings.allow_upload),
             "allow_upload_env": "CASM_MONITOR_ALLOW_UPLOAD",
-            "casm_track_running": bool(tracks),
+            "casm_track_running": bool(tracks) or track_error is not None,
             "casm_track_processes": tracks,
+            "casm_track_error": track_error,
+            "csrf_header": CSRF_HEADER,
+            "csrf_cookie": CSRF_COOKIE,
             "ledger_row": read_last_ledger_row(settings.deployed_weights_csv),
             "deployed": deployed_product(settings),
             "layout": layout_info(settings.layout_csv),
@@ -450,8 +497,24 @@ def build_router(reader: Store, writer: Store, settings: Settings) -> APIRouter:
         return {"job_id": job_id, "tag": tag}
 
     @router.post("/builds/{tag}/upload")
-    def post_upload(tag: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    def post_upload(
+        tag: str, request: Request, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         body = dict(body or {})
+        # CSRF double-submit BEFORE anything else: this is the one route that
+        # can put bytes on the correlator nodes, and it must be reachable only
+        # from something that read GET /api/cal/status first.
+        cookie = request.cookies.get(CSRF_COOKIE) or ""
+        header = request.headers.get(CSRF_HEADER) or ""
+        if not cookie or not header or not hmac.compare_digest(cookie, header):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"missing or mismatched CSRF token: GET /api/cal/status sets the "
+                    f"{CSRF_COOKIE} cookie and this request must echo it in the "
+                    f"{CSRF_HEADER} header"
+                ),
+            )
         if not settings.allow_upload:
             raise HTTPException(
                 status_code=403,
@@ -475,16 +538,24 @@ def build_router(reader: Store, writer: Store, settings: Settings) -> APIRouter:
                 status_code=409,
                 detail=f"build {tag!r} has not been staged; run the dry run first",
             )
-        refusal = upload_refusal(settings, tag, confirm, stage=stage)
-        if refusal is not None:
-            raise HTTPException(status_code=409, detail=refusal)
-        params = {
-            "build_tag": tag,
-            "confirm_tag": confirm,
-            "save_defaults": bool(body.get("save_defaults", False)),
-            "note": body.get("note"),
-        }
-        job_id, job_refusal = writer.submit_job_atomic(UPLOAD_KIND, params, refuse_if_pending=True)
+        save_defaults = bool(body.get("save_defaults", False))
+        try:
+            # The same gate the worker runs, so the operator gets a status code
+            # instead of a job that fails a second later. The worker re-runs
+            # every one of these checks itself, under the deploy lock.
+            upload_plan(settings, tag, confirm, stage=stage, save_defaults=save_defaults)
+        except DeployError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        # The authorization row and the job are inserted in ONE transaction;
+        # the job's params carry nothing but the authorization's id.
+        job_id, auth_id, job_refusal = writer.submit_upload_job_authorized(
+            UPLOAD_KIND,
+            build_tag=tag,
+            confirm_tag=confirm,
+            stage_digest=stage_digest(stage),
+            note=body.get("note"),
+            save_defaults=save_defaults,
+        )
         if job_refusal is not None:
             raise HTTPException(
                 status_code=409,
@@ -497,14 +568,15 @@ def build_router(reader: Store, writer: Store, settings: Settings) -> APIRouter:
             subject=tag,
             detail={
                 "job_id": job_id,
+                "auth_id": auth_id,
                 "tag": tag,
-                "save_defaults": params["save_defaults"],
-                "note": params["note"],
+                "save_defaults": save_defaults,
+                "note": body.get("note"),
                 "stage_json": str(stage_json_path(settings, tag)),
                 "requested_utc": iso(time.time()),
             },
         )
-        return {"job_id": job_id, "tag": tag}
+        return {"job_id": job_id, "auth_id": auth_id, "tag": tag}
 
     return router
 

@@ -15,6 +15,8 @@ import type {
   EventRecord,
   EventsResponse,
   HealthResponse,
+  ImagingHistoryResponse,
+  ImagingManifest,
   JobDetail,
   JobsResponse,
   ScalarsResponse,
@@ -376,6 +378,34 @@ export function snapFigureUrl(
   return `/api/figures/snaps/${set}/${kind}@${suffix}.png${v}`;
 }
 
+// --- Imaging (M4) --------------------------------------------------------
+// See docs/api-imaging.md for the full contract.
+
+export function getImagingManifest(): Promise<ImagingManifest> {
+  return request<ImagingManifest>("/api/figures/imaging/manifest");
+}
+
+/** Same URL an `<img>`/`<video>` uses; `v` is the manifest's own
+ * `rendered_utc` (or, for a scrub-view history frame, that frame's own
+ * `ts`) so the browser cache is bookmarked to the render that produced it —
+ * same pattern as `visFigureUrl`/`snapFigureUrl`. `file` may itself carry a
+ * `/` (history frames are `frames/<unix>@1x.png`), served under the same
+ * whitelisted route. */
+export function imagingFigureUrl(file: string, v?: string | null): string {
+  const qs = v ? `?v=${encodeURIComponent(v)}` : "";
+  return `/api/figures/imaging/${file}${qs}`;
+}
+
+export interface ImagingHistoryQuery {
+  t0: string;
+  t1: string;
+}
+
+export function getImagingHistory(query: ImagingHistoryQuery): Promise<ImagingHistoryResponse> {
+  const params = new URLSearchParams({ t0: query.t0, t1: query.t1 });
+  return request<ImagingHistoryResponse>(`/api/imaging/history?${params.toString()}`);
+}
+
 // --- Search (M2b) ---------------------------------------------------------
 // See docs/api-search.md for the full contract.
 
@@ -485,12 +515,28 @@ export interface CalActionResult<T> {
   detail: string | null;
 }
 
-async function postJson<T>(path: string, body: unknown): Promise<CalActionResult<T>> {
+/** The CSRF double-submit token the backend sets on `GET /api/cal/status`
+ * (`casm_monitor_csrf`). The upload POST must echo it in `X-CSRF-Token` or the
+ * backend answers 403; the page always polls status first, so by the time the
+ * Upload button exists the cookie is there. */
+const CSRF_COOKIE = "casm_monitor_csrf";
+const CSRF_HEADER = "X-CSRF-Token";
+
+function csrfToken(): string {
+  const match = document.cookie.split("; ").find((row) => row.startsWith(`${CSRF_COOKIE}=`));
+  return match ? decodeURIComponent(match.slice(CSRF_COOKIE.length + 1)) : "";
+}
+
+async function postJson<T>(
+  path: string,
+  body: unknown,
+  extraHeaders: Record<string, string> = {},
+): Promise<CalActionResult<T>> {
   let res: Response;
   try {
     res = await fetch(path, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...extraHeaders },
       body: JSON.stringify(body ?? {}),
     });
   } catch (err) {
@@ -519,7 +565,11 @@ export function postCalUpload(
   tag: string,
   body: CalUploadRequest,
 ): Promise<CalActionResult<CalUploadAcceptedResponse>> {
-  return postJson<CalUploadAcceptedResponse>(`/api/cal/builds/${encodeURIComponent(tag)}/upload`, body);
+  return postJson<CalUploadAcceptedResponse>(
+    `/api/cal/builds/${encodeURIComponent(tag)}/upload`,
+    body,
+    { [CSRF_HEADER]: csrfToken() },
+  );
 }
 
 export function statusWebSocketUrl(): string {

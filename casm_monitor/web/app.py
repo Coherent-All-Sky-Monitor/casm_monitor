@@ -220,6 +220,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         params = (body or {}).get("params") or {}
         if kind not in KINDS:
             raise HTTPException(status_code=400, detail=f"unknown kind {kind!r}")
+        if KINDS[kind].privileged:
+            # cal_build/deploy_stage/deploy_upload are not submittable here:
+            # this route takes an arbitrary params object, which for the upload
+            # was the whole gate (2026-09-09 security review, finding 1). Each
+            # has a route of its own that validates the request, and the upload
+            # additionally mints the single-use authorization its worker must
+            # consume.
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"{kind!r} is a privileged job kind and cannot be submitted through "
+                    f"POST /api/jobs; use its own route under /api/cal (see docs/api-cal.md)"
+                ),
+            )
         if not isinstance(params, dict):
             raise HTTPException(status_code=400, detail="params must be an object")
         job_id = writer.submit_job(kind, params)

@@ -62,7 +62,12 @@ then open <http://127.0.0.1:8060/>. On corr1 itself remember the proxy bypass:
 
 API: `/api/health`, `/api/status`, `/api/events`, `/api/scalars`, `/api/jobs`
 (+ `POST /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`) and
-`WS /ws/status` (status payload every 10 s).
+`WS /ws/status` (status payload every 10 s). `POST /api/jobs` refuses the
+privileged kinds (`cal_build`, `deploy_stage`, `deploy_upload`) with 403: they
+have their own validating routes under `/api/cal`, and the upload additionally
+needs a CSRF token and a single-use authorization — see the security-model
+section of `docs/api-cal.md`, which also documents the
+`store_root/inhibit/deploy.active` marker `casm-track` operators should test.
 
 ## Tests
 
