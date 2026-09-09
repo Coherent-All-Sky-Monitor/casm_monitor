@@ -17,7 +17,8 @@ vis_figures.py``'s docstrings).
 This collector is cheap and does no I/O beyond a couple of SQLite queries:
 
 * every :data:`CADENCE_S` (60 s) it submits a ``render_figures`` job for all
-  of :data:`SCHEDULED_TARGETS` (vis, snaps and, since M4, imaging), but only
+  of :data:`SCHEDULED_TARGETS` (vis, snaps, imaging and the M5 candidates
+  funnel chart), but only
   every :data:`SUBMIT_INTERVAL_S` (30 min), refusing (via
   ``Store.submit_job_atomic``'s ``refuse_if_pending``) while one is already
   queued or running;
@@ -44,8 +45,10 @@ RENDER_FIGURES_KIND = "render_figures"
 #: Targets of the half-hourly scheduled render. ``imaging`` (M4) joined the
 #: pair in 2026-09-09: its own pass is incremental (it images at most 64 new
 #: integrations into a frame cache and rebuilds the cheap products from it),
-#: so adding it does not lengthen the job by a 24 h re-render.
-SCHEDULED_TARGETS = ["vis", "snaps", "imaging"]
+#: so adding it does not lengthen the job by a 24 h re-render. ``cands`` (M5)
+#: renders the T2 funnel PNGs the Candidates tab serves, which used to be
+#: rendered by the GET route itself (2026-09-09 review, finding 1).
+SCHEDULED_TARGETS = ["vis", "snaps", "imaging", "cands"]
 SUBMIT_INTERVAL_S = 1800.0  # 30 min
 LAST_SUBMIT_STREAM = "figures"
 LAST_SUBMIT_KEY = "last_submit_ts"

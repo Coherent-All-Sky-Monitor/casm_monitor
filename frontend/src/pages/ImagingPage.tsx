@@ -5,14 +5,22 @@ import TimeRangePicker from "../components/TimeRangePicker";
 import { useUrlParam } from "../lib/useUrlParam";
 import { resolveSince } from "../lib/timeRange";
 import { formatUtcStamp } from "../lib/statusSentence";
-import { imagingSectionSentence, IMAGING_READING_GUIDE, stripSentence } from "../lib/imagingText";
+import {
+  cutoutSentence,
+  imagingSectionSentence,
+  IMAGING_READING_GUIDE,
+  NO_CUTOUTS_SENTENCE,
+  sourceLabel,
+  stripSentence,
+} from "../lib/imagingText";
 import { getImagingHistory, getImagingManifest, imagingFigureUrl } from "../lib/api";
 import { mockGetImagingHistory, mockGetImagingManifest, mockImagingFigureUrl } from "../lib/mockImaging";
-import type { ImagingHistoryFrame, ImagingManifest } from "../lib/types";
+import type { ImagingCutout, ImagingHistoryFrame, ImagingManifest } from "../lib/types";
 
 const REFRESH_MS = 30_000;
 const VIEWS = [
   { value: "latest", label: "latest" },
+  { value: "cutouts", label: "cutouts" },
   { value: "strip", label: "strip" },
   { value: "movie", label: "movie" },
   { value: "scrub", label: "scrub" },
@@ -77,6 +85,9 @@ export default function ImagingPage() {
       {!manifestError && view === "latest" && manifest && (
         <LatestView manifest={manifest} figureSrc={figureSrc} />
       )}
+      {!manifestError && view === "cutouts" && manifest && (
+        <CutoutsView manifest={manifest} figureSrc={figureSrc} />
+      )}
       {!manifestError && view === "strip" && manifest && (
         <StripView manifest={manifest} figureSrc={figureSrc} />
       )}
@@ -115,6 +126,62 @@ function LatestView({ manifest, figureSrc }: { manifest: ImagingManifest; figure
           open full size
         </a>
       </p>
+    </div>
+  );
+}
+
+/** The per-source cutouts (M4): one `image_around_source` image per source
+ * that is up, still ONE image on screen at a time — the source picker swaps
+ * which one, exactly like the view picker above it. */
+function CutoutsView({ manifest, figureSrc }: { manifest: ImagingManifest; figureSrc: FigureSrc }) {
+  const cutouts = manifest.cutouts ?? [];
+  // Segmented writes the same URL param, so reading it here is all this
+  // needs — the picker and the image can never disagree.
+  const [source] = useUrlParam("cutout", cutouts[0]?.source ?? "");
+  const [loadError, setLoadError] = useState(false);
+  const current: ImagingCutout | null =
+    cutouts.find((c) => c.source === source) ?? cutouts[0] ?? null;
+
+  // A failed load belongs to ONE source; switching sources must show the new
+  // image, not the previous one's error.
+  useEffect(() => setLoadError(false), [source]);
+
+  if (cutouts.length === 0 || !current) {
+    return <p className="note">{NO_CUTOUTS_SENTENCE}</p>;
+  }
+  const src1x = figureSrc(current.file_1x, manifest.rendered_utc);
+  const src2x = figureSrc(current.file_2x, manifest.rendered_utc);
+  return (
+    <div>
+      {cutouts.length > 1 && (
+        <div className="toolbar">
+          <Segmented
+            paramKey="cutout"
+            defaultValue={cutouts[0].source}
+            options={cutouts.map((c) => ({ value: c.source, label: sourceLabel(c.source) }))}
+          />
+        </div>
+      )}
+      {loadError ? (
+        <p className="note">No cutout rendered yet for {sourceLabel(current.source)}.</p>
+      ) : (
+        <div className="vis-figure">
+          <img
+            className="vis-figure__img"
+            src={src1x}
+            srcSet={`${src1x} 1x, ${src2x} 2x`}
+            loading="eager"
+            alt={`${sourceLabel(current.source)} cutout`}
+            onError={() => setLoadError(true)}
+          />
+          <p className="note">
+            {cutoutSentence(current)}{" "}
+            <a href={src2x} target="_blank" rel="noreferrer">
+              open full size
+            </a>
+          </p>
+        </div>
+      )}
     </div>
   );
 }

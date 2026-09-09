@@ -36,8 +36,11 @@ upload route; see `casm_monitor/web/cal.py`).
 - `tier`: exact match (`A`/`B`/`C`); empty = no filter.
 - `tag`: substring match against the newest **label** per event (not the
   pipeline's automatic `tags` column) — same as t3-web's `tag` filter.
-- `since`: an event_utc lower bound, same string form as the DB's own
-  timestamps.
+- `since`: an event_utc lower bound, any ISO-8601 timestamp (`Z`, an offset,
+  a space separator or naive = UTC). It is parsed and canonicalised to the
+  DB's own `T`-separated UTC form before the comparison — sqlite compares
+  these as text and `' ' < 'T'`, so a space-form bound would otherwise select
+  the wrong same-day rows. A value that is not a timestamp is a 400.
 - `limit`: 1-5000, default 500.
 
 ```json
@@ -114,6 +117,12 @@ already mints, so one browser session shares one token across tabs. Missing
 or mismatched: 403. Unknown event name: 404. `label` not one of the four
 values: 400.
 
+Concurrency: t2d and t3-web write the same sqlite file, so the write runs on
+a connection with `busy_timeout = 5000 ms` and is retried up to 5 times with
+exponential backoff on `SQLITE_BUSY` (`database is locked`). If it is still
+locked after that, the answer is a `503` with a `detail` saying so — never a
+500.
+
 The write itself calls `casm_t3.web.app.label()` directly — t3-web's own
 route function, not a reimplementation — so the `label=='frb'` promotion
 into the `frbs` table happens exactly as it does from `:8050`. The `who`
@@ -152,13 +161,15 @@ never raises; the page renders without the clocks in that case).
 
 ## `GET /api/cands/stats/plot.png?hours=12|24|48|168|720`
 
-The funnel PNG, rendered by `casm_t3.web.statsplot.render` (re-rendered at
-most once a minute, same TTL and cache file as t3-web's own `/stats/plot.png`
-— the two UIs share the same cache file under the OS temp dir). ETag +
-`Cache-Control: public, max-age=60`. 404 if it has never rendered
-successfully (charting failed and no prior PNG exists).
+The funnel PNG. **This route only serves a file; it never renders** — the
+`render_figures` job's `cands` target renders one PNG per preset window with
+`casm_t3.web.statsplot.render` into `store_root/figures/cands/`
+(`funnel@1x.png` for the 24 h default, `funnel_<hours>h@1x.png` for the
+others, plus a `manifest.json`) every 30 min. ETag +
+`Cache-Control: public, max-age=60`. 404, with a `detail` saying which
+window has not been rendered yet, until that job has run.
 
-## `GET /api/cands/injections?limit=200`
+## `GET /api/cands/injections?limit=200&offset=0`
 
 ```json
 {
@@ -167,17 +178,19 @@ successfully (charting failed and no prior PNG exists).
 }
 ```
 
-`day` is the last-24h gate summary t3-web's `/injections` page shows
+`limit` is 1-2000 (default 200) and `offset` pages through older rows; both
+are echoed in the response. `day` is the last-24h gate summary t3-web's `/injections` page shows
 (`t1`/`t2`/`tr` are `sum(gate_t1|gate_t2|gate_trigger)`, `done` is
 `count(gate_t1)`, i.e. how many have been reconciled at all).
 
-## `GET /api/cands/frbs`
+## `GET /api/cands/frbs?limit=200&offset=0`
 
 ```json
-{ "frbs": [ { "name": "260909aabbcc", "event_utc": "...", "snr": 30.0, "dm": 120.0, "width": 3, "beam": 42, "notes": "looks real", "created_utc": "..." } ] }
+{ "frbs": [ { "name": "260909aabbcc", "event_utc": "...", "snr": 30.0, "dm": 120.0, "width": 3, "beam": 42, "notes": "looks real", "created_utc": "..." } ], "limit": 200, "offset": 0 }
 ```
 
-The FRB catalog (`frbs` table), newest first.
+The FRB catalog (`frbs` table), newest first, paginated: `limit` 1-2000
+(default 200), `offset` from the newest row.
 
 ## `GET /api/cands/transits`
 

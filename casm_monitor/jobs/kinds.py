@@ -182,8 +182,9 @@ KINDS: dict[str, JobKind] = {
         address_space_limit_bytes=16 * 1024 * 1024 * 1024,
         description=(
             "render the Vis + SNAPs + Imaging tab figure PNGs (and the imaging "
-            "MP4) and their manifests; params {\"targets\": [\"vis\", \"snaps\", "
-            '"imaging"], "reason": "scheduled"|"manual"|"board_read"}'
+            "MP4, the source cutouts and the Candidates funnel charts) and their "
+            "manifests; params {\"targets\": [\"vis\", \"snaps\", "
+            '"imaging", "cands"], "reason": "scheduled"|"manual"|"board_read"}'
         ),
     ),
 }

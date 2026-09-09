@@ -11,7 +11,7 @@
 // URI, keyed on the file name so repeated requests for the same file (the
 // `1x`/`2x` pair, a prefetched neighbour frame) are stable.
 
-import type { ImagingHistoryResponse, ImagingManifest, ImagingSourceInfo } from "./types";
+import type { ImagingCutout, ImagingHistoryResponse, ImagingManifest, ImagingSourceInfo } from "./types";
 
 const NETWORK_DELAY_MS = 60;
 
@@ -35,6 +35,36 @@ const MOCK_SOURCES: ImagingSourceInfo[] = [
   { name: "cyg-a", alt_deg: 61, az_deg: 42, up: true },
   { name: "cas-a", alt_deg: 48, az_deg: 8, up: true },
   { name: "tau-a", alt_deg: -14, az_deg: 260, up: false },
+];
+
+const MOCK_CUTOUTS: ImagingCutout[] = [
+  {
+    source: "cyg-a",
+    alt_deg: 61,
+    az_deg: 42,
+    file_1x: "cutout_cyg-a@1x.png",
+    file_2x: "cutout_cyg-a@2x.png",
+    snr: 8.1,
+    ceiling_snr: 9.0,
+  },
+  {
+    source: "cas-a",
+    alt_deg: 48,
+    az_deg: 8,
+    file_1x: "cutout_cas-a@1x.png",
+    file_2x: "cutout_cas-a@2x.png",
+    snr: 5.4,
+    ceiling_snr: 8.6,
+  },
+  {
+    source: "sun",
+    alt_deg: 12,
+    az_deg: 118,
+    file_1x: "cutout_sun@1x.png",
+    file_2x: "cutout_sun@2x.png",
+    snr: 21.7,
+    ceiling_snr: null,
+  },
 ];
 
 /** A stand-in all-sky image: a hairline horizon circle (the strip variant
@@ -82,7 +112,8 @@ export function mockGetImagingManifest(): Promise<ImagingManifest> {
     // first mp4 lands.
     movie: { file: null, fps: 4 },
     sources: MOCK_SOURCES,
-    psf_ceiling_snr: 42.3,
+    cutouts: MOCK_CUTOUTS,
+    psf_ceiling_snr: 9.0,
   });
 }
 

@@ -143,3 +143,36 @@ def test_history_bad_timestamp_is_400(client):
 
 def test_history_with_no_frames_dir_is_empty(bare_client):
     assert bare_client.get("/api/imaging/history").json() == {"frames": []}
+
+
+# -- per-source cutouts (M4) ------------------------------------------------
+def test_cutout_is_served_when_the_manifest_names_it(settings, seeded_tree):
+    root, manifest = seeded_tree
+    (root / "cutout_cyg-a@1x.png").write_bytes(b"\x89PNG\r\n\x1a\ncutout-1x")
+    manifest = dict(manifest)
+    manifest["cutouts"] = [
+        {
+            "source": "cyg-a",
+            "alt_deg": 61.0,
+            "az_deg": 41.9,
+            "file_1x": "cutout_cyg-a@1x.png",
+            "file_2x": "cutout_cyg-a@2x.png",
+            "snr": 8.1,
+            "ceiling_snr": 9.0,
+        }
+    ]
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    app = FastAPI()
+    app.include_router(build_router(settings))
+    with TestClient(app) as c:
+        res = c.get("/api/figures/imaging/cutout_cyg-a@1x.png")
+        assert res.status_code == 200
+        assert res.headers["content-type"] == "image/png"
+        # Named by the manifest but not rendered -> 404, not a directory read.
+        assert c.get("/api/figures/imaging/cutout_cyg-a@2x.png").status_code == 404
+        # Shaped like a cutout but not in the manifest -> 400.
+        assert c.get("/api/figures/imaging/cutout_evil@1x.png").status_code == 400
+
+
+def test_cutout_is_refused_when_no_manifest_names_it(bare_client):
+    assert bare_client.get("/api/figures/imaging/cutout_cyg-a@1x.png").status_code == 400

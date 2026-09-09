@@ -3,7 +3,7 @@
 // lib/visText.ts / lib/snapText.ts.
 
 import { formatClock, formatUtcStamp } from "./statusSentence";
-import type { ImagingManifest, ImagingSourceInfo, ImagingSourceName } from "./types";
+import type { ImagingCutout, ImagingManifest, ImagingSourceInfo, ImagingSourceName } from "./types";
 
 const PROJECTION_SENTENCE =
   "All-sky dirty image, l/m zenithal projection, horizon at the unit circle, north up, east left";
@@ -45,8 +45,40 @@ export function imagingSectionSentence(manifest: ImagingManifest | null): string
   const latestClock = formatClock(manifest.latest.ts) ?? "unknown";
   const renderedClock = formatClock(manifest.rendered_utc) ?? "unknown";
   const timeClause = `latest integration ${latestClock} UTC, rendered ${renderedClock} UTC`;
-  return `${PROJECTION_SENTENCE}; ${antClause}; ${timeClause}. ${sourceClause(manifest.sources)}`;
+  const lag = lagClause(manifest);
+  return `${PROJECTION_SENTENCE}; ${antClause}; ${timeClause}.${lag} ${sourceClause(manifest.sources)}`;
 }
+
+/** Above this the latest image is stale enough to say so out loud: the render
+ * job runs every 30 min, so anything beyond that is a real gap (data outage,
+ * a cold cache catching up) rather than the normal render cadence. */
+const LAG_WARN_S = 30 * 60;
+
+function lagClause(manifest: ImagingManifest): string {
+  const lag = manifest.latest.lag_s;
+  if (typeof lag !== "number" || !Number.isFinite(lag) || lag <= LAG_WARN_S) return "";
+  const hours = lag / 3600;
+  const amount = hours >= 1 ? `${hours.toFixed(1)} h` : `${Math.round(lag / 60)} min`;
+  return ` The latest image is ${amount} behind.`;
+}
+
+/** The sentence under one source cutout, e.g. "Cyg A: measured SNR 8.1
+ * against a PSF ceiling of 9.0." — the comparison IS the panel's point: a
+ * measured SNR at the ceiling means the image is sidelobe-limited, not
+ * calibration- or sensitivity-limited. */
+export function cutoutSentence(cutout: ImagingCutout): string {
+  const label = sourceLabel(cutout.source);
+  const snr = cutout.snr.toFixed(1);
+  const alt = `${Math.round(cutout.alt_deg)} deg altitude`;
+  if (cutout.ceiling_snr === null) {
+    return `${label}: measured SNR ${snr}, no PSF ceiling computed for this render (${alt}).`;
+  }
+  return `${label}: measured SNR ${snr} against a PSF ceiling of ${cutout.ceiling_snr.toFixed(1)} (${alt}).`;
+}
+
+/** The line above the cutout picker when nothing is up. */
+export const NO_CUTOUTS_SENTENCE =
+  "No tracked source is more than 10 deg above the horizon at the latest integration, so no cutouts were imaged.";
 
 /** The muted paragraph under the image: how to read the figure without a
  * legend (DESIGN.md #8, no legends). */

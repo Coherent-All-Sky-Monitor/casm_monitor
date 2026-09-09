@@ -24,8 +24,10 @@ validated (`file` against the manifest's own names, never a raw path).
   "rendered_utc": "2026-09-09T02:44:00Z",
   "cal_file": "cal_sep03peak_core17.h5",
   "antennas": [1, 2, 3, 5, 6, 8, 9, 11, 13, 15, 17, 20, 23, 26, 29, 31, 32],
+  "config_fingerprint": "9f2c…",
   "latest": {
     "ts": "2026-09-09T02:41:00Z",
+    "lag_s": 180.0,
     "file_1x": "latest@1x.png",
     "file_2x": "latest@2x.png"
   },
@@ -43,7 +45,18 @@ validated (`file` against the manifest's own names, never a raw path).
     { "name": "cas-a", "alt_deg": 48.2, "az_deg": 7.6, "up": true },
     { "name": "tau-a", "alt_deg": -14.1, "az_deg": 260.3, "up": false }
   ],
-  "psf_ceiling_snr": 42.3
+  "cutouts": [
+    {
+      "source": "cyg-a",
+      "alt_deg": 61.0,
+      "az_deg": 41.9,
+      "file_1x": "cutout_cyg-a@1x.png",
+      "file_2x": "cutout_cyg-a@2x.png",
+      "snr": 8.1,
+      "ceiling_snr": 9.0
+    }
+  ],
+  "psf_ceiling_snr": 9.0
 }
 ```
 
@@ -57,10 +70,32 @@ validated (`file` against the manifest's own names, never a raw path).
   even when `file` is `null` so the frontend never has to hard-code it.
 - `sources` is fixed order `sun, cyg-a, cas-a, tau-a`; `up` is `alt_deg > 0`
   at the horizon used for the image (the unit circle), server-computed so the
-  frontend does no astronomy. `psf_ceiling_snr` is the theoretical
-  dirty-beam sidelobe SNR ceiling for the deployed array config, `null` when
-  not computed for this render (the section sentence does not currently use
-  it; reserved for a future panel).
+  frontend does no astronomy.
+- `cutouts` is one entry per source that was more than **10 deg** above the
+  horizon at the latest integration, highest first — a `image_around_source`
+  cutout (`ang_max_deg=5`, `npix=51`, `grid="lm"`, `freq_avg=32`,
+  `min_baseline_m=5`, bandpass-normalised) of that source at that
+  integration. `snr` is the measured image SNR (`snr_info.snr`) and
+  `ceiling_snr` the dirty-beam ceiling for the same geometry
+  (`psf_for_result` + `compute_image_snr` on the same annulus), so the page
+  can say "Cyg A: measured SNR 8.1 against a PSF ceiling of 9.0".
+  `ceiling_snr` is `null` if the PSF replay failed. `cutouts` is `[]` when
+  nothing is up; the files are served through the same
+  `GET /api/figures/imaging/<file>` route and are whitelisted against these
+  very entries.
+- `psf_ceiling_snr` is the dirty-beam sidelobe SNR ceiling for the deployed
+  array configuration — the `ceiling_snr` of the highest cutout this render
+  computed — `null` when nothing was up or the PSF was not computed for this
+  render. The PSF cost is measured on the first pass that computes one; if it
+  exceeds 120 s the ceilings are recomputed only every 6th pass and the cached
+  values (per configuration fingerprint) are reported in between.
+- `latest.lag_s` is `rendered time − latest integration`, in seconds, so the
+  page can say "latest image is 3.2 h behind" without arithmetic on two
+  timestamps. `config_fingerprint` is the sha256 identity of what the frames
+  behind these products were imaged with (deployed cal path + its md5, the
+  deployed antenna list, `npix`, `freq_avg`, `min_baseline_m`, estimator);
+  cached frames carrying any other fingerprint are expired rather than mixed
+  into `latest`/`strip`/`movie`.
 - 404 (no body required beyond the usual `detail` string) when nothing has
   been rendered yet at all.
 - Same cache headers as `/api/figures/vis/manifest`: no special caching on
@@ -70,8 +105,9 @@ validated (`file` against the manifest's own names, never a raw path).
 ## `GET /api/figures/imaging/<file>`
 
 The PNG or MP4 itself — `file` is exactly one of the manifest's own
-`file_1x`/`file_2x`/`movie.file` strings, or a history frame's own `file_1x`
-(see below), never an arbitrary path. `1x` is the page-default
+`file_1x`/`file_2x`/`movie.file`/`cutouts[].file_1x`/`cutouts[].file_2x`
+strings, or a history frame's own `file_1x` (see below), never an arbitrary
+path. `1x` is the page-default
 half-resolution image; `2x` is the full-resolution "open full size" target,
 same `srcset="<1x> 1x, <2x> 2x"` convention as the Visibilities figures.
 Response headers: `ETag` (a 16-hex-char sha256 prefix of the file's own

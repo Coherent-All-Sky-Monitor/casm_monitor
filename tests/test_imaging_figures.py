@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import shutil
 import time
+from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -42,14 +44,44 @@ def synthetic_snapshot(ts: float, *, peak_lm: tuple[float, float] = (0.3, -0.2))
     }
 
 
+def synthetic_cutout(source: str, *, snr: float = 8.1) -> dict:
+    """One ``image_around_source``-shaped result (grid="lm", estimator="real")."""
+    axis = np.linspace(-imf.CUTOUT_ANG_MAX_DEG, imf.CUTOUT_ANG_MAX_DEG, imf.CUTOUT_NPIX)
+    xx, yy = np.meshgrid(axis, axis)
+    image = np.exp(-(xx**2 + yy**2) / 0.5) - 0.1 * np.cos(xx * 3.0)
+    return {
+        "image": image,
+        "daz_deg": axis,
+        "dalt_deg": axis,
+        "snr_info": {"snr": snr},
+        "geometry": {
+            "ang_max_deg": imf.CUTOUT_ANG_MAX_DEG,
+            "npix": imf.CUTOUT_NPIX,
+            "grid": "lm",
+            "estimator": "real",
+        },
+    }
+
+
+@dataclass(frozen=True)
 class FakeConfig:
-    cal_path = "/nonexistent/cal.h5"
-    cal_file = "cal_sep03peak_core17.h5"
-    weights_file = "/nonexistent/w.h5"
-    antennas = (9, 10, 15)
-    inactive_antennas = (1, 3)
-    wired_antennas = (1, 3, 9, 10, 15)
-    antennas_source = "deployed"
+    """An ``ImagingConfig`` stand-in whose cal file really exists on disk --
+    :func:`imaging_figures.config_fingerprint` md5s it."""
+
+    cal_path: Path
+    cal_file: str = "cal_sep03peak_core17.h5"
+    weights_file: str = "/nonexistent/w.h5"
+    antennas: tuple = (9, 10, 15)
+    inactive_antennas: tuple = (1, 3)
+    wired_antennas: tuple = (1, 3, 9, 10, 15)
+    antennas_source: str = "deployed"
+
+
+@pytest.fixture
+def fake_config(tmp_path) -> FakeConfig:
+    cal = tmp_path / "cal_sep03peak_core17.h5"
+    cal.write_bytes(b"fake cal bytes -- only their md5 matters here")
+    return FakeConfig(cal_path=cal)
 
 
 # -- renderer smoke --------------------------------------------------------
@@ -126,8 +158,8 @@ def test_imaging_config_derives_inactive_from_the_layout(settings, monkeypatch, 
 
 # -- the job's incremental pass --------------------------------------------
 @pytest.fixture
-def fake_imaging(monkeypatch):
-    """``imaging_config``/``image_window``/``render_movie`` replaced by fakes."""
+def fake_imaging(monkeypatch, fake_config):
+    """``imaging_config``/``image_window``/``render_movie``/cutouts faked."""
     calls: list[tuple[float, float]] = []
 
     def fake_window(store, settings, t0, t1, *, config=None, **kw):
@@ -139,14 +171,20 @@ def fake_imaging(monkeypatch):
             if t0 + k * imf.INTEGRATION_S < t1
         ]
 
-    monkeypatch.setattr(imf, "imaging_config", lambda settings: FakeConfig())
+    monkeypatch.setattr(imf, "imaging_config", lambda settings: fake_config)
     monkeypatch.setattr(imf, "image_window", fake_window)
     monkeypatch.setattr(imf, "render_movie", lambda snaps, outdir, **kw: None)
     monkeypatch.setattr(imf, "ffmpeg_available", lambda: False)
+    # Cutouts: no real imaging either (image_around_source reads /mnt), just
+    # a result of exactly the shape it returns and a fixed PSF ceiling.
+    monkeypatch.setattr(
+        imf, "image_cutout", lambda settings, source, ts, **kw: synthetic_cutout(source)
+    )
+    monkeypatch.setattr(imf, "psf_ceiling", lambda result, **kw: 9.0)
     return calls
 
 
-def test_imaging_pass_writes_frames_products_and_manifest(store, settings, fake_imaging):
+def test_imaging_pass_writes_frames_products_and_manifest(store, settings, fake_imaging, fake_config):
     result = rf._render_imaging(store, settings)
     root = settings.store_root / "figures" / "imaging"
     assert result["n_frames_rendered"] == 2
@@ -169,8 +207,26 @@ def test_imaging_pass_writes_frames_products_and_manifest(store, settings, fake_
     assert manifest["strip"]["n"] >= 1
     # ffmpeg reported absent -> movie file null, but fps is still served.
     assert manifest["movie"] == {"file": None, "fps": imf.MOVIE_FPS}
-    assert manifest["psf_ceiling_snr"] is None
     assert [s["name"] for s in manifest["sources"]] == list(imf.SOURCES)
+    assert manifest["config_fingerprint"] == imf.config_fingerprint(fake_config)
+    # latest.lag_s is now minus the latest integration (the fake window images
+    # the OLDEST end of the 24 h window, so this is a large, real lag).
+    assert manifest["latest"]["lag_s"] > 0
+    # Every source above 10 deg at that integration got a cutout + a ceiling.
+    up = [m for m in imf.source_marks(manifest["latest"]["ts_unix"])
+          if m["alt_deg"] > imf.CUTOUT_MIN_ALT_DEG]
+    assert [c["source"] for c in manifest["cutouts"]] == [
+        m["name"] for m in sorted(up, key=lambda m: -m["alt_deg"])
+    ]
+    for cut in manifest["cutouts"]:
+        assert (root / cut["file_1x"]).is_file()
+        assert (root / cut["file_2x"]).is_file()
+        assert cut["snr"] == 8.1
+        assert cut["ceiling_snr"] == 9.0
+    if manifest["cutouts"]:
+        assert manifest["psf_ceiling_snr"] == 9.0
+    else:
+        assert manifest["psf_ceiling_snr"] is None
 
 
 def test_imaging_pass_is_incremental(store, settings, fake_imaging):
@@ -185,25 +241,51 @@ def test_imaging_pass_is_incremental(store, settings, fake_imaging):
     assert len(frames) == 4
 
 
-def test_imaging_pass_bounds_one_job_to_max_frames(store, settings, monkeypatch):
-    """A cold start images at most MAX_IMAGING_FRAMES integrations, oldest first."""
+def test_imaging_pass_bounds_one_job_to_max_frames(store, settings, monkeypatch, fake_config):
+    """A COLD start (>6 h behind) images at most MAX_IMAGING_FRAMES_COLD, oldest first."""
     asked: list[tuple[float, float]] = []
 
     def fake_window(store_, settings_, t0, t1, *, config=None, **kw):
         asked.append((t0, t1))
         return []
 
-    monkeypatch.setattr(imf, "imaging_config", lambda settings: FakeConfig())
+    monkeypatch.setattr(imf, "imaging_config", lambda settings: fake_config)
     monkeypatch.setattr(imf, "image_window", fake_window)
     monkeypatch.setattr(imf, "ffmpeg_available", lambda: False)
-    rf._render_imaging(store, settings)
+    result = rf._render_imaging(store, settings)
     t0, t1 = asked[0]
-    assert t1 - t0 == pytest.approx(rf.MAX_IMAGING_FRAMES * imf.INTEGRATION_S, rel=1e-6)
+    assert result["max_frames"] == rf.MAX_IMAGING_FRAMES_COLD
+    assert t1 - t0 == pytest.approx(rf.MAX_IMAGING_FRAMES_COLD * imf.INTEGRATION_S, rel=1e-6)
     # Oldest first: the range starts at the 24 h window edge, not at "now".
     assert t0 < time.time() - 23 * 3600
+    # The whole cold pass still fits the job budget: 256 frames x the measured
+    # 2.9 s/frame is ~12 min against the 1800 s render_figures timeout.
+    assert rf.MAX_IMAGING_FRAMES_COLD * 2.9 < 1800.0
 
 
-def test_imaging_pass_advances_past_a_data_gap(store, settings, monkeypatch):
+def test_imaging_pass_uses_the_warm_budget_when_caught_up(store, settings, monkeypatch, fake_config):
+    """Less than 6 h behind -> the ordinary MAX_IMAGING_FRAMES budget."""
+    asked: list[tuple[float, float]] = []
+
+    def fake_window(store_, settings_, t0, t1, *, config=None, **kw):
+        asked.append((t0, t1))
+        return []
+
+    monkeypatch.setattr(imf, "imaging_config", lambda settings: fake_config)
+    monkeypatch.setattr(imf, "image_window", fake_window)
+    monkeypatch.setattr(imf, "ffmpeg_available", lambda: False)
+    # A frame from 10 min ago: the cache is up to date, so the pass is warm.
+    root = settings.store_root / "figures" / "imaging"
+    frames = root / "frames"
+    frames.mkdir(parents=True)
+    fingerprint = imf.config_fingerprint(fake_config)
+    rf._write_frame(frames, synthetic_snapshot(time.time() - 600), fingerprint)
+    result = rf._render_imaging(store, settings)
+    assert result["max_frames"] == rf.MAX_IMAGING_FRAMES
+    assert result["behind_h"] < 6.0
+
+
+def test_imaging_pass_advances_past_a_data_gap(store, settings, monkeypatch, fake_config):
     """Every step skipped (a gap) must still move the resume point forward."""
     asked: list[tuple[float, float]] = []
 
@@ -211,7 +293,7 @@ def test_imaging_pass_advances_past_a_data_gap(store, settings, monkeypatch):
         asked.append((t0, t1))
         return []
 
-    monkeypatch.setattr(imf, "imaging_config", lambda settings: FakeConfig())
+    monkeypatch.setattr(imf, "imaging_config", lambda settings: fake_config)
     monkeypatch.setattr(imf, "image_window", fake_window)
     monkeypatch.setattr(imf, "ffmpeg_available", lambda: False)
     rf._render_imaging(store, settings)
@@ -259,3 +341,235 @@ def test_render_movie_writes_an_mp4(tmp_path):
     assert out is not None
     assert out.name == "allsky24h.mp4"
     assert out.stat().st_size > 0
+
+
+# -- configuration fingerprint (2026-09-09 review, finding 2) ---------------
+def test_config_fingerprint_changes_with_cal_bytes_and_antennas(fake_config, tmp_path):
+    base = imf.config_fingerprint(fake_config)
+    assert base == imf.config_fingerprint(fake_config)  # stable
+    other_cal = tmp_path / "cal_other.h5"
+    other_cal.write_bytes(b"different cal bytes entirely")
+    assert imf.config_fingerprint(FakeConfig(cal_path=other_cal)) != base
+    # Same file, different deployed antenna set -> different identity.
+    assert (
+        imf.config_fingerprint(FakeConfig(cal_path=fake_config.cal_path, antennas=(9, 10)))
+        != base
+    )
+    # A rebuilt product can reuse the filename; the md5 is what separates them.
+    fake_config.cal_path.write_bytes(b"rebuilt cal under the same name")
+    assert imf.config_fingerprint(fake_config) != base
+
+
+def test_frames_from_another_configuration_are_ignored_and_expired(
+    store, settings, monkeypatch, fake_config
+):
+    """A frame imaged with a superseded cal is neither shown nor kept."""
+    root = settings.store_root / "figures" / "imaging"
+    frames = root / "frames"
+    frames.mkdir(parents=True)
+    stale_ts = rf._write_frame(frames, synthetic_snapshot(time.time() - 3600), "stale-fingerprint")
+    assert (frames / f"{stale_ts}.npz").is_file()
+
+    monkeypatch.setattr(imf, "imaging_config", lambda settings_: fake_config)
+    monkeypatch.setattr(imf, "image_window", lambda *a, **kw: [])
+    monkeypatch.setattr(imf, "ffmpeg_available", lambda: False)
+    result = rf._render_imaging(store, settings)
+
+    assert result["n_frames_stale"] == 1
+    assert not (frames / f"{stale_ts}.npz").exists()
+    assert not (frames / f"{stale_ts}@1x.png").exists()
+    # The stale frame never reached latest/strip/movie: nothing was in window.
+    assert result["n_frames_cached"] == 0
+    manifest = json.loads((root / "manifest.json").read_text())
+    assert manifest["config_fingerprint"] == imf.config_fingerprint(fake_config)
+    assert manifest["latest"] is None
+
+
+def test_a_new_configuration_resets_the_resume_point(store, settings, monkeypatch, fake_config):
+    """A manifest written under another fingerprint must not pin the scan."""
+    root = settings.store_root / "figures" / "imaging"
+    root.mkdir(parents=True)
+    (root / "manifest.json").write_text(
+        json.dumps({"scan_t1": time.time() - 60.0, "config_fingerprint": "someone-elses"})
+    )
+    asked: list[tuple[float, float]] = []
+
+    def fake_window(store_, settings_, t0, t1, *, config=None, **kw):
+        asked.append((t0, t1))
+        return []
+
+    monkeypatch.setattr(imf, "imaging_config", lambda settings_: fake_config)
+    monkeypatch.setattr(imf, "image_window", fake_window)
+    monkeypatch.setattr(imf, "ffmpeg_available", lambda: False)
+    rf._render_imaging(store, settings)
+    # Started at the 24 h window edge, not one minute ago.
+    assert asked[0][0] < time.time() - 23 * 3600
+
+
+# -- retention (2026-09-09 review, finding 10) ------------------------------
+def test_expire_frames_drops_orphan_halves_independently(tmp_path):
+    frames = tmp_path / "frames"
+    frames.mkdir()
+    now = time.time()
+    stale = int(now - 9 * 86400)
+    fresh = int(now - 3600)
+    (frames / f"{stale}@1x.png").write_bytes(b"png")   # PNG with no npz
+    (frames / f"{stale + 1}.npz").write_bytes(b"npz")  # npz with no PNG
+    (frames / f"{fresh}@1x.png").write_bytes(b"png")
+    (frames / f"{fresh}.npz").write_bytes(b"npz")
+    assert rf._expire_frames(frames, now, imf.FRAME_RETENTION_DAYS) == 2
+    assert sorted(p.name for p in frames.iterdir()) == [f"{fresh}.npz", f"{fresh}@1x.png"]
+
+
+def test_retention_runs_even_when_the_configuration_is_unavailable(store, settings, monkeypatch):
+    root = settings.store_root / "figures" / "imaging"
+    frames = root / "frames"
+    frames.mkdir(parents=True)
+    stale = int(time.time() - 9 * 86400)
+    (frames / f"{stale}@1x.png").write_bytes(b"png")
+    (frames / f"{stale}.npz").write_bytes(b"npz")
+
+    def boom(settings_):
+        raise imf.ImagingUnavailable("no cal on record")
+
+    monkeypatch.setattr(imf, "imaging_config", boom)
+    result = rf._render_imaging(store, settings)
+    assert result["n_frames_expired"] == 1
+    assert not (frames / f"{stale}@1x.png").exists()
+
+
+# -- movie selection (2026-09-09 review, finding 9) ------------------------
+def test_movie_selection_bounds_and_keeps_both_endpoints():
+    values = list(range(1000))
+    chosen = imf.movie_selection(values, imf.MOVIE_MAX_FRAMES)
+    assert len(chosen) <= imf.MOVIE_MAX_FRAMES
+    assert chosen[0] == 0 and chosen[-1] == 999
+    assert chosen == sorted(chosen)
+    # Fewer than the cap: everything, unchanged.
+    assert imf.movie_selection([1, 2, 3], 240) == [1, 2, 3]
+    assert imf.movie_selection([], 240) == []
+
+
+def test_movie_loads_only_the_selected_frames(store, settings, monkeypatch, fake_config):
+    """The <=240 cap is applied to TIMESTAMPS, before any npz is opened."""
+    root = settings.store_root / "figures" / "imaging"
+    frames = root / "frames"
+    frames.mkdir(parents=True)
+    fingerprint = imf.config_fingerprint(fake_config)
+    now = time.time()
+    n_frames = 300
+    for k in range(n_frames):
+        rf._write_frame(frames, synthetic_snapshot(now - (n_frames - k) * 60.0), fingerprint)
+
+    loaded: list[int] = []
+    real_load = rf._load_frame
+
+    def counting_load(frames_dir, ts):
+        loaded.append(ts)
+        return real_load(frames_dir, ts)
+
+    rendered: list[list[dict]] = []
+    monkeypatch.setattr(rf, "_load_frame", counting_load)
+    monkeypatch.setattr(imf, "imaging_config", lambda settings_: fake_config)
+    monkeypatch.setattr(imf, "image_window", lambda *a, **kw: [])
+    monkeypatch.setattr(imf, "ffmpeg_available", lambda: True)
+    monkeypatch.setattr(
+        imf, "render_movie", lambda snaps, outdir, **kw: rendered.append(list(snaps)) or None
+    )
+    monkeypatch.setattr(
+        imf, "image_cutout", lambda settings_, source, ts, **kw: synthetic_cutout(source)
+    )
+    monkeypatch.setattr(imf, "psf_ceiling", lambda result, **kw: 9.0)
+    rf._render_imaging(store, settings)
+
+    assert len(rendered) == 1
+    movie_frames = rendered[0]
+    cached = rf._cached_frame_ts(frames)
+    assert len(movie_frames) <= imf.MOVIE_MAX_FRAMES
+    # Both endpoints of the window are in the movie, newest included.
+    assert int(round(movie_frames[-1]["time_unix"])) == max(cached)
+    assert int(round(movie_frames[0]["time_unix"])) == min(cached)
+    # Never more npz opened than the products draw (movie + strip + latest).
+    assert len(loaded) <= imf.MOVIE_MAX_FRAMES + imf.STRIP_MAX + 1
+
+
+# -- PSF ceiling cost gating -----------------------------------------------
+def test_psf_ceiling_is_skipped_when_it_costs_more_than_the_budget(
+    store, settings, monkeypatch, fake_config
+):
+    root = settings.store_root / "figures" / "imaging"
+    root.mkdir(parents=True)
+    ts = int(time.time() - 300)
+    # One source up, deterministically.
+    monkeypatch.setattr(
+        imf, "source_marks",
+        lambda t, sources=imf.SOURCES: [
+            {"name": "cyg-a", "alt_deg": 61.0, "az_deg": 42.0, "up": True}
+        ],
+    )
+    monkeypatch.setattr(
+        imf, "image_cutout", lambda settings_, source, t, **kw: synthetic_cutout(source)
+    )
+    calls: list[int] = []
+
+    def counted_psf(result, **kw):
+        calls.append(1)
+        return 9.0
+
+    monkeypatch.setattr(imf, "psf_ceiling", counted_psf)
+    fingerprint = imf.config_fingerprint(fake_config)
+
+    def one_pass(cache: dict | None) -> dict:
+        if cache is not None:
+            # Pretend the measurement came out over budget.
+            cache["cost_s"] = rf.PSF_COST_BUDGET_S + 1.0
+            (root / "psf_cache.json").write_text(json.dumps(cache))
+        cutouts, ceiling, new_cache = rf._render_cutouts(
+            store, settings, root, fake_config, ts, fingerprint
+        )
+        assert ceiling == 9.0
+        assert cutouts[0]["ceiling_snr"] == 9.0  # cached value when not recomputed
+        return new_cache
+
+    cache = one_pass(None)
+    assert len(calls) == 1  # measured once
+    for expected in (1, 1, 1, 1, 2):  # passes 2..6; the 6th recomputes
+        cache = one_pass(cache)
+        assert len(calls) == expected
+
+
+def test_cutouts_skip_sources_below_the_altitude_floor(
+    store, settings, monkeypatch, fake_config
+):
+    monkeypatch.setattr(
+        imf, "source_marks",
+        lambda t, sources=imf.SOURCES: [
+            {"name": "cyg-a", "alt_deg": 61.0, "az_deg": 42.0, "up": True},
+            {"name": "sun", "alt_deg": 4.0, "az_deg": 100.0, "up": True},   # too low
+            {"name": "cas-a", "alt_deg": -8.0, "az_deg": 12.0, "up": False},
+        ],
+    )
+    monkeypatch.setattr(
+        imf, "image_cutout", lambda settings_, source, t, **kw: synthetic_cutout(source)
+    )
+    monkeypatch.setattr(imf, "psf_ceiling", lambda result, **kw: 9.0)
+    root = settings.store_root / "figures" / "imaging"
+    root.mkdir(parents=True)
+    cutouts, ceiling, _cache = rf._render_cutouts(
+        store, settings, root, fake_config, int(time.time()), "fp"
+    )
+    assert [c["source"] for c in cutouts] == ["cyg-a"]
+    assert ceiling == 9.0
+    assert (root / "cutout_cyg-a@1x.png").is_file()
+    assert (root / "cutout_cyg-a@2x.png").is_file()
+
+
+def test_render_cutout_draws_a_png_pair():
+    pngs = imf.render_cutout(
+        synthetic_cutout("cyg-a"), "cyg-a", 1788835440.0,
+        snr=8.1, ceiling_snr=9.0, meta={"cal_file": "cal_x.h5", "n_ant": 17},
+    )
+    assert set(pngs) == {"1x", "2x"}
+    for data in pngs.values():
+        assert data.startswith(b"\x89PNG\r\n\x1a\n")
+    assert len(pngs["2x"]) > len(pngs["1x"])

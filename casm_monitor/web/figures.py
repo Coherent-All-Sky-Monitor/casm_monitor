@@ -20,7 +20,8 @@ The SNAPs tree has one fewer path component than the Vis one (no ``ref``):
 ``store_root/figures/snaps/<set>/<kind>@{1x,2x}.png`` plus one
 ``manifest.json`` per ``<set>``. The Imaging tree (M4) is flatter still --
 ``store_root/figures/imaging/`` holds one manifest, the four products it names
-(``latest@{1x,2x}.png``, ``strip24h@{1x,2x}.png``, ``allsky24h.mp4``) and a
+(``latest@{1x,2x}.png``, ``strip24h@{1x,2x}.png``, ``allsky24h.mp4``), the
+per-source cutouts it lists (``cutout_<source>@{1x,2x}.png``) and a
 ``frames/<unix>@1x.png`` cache the scrub view browses through
 ``GET /api/imaging/history``.
 """
@@ -260,6 +261,13 @@ IMAGING_PRODUCTS: frozenset[str] = frozenset(
     {"latest@1x.png", "latest@2x.png", "strip24h@1x.png", "strip24h@2x.png", "allsky24h.mp4"}
 )
 IMAGING_FRAME_RE = re.compile(r"^frames/(\d{1,12})@1x\.png$")
+# The M4 per-source cutouts are not a fixed set of names (which sources are up
+# changes every pass), so they are whitelisted against the CURRENT MANIFEST's
+# own ``cutouts[].file_1x``/``file_2x`` strings -- exactly what
+# docs/api-imaging.md promises ("validated against the whitelist the collector
+# actually rendered ... not a glob of the filesystem"). The shape is pinned
+# first so a crafted name never reaches the manifest lookup as a path.
+IMAGING_CUTOUT_RE = re.compile(r"^cutout_[A-Za-z0-9_.-]+@(?:1x|2x)\.png$")
 _MEDIA_TYPES = {".png": "image/png", ".mp4": "video/mp4"}
 
 
@@ -269,8 +277,27 @@ def _imaging_root(settings: Settings) -> Path:
     )
 
 
+def _manifest_cutout_files(root: Path) -> set[str]:
+    """The cutout filenames the current manifest actually names."""
+    manifest = _read_imaging_manifest(root)
+    out: set[str] = set()
+    for cut in manifest.get("cutouts") or []:
+        for key in ("file_1x", "file_2x"):
+            value = cut.get(key)
+            if isinstance(value, str):
+                out.add(value)
+    return out
+
+
 def _validated_imaging_path(root: Path, filename: str) -> Path:
     if filename in IMAGING_PRODUCTS:
+        name = filename
+    elif IMAGING_CUTOUT_RE.fullmatch(filename):
+        if filename not in _manifest_cutout_files(root):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{filename} is not a cutout the current imaging manifest names",
+            )
         name = filename
     else:
         m = IMAGING_FRAME_RE.fullmatch(filename)
@@ -279,7 +306,8 @@ def _validated_imaging_path(root: Path, filename: str) -> Path:
                 status_code=400,
                 detail=(
                     "file must be one of "
-                    f"{'|'.join(sorted(IMAGING_PRODUCTS))} or frames/<unix>@1x.png"
+                    f"{'|'.join(sorted(IMAGING_PRODUCTS))}, a cutout_<source>@<1x|2x>.png "
+                    "the manifest names, or frames/<unix>@1x.png"
                 ),
             )
         name = f"frames/{m.group(1)}@1x.png"
@@ -290,6 +318,19 @@ def _validated_imaging_path(root: Path, filename: str) -> Path:
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"{name} has not been rendered yet")
     return path
+
+
+def _read_imaging_manifest(root: Path, *, required: bool = False) -> dict[str, Any]:
+    """The imaging manifest, or ``{}`` (404 when a route needs it to exist)."""
+    try:
+        return json.loads((root / "manifest.json").read_text())
+    except (OSError, ValueError) as exc:
+        if required:
+            raise HTTPException(
+                status_code=404,
+                detail="no imaging figures rendered yet (the render job may not have run)",
+            ) from exc
+        return {}
 
 
 def _imaging_frames(root: Path) -> list[int]:
@@ -311,15 +352,7 @@ def _build_imaging_router(settings: Settings) -> APIRouter:
 
     @router.get("/manifest")
     def manifest() -> dict[str, Any]:
-        root = _imaging_root(settings)
-        path = root / "manifest.json"
-        try:
-            return json.loads(path.read_text())
-        except (OSError, ValueError) as exc:
-            raise HTTPException(
-                status_code=404,
-                detail="no imaging figures rendered yet (the render job may not have run)",
-            ) from exc
+        return _read_imaging_manifest(_imaging_root(settings), required=True)
 
     # Declared after /manifest so the literal route wins; ``:path`` is what
     # lets a history frame's own ``frames/<unix>@1x.png`` arrive as one value.

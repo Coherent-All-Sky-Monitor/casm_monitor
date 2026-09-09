@@ -29,7 +29,10 @@ it is never written down here.)
 
 Cost, MEASURED 2026-09-09 (plan.md Architecture): 5 snapshots in 26 s at
 241 px / 17 antennas / ``freq_avg=32`` / 8 workers, peak RSS 142 MB, i.e.
-~5 s per integration. One integration is 137.44 s, so imaging every
+~5 s per integration (re-measured on the live deployed set the same day: 6
+snapshots in 17.3 s, 2.9 s per integration, which is what the cold-start
+budget in ``jobs/render_figures.py`` is sized against). A 5 deg / 51 px source
+cutout is 5.5 s and its PSF ceiling 0.1 s on the same set. One integration is 137.44 s, so imaging every
 integration is ~1 CPU-hour/day and a 64-integration catch-up pass is a few
 minutes, well inside the ``render_figures`` timeout.
 
@@ -45,6 +48,8 @@ allsky.altaz_to_lm` is imported rather than re-derived.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
 import time
@@ -110,9 +115,26 @@ MOVIE_MAX_FRAMES = 240
 MOVIE_FPS = 4
 MOVIE_NAME = "allsky24h"
 
+#: Per-source cutouts (docs/plan.md "3. Imaging": "per-source cutouts
+#: (``image_around_source``) around whichever of Sun/Cyg A/Cas A/Tau A is
+#: up"). A source is imaged when it is more than :data:`CUTOUT_MIN_ALT_DEG`
+#: above the horizon at the latest integration: below that the +-5 deg cutout
+#: runs into the horizon and the PSF ceiling is meaningless.
+CUTOUT_MIN_ALT_DEG = 10.0
+CUTOUT_ANG_MAX_DEG = 5.0
+CUTOUT_NPIX = 51
+CUTOUT_GRID = "lm"
+#: The SNR annulus ``image_around_source`` itself uses for this ``ang_max``
+#: (pipeline.py: ``0.4 * ang_max`` / ``0.85 * ang_max``); repeated here so the
+#: PSF ceiling is measured on exactly the same annulus as the image SNR it is
+#: compared against.
+CUTOUT_SNR_INNER_FRAC = 0.4
+CUTOUT_SNR_OUTER_FRAC = 0.85
+
 DPI_2X = 110
 DPI_1X = 55
 LATEST_IN = 7.0
+CUTOUT_IN = 4.2
 THUMB_IN = 0.62
 STRIP_HEIGHT_IN = 1.05
 
@@ -184,6 +206,36 @@ def imaging_config(settings: Settings) -> ImagingConfig:
         wired_antennas=tuple(sorted(wired)),
         antennas_source="deployed",
     )
+
+
+def config_fingerprint(config: ImagingConfig) -> str:
+    """Identity of the imaging configuration a cached frame was made with.
+
+    A frame cache keyed only by time silently mixes frames made with a
+    superseded cal or a different antenna set into the strip/movie while the
+    manifest advertises the new configuration (2026-09-09 review, finding 2).
+    The fingerprint is the sha256 of the deployed cal's PATH and its md5 (a
+    rebuilt product can reuse the same filename), the sorted deployed antenna
+    list, and the three imaging parameters that change what the pixels mean:
+    ``npix``, ``freq_avg``, ``min_baseline_m`` and the estimator.
+    """
+    md5 = hashlib.md5()
+    with open(config.cal_path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            md5.update(block)
+    payload = json.dumps(
+        {
+            "cal_path": str(config.cal_path),
+            "cal_md5": md5.hexdigest(),
+            "antennas": sorted(int(a) for a in config.antennas),
+            "npix": int(NPIX),
+            "freq_avg": int(FREQ_AVG),
+            "min_baseline_m": float(MIN_BASELINE_M),
+            "estimator": str(ESTIMATOR),
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 # -- time helpers ----------------------------------------------------------
@@ -282,6 +334,103 @@ def source_marks(ts: float, sources: tuple[str, ...] = SOURCES) -> list[dict[str
                 "up": bool(alt_deg > 0.0),
             }
         )
+    return out
+
+
+def image_cutout(
+    settings: Settings,
+    source: str,
+    ts: float,
+    *,
+    config: ImagingConfig | None = None,
+    workers: int = WORKERS,
+) -> dict[str, Any]:
+    """One source cutout around the integration at ``ts``.
+
+    Another thin wrapper, this time over
+    :func:`casm_imaging.imaging.pipeline.image_around_source` -- the house
+    entry point for calibrated imaging (README "the preferred entry point").
+    Every parameter is the M4 spec's: ``ang_max_deg=5``, ``npix=51``,
+    ``grid="lm"`` (the tangent-plane SIN grid, so a source at any altitude
+    images correctly -- Cyg A transits 3.5 deg from zenith at OVRO, where the
+    alt/az grid degenerates), ``freq_avg=32``, ``min_baseline_m=5``,
+    ``normalize_bandpass=True``, ``workers=8``, no RFI mask (full band plus
+    bandpass normalisation beats the static mask, README: SNR 8.2 vs 6.7).
+
+    The window is the single integration starting at ``ts``, so the cutout is
+    the same data the all-sky ``latest`` frame was made from.
+    """
+    from casm_imaging.imaging.pipeline import image_around_source
+
+    cfg = config or imaging_config(settings)
+    return image_around_source(
+        source,
+        cal_h5=str(cfg.cal_path),
+        time_start=_local_iso(ts),
+        time_end=_local_iso(ts + INTEGRATION_S),
+        inactive_antennas=tuple(cfg.inactive_antennas),
+        data_root=DATA_ROOT,
+        fmt=FMT,
+        time_tz=DATA_TZ,
+        rfi_mask_version=None,
+        min_baseline_m=MIN_BASELINE_M,
+        normalize_bandpass=NORMALIZE_BANDPASS,
+        freq_avg=FREQ_AVG,
+        ang_max_deg=CUTOUT_ANG_MAX_DEG,
+        npix=CUTOUT_NPIX,
+        grid=CUTOUT_GRID,
+        workers=int(workers),
+        show=False,
+        verbose=False,
+    )
+
+
+def psf_ceiling(result: dict[str, Any], *, workers: int = WORKERS) -> float:
+    """The dirty-beam SNR ceiling for an :func:`image_cutout` result.
+
+    :func:`casm_imaging.imaging.psf_for_result` replays the exact geometry the
+    imager recorded (baselines after the length cut, surviving frequencies,
+    source track, grid) on a noise-free unit source, and
+    :func:`casm_imaging.imaging.compute_image_snr` measures it on the same
+    annulus the image's own SNR used -- so "measured 8.1 against a ceiling of
+    9.0" means the image is within a whisker of sidelobe-limited.
+    """
+    from casm_imaging.imaging import compute_image_snr, psf_for_result
+
+    psf, daz, dalt = psf_for_result(result, workers=int(workers), verbose=False)
+    ang_max = float(result["geometry"]["ang_max_deg"])
+    ceiling = compute_image_snr(
+        psf,
+        daz,
+        dalt,
+        inner_radius_deg=CUTOUT_SNR_INNER_FRAC * ang_max,
+        outer_radius_deg=CUTOUT_SNR_OUTER_FRAC * ang_max,
+    )
+    return float(ceiling["snr"])
+
+
+def movie_selection(values: list[Any], max_frames: int = MOVIE_MAX_FRAMES) -> list[Any]:
+    """At most ``max_frames`` items, evenly spaced, BOTH endpoints kept.
+
+    Applied to TIMESTAMPS before any npz is loaded (2026-09-09 review,
+    finding 9): the previous ``[::step]`` subsample ran after every frame in
+    the window was already in memory, and could drop the newest frame -- the
+    one the movie's last second is supposed to show.
+    """
+    n = len(values)
+    if max_frames <= 0 or n == 0:
+        return []
+    if n <= max_frames:
+        return list(values)
+    if max_frames == 1:
+        return [values[-1]]
+    idx = [int(round(k * (n - 1) / (max_frames - 1))) for k in range(max_frames)]
+    out: list[Any] = []
+    seen: set[int] = set()
+    for i in idx:
+        if i not in seen:
+            seen.add(i)
+            out.append(values[i])
     return out
 
 
@@ -451,6 +600,82 @@ def render_strip(snapshots: list[dict[str, Any]]) -> dict[str, bytes]:
     return render_pngs(fig, DPI_2X, DPI_1X, facecolor=PAPER)
 
 
+def render_cutout(
+    result: dict[str, Any],
+    source: str,
+    ts: float,
+    *,
+    snr: float | None = None,
+    ceiling_snr: float | None = None,
+    meta: dict[str, Any] | None = None,
+) -> dict[str, bytes]:
+    """One source cutout, ``{"1x": ..., "2x": ...}``, in the house style.
+
+    The ``grid="lm"`` image is the linear estimator (signed, with negative
+    sidelobes), so the colormap is diverging and symmetric about zero -- the
+    same choice ``image_around_source``'s own plot makes for
+    ``estimator="real"`` -- while an ``abs`` result keeps viridis. Crosshairs
+    mark the source position; the annotation carries the measured SNR against
+    the PSF ceiling, which is the whole point of the panel.
+    """
+    meta = meta or {}
+    image = np.asarray(result["image"], dtype=float)
+    daz = np.asarray(result["daz_deg"], dtype=float)
+    dalt = np.asarray(result["dalt_deg"], dtype=float)
+    estimator = str((result.get("geometry") or {}).get("estimator") or "real")
+
+    fig = Figure(figsize=(CUTOUT_IN, CUTOUT_IN + 0.45), facecolor=PAPER)
+    FigureCanvasAgg(fig)
+    ax = fig.add_axes([0.13, 0.10, 0.72, 0.74])
+    cax = fig.add_axes([0.875, 0.14, 0.025, 0.63])
+    extent = [float(daz[0]), float(daz[-1]), float(dalt[0]), float(dalt[-1])]
+    finite = np.isfinite(image)
+    if estimator == "real":
+        vmax = float(np.nanmax(np.abs(image))) if finite.any() else 1.0
+        im = ax.imshow(
+            image, origin="lower", cmap="RdBu_r", vmin=-vmax, vmax=vmax,
+            extent=extent, interpolation="nearest", aspect="equal",
+        )
+    else:
+        vmax = float(np.nanmax(image)) if finite.any() else 1.0
+        im = ax.imshow(
+            image, origin="lower", cmap=_viridis(), vmin=0.0, vmax=vmax or 1.0,
+            extent=extent, interpolation="nearest", aspect="equal",
+        )
+    ax.axhline(0.0, color=MUTED, lw=0.5, alpha=0.6)
+    ax.axvline(0.0, color=MUTED, lw=0.5, alpha=0.6)
+    ax.set_xlabel("Δl (deg, toward increasing az)", color=MUTED, fontsize=8)
+    ax.set_ylabel("Δm (deg, toward increasing alt)", color=MUTED, fontsize=8)
+    ax.tick_params(labelsize=7, colors=MUTED, length=2)
+    for side in ax.spines.values():
+        side.set_color(HAIRLINE)
+
+    bar = fig.colorbar(im, cax=cax)
+    fmt = ScalarFormatter(useMathText=True)
+    fmt.set_powerlimits((-2, 3))
+    bar.ax.yaxis.set_major_formatter(fmt)
+    bar.ax.yaxis.get_offset_text().set(color=MUTED, fontsize=7)
+    bar.ax.tick_params(labelsize=7, colors=MUTED, length=2)
+    bar.outline.set_visible(False)
+
+    # Two lines, not one: at 1x the panel is ~230 px wide and a single line
+    # carrying source, time, SNR, cal and antenna count runs off the edge.
+    head = f"{source} cutout {utc_iso(float(ts))}"
+    if snr is not None:
+        head += f"  ·  SNR {float(snr):.1f}" + (
+            f" of {float(ceiling_snr):.1f} PSF ceiling" if ceiling_snr is not None else ""
+        )
+    tail = []
+    if meta.get("cal_file"):
+        tail.append(f"cal {meta['cal_file']}")
+    if meta.get("n_ant"):
+        tail.append(f"{int(meta['n_ant'])} antennas")
+    fig.text(0.02, 0.988, head, color=MUTED, fontsize=8, va="top")
+    if tail:
+        fig.text(0.02, 0.938, "  ·  ".join(tail), color=MUTED, fontsize=7, va="top")
+    return render_pngs(fig, DPI_2X, DPI_1X, facecolor=PAPER)
+
+
 def render_frame(snapshot: dict[str, Any]) -> bytes:
     """One small per-integration PNG for the scrub view (1x only).
 
@@ -520,20 +745,27 @@ def render_movie(
     # resolved binary so the writer cannot fall back to the GIF branch.
     matplotlib.rcParams["animation.ffmpeg_path"] = exe
 
-    step = max(1, int(np.ceil(len(snapshots) / MOVIE_MAX_FRAMES)))
-    frames = list(snapshots)[::step]
+    # The caller (jobs/render_figures.py) already selects at most
+    # MOVIE_MAX_FRAMES TIMESTAMPS before loading a single npz; this is the
+    # same selection applied defensively, so calling render_movie directly
+    # with a whole day of snapshots still cannot draw 629 frames.
+    frames = movie_selection(list(snapshots), MOVIE_MAX_FRAMES)
     out = render_allsky_movie(frames, Path(outdir) / MOVIE_NAME, fps=int(fps))
     out = Path(out)
     return out if out.suffix == ".mp4" and out.is_file() else None
 
 
 __all__ = [
+    "CUTOUT_ANG_MAX_DEG",
+    "CUTOUT_MIN_ALT_DEG",
+    "CUTOUT_NPIX",
     "DPI_1X",
     "DPI_2X",
     "EVERY_MINUTES",
     "FRAME_RETENTION_DAYS",
     "INTEGRATION_S",
     "MOVIE_FPS",
+    "MOVIE_MAX_FRAMES",
     "MOVIE_NAME",
     "SOURCES",
     "STRIP_MAX",
@@ -542,11 +774,16 @@ __all__ = [
     "WORKERS",
     "ImagingConfig",
     "ImagingUnavailable",
+    "config_fingerprint",
     "ffmpeg_available",
     "ffmpeg_path",
+    "image_cutout",
     "image_window",
     "imaging_config",
+    "movie_selection",
     "parse_utc",
+    "psf_ceiling",
+    "render_cutout",
     "render_frame",
     "render_latest",
     "render_movie",

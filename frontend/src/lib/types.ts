@@ -382,8 +382,22 @@ export type ImagingSourceName = "sun" | "cyg-a" | "cas-a" | "tau-a";
 
 export interface ImagingLatest {
   ts: string;
+  /** rendered time minus the latest imaged integration, seconds. */
+  lag_s?: number;
   file_1x: string;
   file_2x: string;
+}
+
+/** One per-source cutout (`image_around_source`) of the latest integration,
+ * for every source more than 10 deg above the horizon, highest first. */
+export interface ImagingCutout {
+  source: ImagingSourceName;
+  alt_deg: number;
+  az_deg: number;
+  file_1x: string;
+  file_2x: string;
+  snr: number;
+  ceiling_snr: number | null;
 }
 
 export interface ImagingStrip {
@@ -414,7 +428,9 @@ export interface ImagingManifest {
   strip: ImagingStrip;
   movie: ImagingMovie;
   sources: ImagingSourceInfo[];
+  cutouts: ImagingCutout[];
   psf_ceiling_snr: number | null;
+  config_fingerprint?: string;
 }
 
 export interface ImagingHistoryFrame {
