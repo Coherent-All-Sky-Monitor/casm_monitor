@@ -9,7 +9,7 @@ strings live side by side).
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS scalars (
@@ -94,6 +94,28 @@ CREATE TABLE IF NOT EXISTS kafka_row_map (
     ts         REAL NOT NULL,
     source     TEXT               -- json: obs, file index, n inputs, thresholds
 );
+
+-- Audit trail of weights uploads performed from the Calibration tab (M3).
+-- One row per deploy_upload job that actually ran the deploy tool, written
+-- whatever the exit code was: the row is the record that a human clicked
+-- Upload, so a failed upload must leave one too
+-- (casm-wiki decisions/2026-09-09-monitor-upload-button.md).
+CREATE TABLE IF NOT EXISTS uploads (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts            REAL NOT NULL,
+    build_tag     TEXT NOT NULL,
+    job_id        INTEGER,
+    note          TEXT,           -- operator's note from the confirm dialog
+    md5s          TEXT,           -- json {filename: md5} of the staged dada files
+    command       TEXT,           -- json array: the exact argv that was run
+    exit_code     INTEGER,
+    output_tail   TEXT,
+    product_id    TEXT,           -- weights registry product id, when known
+    save_defaults INTEGER NOT NULL DEFAULT 0,
+    scale         INTEGER,
+    ib_scale      INTEGER
+);
+CREATE INDEX IF NOT EXISTS uploads_tag_ts ON uploads (build_tag, ts);
 
 CREATE TABLE IF NOT EXISTS store_meta (
     key   TEXT PRIMARY KEY,

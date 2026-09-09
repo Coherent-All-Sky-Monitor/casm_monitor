@@ -3,6 +3,15 @@
 
 import { emitError } from "./toast";
 import type {
+  CalBuildAcceptedResponse,
+  CalBuildDetailResponse,
+  CalBuildRequest,
+  CalBuildsResponse,
+  CalDefaultsResponse,
+  CalStageAcceptedResponse,
+  CalStatusResponse,
+  CalUploadAcceptedResponse,
+  CalUploadRequest,
   EventRecord,
   EventsResponse,
   HealthResponse,
@@ -423,6 +432,94 @@ export function getSearchFunnel(t0: string, t1: string, stepS?: number): Promise
   const params = new URLSearchParams({ t0, t1 });
   if (stepS !== undefined) params.set("step_s", String(stepS));
   return request<SearchFunnelResponse>(`/api/search/funnel?${params.toString()}`);
+}
+
+// --- Calibration (M3) ---------------------------------------------------
+// See docs/api-cal.md for the full contract.
+
+export function getCalDefaults(date: string): Promise<CalDefaultsResponse> {
+  const params = new URLSearchParams({ date });
+  return request<CalDefaultsResponse>(`/api/cal/defaults?${params.toString()}`);
+}
+
+export function getCalBuilds(): Promise<CalBuildsResponse> {
+  return request<CalBuildsResponse>("/api/cal/builds");
+}
+
+export function getCalBuild(tag: string): Promise<CalBuildDetailResponse> {
+  return request<CalBuildDetailResponse>(`/api/cal/builds/${encodeURIComponent(tag)}`);
+}
+
+export function getCalStatus(): Promise<CalStatusResponse> {
+  return request<CalStatusResponse>("/api/cal/status");
+}
+
+export function calFigureUrl(tag: string, name: string): string {
+  return `/api/cal/builds/${encodeURIComponent(tag)}/figs/${encodeURIComponent(name)}.png`;
+}
+
+export function calLogUrl(tag: string): string {
+  return `/api/cal/builds/${encodeURIComponent(tag)}/log`;
+}
+
+export function calNotebookUrl(tag: string): string {
+  return `/api/cal/builds/${encodeURIComponent(tag)}/notebook`;
+}
+
+export function getCalLog(tag: string): Promise<string> {
+  return fetch(calLogUrl(tag)).then((res) => {
+    if (!res.ok) throw new ApiError(`${calLogUrl(tag)} failed: ${res.status}`, res.status);
+    return res.text();
+  });
+}
+
+/** A structured result for the three write actions below: the caller (the
+ * Calibration page) renders `detail` inline as prose rather than a generic
+ * toast, since a 409/403 here is an expected, meaningful outcome (tag
+ * collision, build running, uploads disabled, not staged) — same pattern as
+ * `postSnapBoardRead`'s 429 handling. */
+export interface CalActionResult<T> {
+  ok: boolean;
+  status: number;
+  body: T | null;
+  detail: string | null;
+}
+
+async function postJson<T>(path: string, body: unknown): Promise<CalActionResult<T>> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    });
+  } catch (err) {
+    const message = `network error contacting ${path}: ${(err as Error).message}`;
+    emitError(message);
+    return { ok: false, status: 0, body: null, detail: message };
+  }
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    const detail =
+      (json as { detail?: string } | null)?.detail ?? `${path} failed: ${res.status} ${res.statusText}`;
+    return { ok: false, status: res.status, body: null, detail };
+  }
+  return { ok: true, status: res.status, body: json as T, detail: null };
+}
+
+export function postCalBuild(body: CalBuildRequest): Promise<CalActionResult<CalBuildAcceptedResponse>> {
+  return postJson<CalBuildAcceptedResponse>("/api/cal/build", body);
+}
+
+export function postCalStage(tag: string): Promise<CalActionResult<CalStageAcceptedResponse>> {
+  return postJson<CalStageAcceptedResponse>(`/api/cal/builds/${encodeURIComponent(tag)}/stage`, {});
+}
+
+export function postCalUpload(
+  tag: string,
+  body: CalUploadRequest,
+): Promise<CalActionResult<CalUploadAcceptedResponse>> {
+  return postJson<CalUploadAcceptedResponse>(`/api/cal/builds/${encodeURIComponent(tag)}/upload`, body);
 }
 
 export function statusWebSocketUrl(): string {

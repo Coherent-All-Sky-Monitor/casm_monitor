@@ -544,6 +544,67 @@ class Store:
                 raise
         return job_id, refusal
 
+    # -- weights upload audit -------------------------------------------
+    def add_upload(
+        self,
+        build_tag: str,
+        *,
+        job_id: int | None = None,
+        note: str | None = None,
+        md5s: dict[str, str] | None = None,
+        command: Sequence[str] | None = None,
+        exit_code: int | None = None,
+        output_tail: str | None = None,
+        product_id: str | None = None,
+        save_defaults: bool = False,
+        scale: int | None = None,
+        ib_scale: int | None = None,
+        ts: float | None = None,
+    ) -> int:
+        """Record one Upload click (see the ``uploads`` table comment).
+
+        Written whether the deploy tool succeeded or not: the question the row
+        answers is "who pushed which bytes, when, and what came back", and a
+        failed push is exactly as interesting as a successful one.
+        """
+        cur = self.execute(
+            "INSERT INTO uploads (ts, build_tag, job_id, note, md5s, command, exit_code, "
+            "output_tail, product_id, save_defaults, scale, ib_scale) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                time.time() if ts is None else float(ts),
+                str(build_tag),
+                None if job_id is None else int(job_id),
+                note,
+                _jdump(md5s or {}),
+                _jdump(list(command or [])),
+                None if exit_code is None else int(exit_code),
+                output_tail,
+                product_id,
+                1 if save_defaults else 0,
+                None if scale is None else int(scale),
+                None if ib_scale is None else int(ib_scale),
+            ),
+        )
+        return int(cur.lastrowid or 0)
+
+    def uploads(self, *, build_tag: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM uploads"
+        args: list[Any] = []
+        if build_tag:
+            sql += " WHERE build_tag = ?"
+            args.append(build_tag)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(int(limit))
+        rows = []
+        for r in self.query(sql, args):
+            row = dict(r)
+            row["md5s"] = _jload(row.get("md5s")) or {}
+            row["command"] = _jload(row.get("command")) or []
+            row["save_defaults"] = bool(row.get("save_defaults"))
+            rows.append(row)
+        return rows
+
     def get_job(self, job_id: int) -> dict[str, Any] | None:
         rows = self.query("SELECT * FROM jobs WHERE id = ?", (job_id,))
         return self._job_row(rows[0]) if rows else None

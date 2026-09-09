@@ -572,3 +572,158 @@ select {
   display: block;
   margin-bottom: 8px;
 }
+
+/* --- Calibration tab ----------------------------------------------------- */
+
+.cal-section {
+  margin-bottom: var(--section-gap);
+  max-width: 1100px;
+}
+
+.cal-section__title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.cal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.cal-field {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cal-field__label {
+  color: var(--muted);
+  min-width: 110px;
+}
+
+.cal-field input[type="text"],
+.cal-field input[type="date"],
+.cal-field input[type="datetime-local"],
+.cal-field select {
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  padding: 0 0 2px;
+  color: var(--ink);
+}
+
+.cal-field input:focus,
+.cal-field select:focus {
+  outline: none;
+  border-bottom-color: var(--signal);
+}
+
+.antenna-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  max-width: 720px;
+}
+
+.antenna-toggle {
+  background: none;
+  border: none;
+  padding: 0 0 1px;
+  border-bottom: 1px solid transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.antenna-toggle.on {
+  color: var(--ink);
+  border-bottom-color: var(--signal);
+}
+
+.antenna-toggle:hover {
+  color: var(--ink);
+}
+
+.cal-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.cal-table th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--faint);
+  padding: 0 24px 6px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.cal-table td {
+  padding: 5px 24px 5px 0;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: baseline;
+  color: var(--muted);
+}
+
+.cal-table tr.clickable {
+  cursor: pointer;
+}
+
+.cal-table tr.clickable:hover td {
+  color: var(--ink);
+}
+
+.cal-table td.ink {
+  color: var(--ink);
+}
+
+.cal-table td.ok {
+  color: var(--ink);
+}
+
+.cal-table td.no {
+  color: var(--faint);
+}
+
+.code-block {
+  background: none;
+  border: 1px solid var(--hairline);
+  padding: 8px 10px;
+  margin: 6px 0 0;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.checks-list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+}
+
+.checks-list li {
+  padding: 2px 0;
+}
+
+.checks-list .ok {
+  color: var(--ink);
+}
+
+.checks-list .fail {
+  color: var(--alert);
+}
+
+.text-button--alert {
+  color: var(--alert);
+  border-bottom-color: var(--hairline);
+}
+
+.text-button--alert:hover:not(:disabled) {
+  border-bottom-color: var(--alert);
+}

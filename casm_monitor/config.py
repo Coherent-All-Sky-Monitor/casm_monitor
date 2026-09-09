@@ -10,6 +10,13 @@ service at a scratch store without editing the file:
     CASM_MONITOR_WEB_PORT      web.port
     CASM_MONITOR_ALLOW_UPLOAD  allow_upload ("1"/"true" -> True)
 
+The Calibration tab's keys live under ``cal:`` (sources_enabled, window_half_min,
+static_default, allow_upload). ``cal.allow_upload`` and the older top-level
+``allow_upload`` mean the same thing; the ``cal`` section wins, and
+CASM_MONITOR_ALLOW_UPLOAD wins over both. Both must be true for the weights
+upload handler to run anything (casm-wiki
+``decisions/2026-09-09-monitor-upload-button.md``).
+
 Secrets are never stored in the repo: the redis password and the LMC port come
 from medusa.cfg at runtime (:func:`read_medusa_cfg`).
 """
@@ -116,6 +123,17 @@ class Settings:
     shard_ttl_days: dict[str, float] = field(
         default_factory=lambda: dict(DEFAULT_SHARD_TTL_DAYS)
     )
+    # Calibration tab (M3). ``cal_sources_enabled`` is the ONLY gate on which
+    # calibrator a build may solve on: the Sun is the only source the array is
+    # sensitive enough to solve on today (operator 2026-09-08), the rest are
+    # listed by the API as disabled until one config flag enables them.
+    cal_sources_enabled: tuple[str, ...] = ("sun",)
+    cal_window_half_min: float = 30.0
+    # Off-source window used to build the static template, as HH:MM-HH:MM on the
+    # SAME UTC date as the solve (03:00 UTC is the local night before). This is
+    # only a DEFAULT: the wiki wants the quiet window re-derived per epoch
+    # (weights-verification.md, static-amplitude trap).
+    cal_static_default: str = "03:00-03:30"
     allow_upload: bool = False
     config_path: Path | None = None
 
@@ -131,6 +149,19 @@ class Settings:
     @property
     def jobs_root(self) -> Path:
         return self.store_root / "jobs"
+
+    @property
+    def cal_builds_root(self) -> Path:
+        """Where cal_build jobs write their products (inside the store root)."""
+        return self.store_root / "cal_builds"
+
+    @property
+    def layout_csv(self) -> Path:
+        """The ONE antenna layout the whole service reads: the ``current``
+        symlink (never the stale antenna_layout_current.csv). Same file the
+        SNAPs tab and the cal driver use, so a ``casm-layout apply`` is picked
+        up everywhere at once."""
+        return self.snap_layout_csv
 
     def cadence(self, name: str, default: float = 60.0) -> float:
         return float(self.cadences.get(name, DEFAULT_CADENCES.get(name, default)))
@@ -168,6 +199,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
     hosts = raw.get("hosts") or {}
     snap = raw.get("snap") or {}
     vis = raw.get("vis") or {}
+    cal = raw.get("cal") or {}
     # ``antenna_boards`` is either ``{from_csv: <path>}`` (the normal case: the
     # boards come from the SNAP map at runtime) or an explicit list of IPs used
     # to override it. Only the second form ends up in ``snap_antenna_boards``.
@@ -238,7 +270,17 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
             **DEFAULT_SHARD_TTL_DAYS,
             **{str(k): float(v) for k, v in (raw.get("shard_ttl_days") or {}).items()},
         },
-        allow_upload=_as_bool(raw.get("allow_upload", defaults.allow_upload)),
+        cal_sources_enabled=tuple(
+            str(x).strip().lower()
+            for x in (cal.get("sources_enabled") or defaults.cal_sources_enabled)
+        ),
+        cal_window_half_min=float(cal.get("window_half_min", defaults.cal_window_half_min)),
+        cal_static_default=str(cal.get("static_default", defaults.cal_static_default)),
+        # ``cal.allow_upload`` is the M3 spelling; the top-level key is the M0
+        # one. Either being false is enough to keep the upload handler shut.
+        allow_upload=_as_bool(
+            cal.get("allow_upload", raw.get("allow_upload", defaults.allow_upload))
+        ),
         config_path=p if p.is_file() else None,
     )
 

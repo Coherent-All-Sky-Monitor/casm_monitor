@@ -30,6 +30,7 @@ from .. import __version__
 from ..config import Settings, load_settings
 from ..store import Store
 from ..util import iso, parse_iso
+from .cal import build_router as build_cal_router
 from .snaps import build_router as build_snaps_router
 from .snapread import build_router as build_snapread_router
 from .status import build_status, collect_age_s
@@ -133,6 +134,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Visibilities tab (M2): the wired-input sub-matrix the vis collector caches
     # (spectra, matrices, waterfalls, coherence). Read-only handle.
     app.include_router(build_vis_router(settings, reader))
+
+    # Calibration tab (M3): defaults, builds, the staged dry run and the gated
+    # upload. Read handle for the GETs, the app's single write handle for the
+    # three POSTs that insert a job row.
+    app.include_router(build_cal_router(reader, writer, settings))
     app.include_router(build_search_router(reader, settings))
     app.include_router(build_figures_router(settings))
 

@@ -119,6 +119,25 @@ shard_ttl_days:
   vis_full: 3
   vis_avg8: 60
 
-# M3 gate: the weights upload button stays disabled unless this is true AND
-# CASM_MONITOR_ALLOW_UPLOAD=1 is set in the unit environment.
+# Calibration tab (M3). The solve source is the Sun and only the Sun today
+# (operator 2026-09-08): the other calibrators are listed by
+# /api/cal/defaults as disabled until they are added here, and a build POST
+# naming one is refused with 400. window_half_min is the half-width of the
+# default solve window around the source's altitude maximum; static_default is
+# the off-source window (HH:MM-HH:MM, SAME UTC date, i.e. the local night
+# before) used for the static template, matching the 2026-08-31 and 2026-09-04
+# products. That window is a starting point, not a standing truth: the wiki
+# wants the quiet window re-derived each epoch (weights-verification.md).
+cal:
+  sources_enabled:
+    - sun
+  window_half_min: 30
+  static_default: "03:00-03:30"
+  # M3 gate: the weights Upload button refuses unless this is true AND
+  # CASM_MONITOR_ALLOW_UPLOAD=1 is set in the unit environment. Decision
+  # record: casm-wiki decisions/2026-09-09-monitor-upload-button.md.
+  allow_upload: false
+
+# The M0 spelling of cal.allow_upload, kept so an older config still gates the
+# upload. The cal section wins when both are present.
 allow_upload: false

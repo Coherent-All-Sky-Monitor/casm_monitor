@@ -374,3 +374,174 @@ export interface SnapFigureListResponse {
   sets: SnapFigureInputSet[];
   combos: SnapFigureListCombo[];
 }
+
+// Calibration tab (M3). Kept in sync by hand with docs/api-cal.md.
+
+export interface CalSourceInfo {
+  name: string;
+  enabled: boolean;
+}
+
+export interface CalDeployedInfo {
+  cal_file: string;
+  weights_file: string;
+  scale: number;
+  ib_scale: number;
+  product_id: string;
+}
+
+export interface CalLayoutInfo {
+  path: string;
+  sha256: string;
+  n_bf: number;
+  n_wired: number;
+}
+
+export interface CalDefaultsResponse {
+  date: string;
+  source: string;
+  sources: CalSourceInfo[];
+  sun_max_utc: string;
+  source_window: [string, string];
+  window_offset_min: number;
+  static_window: [string, string] | null;
+  static_note: string;
+  antennas: number[];
+  antennas_note: string;
+  ref_ant: number;
+  tag: string;
+  deployed: CalDeployedInfo;
+  layout: CalLayoutInfo;
+}
+
+export interface CalBuildRequest {
+  source: string;
+  source_window: [string, string];
+  static_window: [string, string] | null;
+  antennas: number[];
+  ref_ant: number;
+  tag: string;
+}
+
+export interface CalBuildAcceptedResponse {
+  job_id: number;
+  tag: string;
+}
+
+export type CalBuildState = "queued" | "running" | "done" | "failed" | string;
+
+export interface CalBuildListItem {
+  tag: string;
+  state: CalBuildState;
+  created: string;
+  source: string;
+  source_window: [string, string];
+  n_ant: number;
+  rank1_median: number | null;
+  has_weights: boolean;
+  staged: boolean;
+  uploaded: boolean;
+}
+
+export interface CalBuildsResponse {
+  builds: CalBuildListItem[];
+}
+
+export interface CalBuildParams {
+  source: string;
+  source_window: [string, string];
+  static_window: [string, string] | null;
+  antennas: number[];
+  ref_ant: number;
+}
+
+export interface CalFigureRef {
+  name: string;
+  title: string;
+}
+
+export interface CalBuildSummary {
+  cal_h5: string;
+  weights_h5: string;
+  ib_h5: string;
+  rank1_median: number | null;
+  subband_occupancy: number[];
+  pointing_fit: Record<string, number>;
+  delay_fit_rms_deg: number;
+  beam_check: Record<string, number>;
+  figs: CalFigureRef[];
+  notebook: boolean;
+  wall_s: number;
+  peak_rss_mb: number;
+}
+
+export interface CalStageFile {
+  name: string;
+  md5: string;
+  scale: number;
+}
+
+export interface CalStageCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface CalStageInfo {
+  staged_utc: string;
+  files: CalStageFile[];
+  command: string;
+  checks: CalStageCheck[];
+}
+
+export interface CalUploadRecord {
+  ts: string;
+  exit_code: number;
+  command: string;
+  note: string;
+  registry_id: string;
+}
+
+export interface CalBuildDetailResponse {
+  tag: string;
+  state: CalBuildState;
+  params: CalBuildParams;
+  summary: CalBuildSummary | null;
+  stage: CalStageInfo | null;
+  uploads: CalUploadRecord[];
+}
+
+export interface CalStageAcceptedResponse {
+  job_id: number;
+}
+
+export interface CalUploadRequest {
+  confirm_tag: string;
+  save_defaults: boolean;
+  note: string;
+}
+
+export interface CalUploadAcceptedResponse {
+  job_id: number;
+}
+
+export interface CalLedgerRow {
+  date: string;
+  weights_file: string;
+  cal_file: string;
+  scale: number;
+  ib_scale: number;
+}
+
+export interface CalActiveJob {
+  id: string | number;
+  kind: string;
+  state: JobState;
+}
+
+export interface CalStatusResponse {
+  allow_upload: boolean;
+  casm_track_running: boolean;
+  ledger_row: CalLedgerRow | null;
+  active_job: CalActiveJob | null;
+}

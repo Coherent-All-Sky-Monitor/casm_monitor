@@ -1,12 +1,17 @@
 """Job kinds registry.
 
 A job kind is a pure function of its params that runs inside the job
-subprocess, prints to its log and returns a JSON-serialisable result. M0 ships
-one kind, ``noop``, which exists so the whole queue/lease/cancel/timeout path
-can be tested end to end; M3/M4 add the calibration and imaging kinds here.
+subprocess, prints to its log and returns a JSON-serialisable result. M0 shipped
+``noop``, which exists so the whole queue/lease/cancel/timeout path can be
+tested end to end; M1 added ``snap_read`` and ``render_figures``; M3 adds
+``cal_build``, ``deploy_stage`` and ``deploy_upload``.
 
 Nothing in this registry may touch the hardware: no SNAP ``program_*``,
-``health_sweep``, ``set_coeffs``, ``--do_sync``, and no medusa restart.
+``health_sweep``, ``set_coeffs``, ``--do_sync``, and no medusa restart. The one
+path that writes to the live pipeline is ``deploy_upload``, which pushes DADA
+payloads to the beamformer FIFOs and only runs behind the full safeguard list
+in :mod:`casm_monitor.jobs.deploy` (casm-wiki
+``decisions/2026-09-09-monitor-upload-button.md``).
 """
 
 from __future__ import annotations
@@ -55,6 +60,27 @@ def _render_figures(params: dict[str, Any]) -> dict[str, Any]:
     return run_render_figures(params)
 
 
+def _cal_build(params: dict[str, Any]) -> dict[str, Any]:
+    """One canonical cal + weights product through the driver (M3)."""
+    from .cal_build import run as run_cal_build
+
+    return run_cal_build(params)
+
+
+def _deploy_stage(params: dict[str, Any]) -> dict[str, Any]:
+    """Dry-run deploy of a build into its own stage dir (no network side effects)."""
+    from .deploy import run_stage
+
+    return run_stage(params)
+
+
+def _deploy_upload(params: dict[str, Any]) -> dict[str, Any]:
+    """The gated live upload; refuses unless every safeguard holds."""
+    from .deploy import run_upload
+
+    return run_upload(params)
+
+
 def _snap_read(params: dict[str, Any]) -> dict[str, Any]:
     """One serialized read-only pass over the SNAP boards through zapdos.
 
@@ -82,6 +108,42 @@ KINDS: dict[str, JobKind] = {
         description=(
             "read-only SNAP board read via zapdos (spectra, ADC stats, EQ, PPS); "
             'params {"ips": [...]|null, "reason": "scheduled"|"manual"}'
+        ),
+    ),
+    "cal_build": JobKind(
+        name="cal_build",
+        run=_cal_build,
+        # A 47-integration solve plus the diagnostics, the Cyg A beam check and
+        # an executed notebook. An hour is generous against the ~10 min the
+        # 18-antenna one-hour window measures at, and the driver aborts long
+        # before that on a bad window.
+        timeout_s=3600.0,
+        # A solve materialises ~9.5 GB through casm_io; 64 GB is well above the
+        # measured peak and well under the worker's 256G cgroup, so a regression
+        # dies as a failed job instead of an OOM on the node.
+        address_space_limit_bytes=64 * 1024 * 1024 * 1024,
+        description=(
+            "canonical cal + 512-beam exact-grid weights via "
+            "bf_weights_generator.make_cal_and_weights; params {source, source_window, "
+            "static_window, antennas, ref_ant, tag, prev_cal_path}"
+        ),
+    ),
+    "deploy_stage": JobKind(
+        name="deploy_stage",
+        run=_deploy_stage,
+        timeout_s=900.0,
+        description=(
+            "dry-run deploy_bf_weights.py (no --upload) into the build's stage dir, "
+            'record md5s + the upload command; params {"build_tag": ...}'
+        ),
+    ),
+    "deploy_upload": JobKind(
+        name="deploy_upload",
+        run=_deploy_upload,
+        timeout_s=900.0,
+        description=(
+            "the gated live weights upload (human click only); params "
+            '{"build_tag", "confirm_tag", "save_defaults", "note"}'
         ),
     ),
     "render_figures": JobKind(
