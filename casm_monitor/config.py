@@ -45,6 +45,8 @@ DEFAULT_CADENCES: dict[str, float] = {
     "kafka_bp_frame": 30.0,  # frame cadence used to grade the status strip
     "snapread": 60.0,
     "store": 300.0,
+    # Visibilities server-rendered figures (matrix/spectra/autos PNGs).
+    "figures": 1800.0,
 }
 
 

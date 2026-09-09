@@ -89,9 +89,22 @@ function baseAmp(i: number, j: number, f: number, tPhase: number): number {
   return (i === j ? 20 : 4) + 3 * drift;
 }
 
-/** Baseline (2, 5) carries an uncorrected-delay sawtooth for the phase demo. */
+/** Baseline (2, 5) carries an uncorrected-delay sawtooth for the phase demo
+ * (a linear slope in frequency, roughly steady in time in a waterfall). */
 function isDelayDemo(i: number, j: number): boolean {
   return i === 2 && j === 5;
+}
+
+/** Baseline (1, 8) carries a drifting fringe for the waterfall demo:
+ * near-flat across frequency but a fast, steady phase slope in time, i.e.
+ * horizontal stripes marching across the waterfall (waterfalls | spectra
+ * matrix, `?mock=1`). */
+function isFringeDemo(i: number, j: number): boolean {
+  return i === 1 && j === 8;
+}
+
+function wrapPi(x: number): number {
+  return (((x % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
 }
 
 function quantityValue(
@@ -112,7 +125,12 @@ function quantityValue(
     if (isDelayDemo(i, j)) {
       // A linear slope wrapped to (-pi, pi]: an uncorrected delay sawtooth.
       const slope = 0.9; // rad per MHz
-      rad = (((f * slope + tPhase) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
+      rad = wrapPi(f * slope + tPhase);
+    } else if (isFringeDemo(i, j)) {
+      // A fast, near-frequency-independent phase rate: a fringe drifting in
+      // time (horizontal stripes marching across a time-vs-freq waterfall).
+      const fringeRateRadPerTUnit = 3.2;
+      rad = wrapPi(tPhase * fringeRateRadPerTUnit + 0.05 * (f - 440));
     } else {
       rad = i === j ? 0 : 0.4 * Math.sin(f / 30 + i - j + tPhase * 0.1);
     }

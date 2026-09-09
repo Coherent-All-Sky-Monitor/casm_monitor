@@ -258,6 +258,7 @@ def test_default_collector_set_names(settings):
         "snapread",
         "vis",
         "search",
+        "figures",
         "store",
     ]
 

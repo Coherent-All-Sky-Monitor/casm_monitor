@@ -4,6 +4,7 @@ import { isValidDateInput } from "../lib/timeRange";
 
 const PRESETS = [
   { value: "1h", label: "1h" },
+  { value: "2h", label: "2h" },
   { value: "6h", label: "6h" },
   { value: "24h", label: "24h" },
   { value: "7d", label: "7d" },

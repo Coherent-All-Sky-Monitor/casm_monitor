@@ -310,3 +310,38 @@ export interface SearchFunnelResponse {
   n_stored: number[];
   n_vetoed: number[];
 }
+
+// Visibilities server-rendered figures (docs/plan.md M2 figures brief).
+
+export type VisFigureQuantity = "amp" | "phase" | "real" | "imag" | "coh";
+export type VisFigureKind =
+  | `matrix_${VisFigureQuantity}`
+  | `spectra_${VisFigureQuantity}`
+  | "autos";
+
+export interface VisFigureManifest {
+  rendered_utc: string;
+  set: VisSet;
+  ref: VisRef;
+  t0: number;
+  t1: number;
+  n_integrations: number;
+  stream: string;
+  obs: string | null;
+  files: Record<string, { "1x": string; "2x": string }>;
+  kinds: string[];
+}
+
+export interface VisFigureListCombo {
+  set: VisSet;
+  ref: VisRef;
+  rendered_utc: string | null;
+  kinds: string[];
+}
+
+export interface VisFigureListResponse {
+  kinds: string[];
+  sets: VisSet[];
+  refs: VisRef[];
+  combos: VisFigureListCombo[];
+}

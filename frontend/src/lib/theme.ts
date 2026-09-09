@@ -13,5 +13,13 @@ export const CAUTION = "#b45309";
 
 export const SANS = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 
-/** The only colourscale used anywhere in this app. */
+/** The sequential colourscale, used for amplitude, coherence and the autos
+ * waterfalls: everywhere the house figures use viridis. */
 export const COLORSCALE = "Viridis";
+
+/** The diverging colourscale for phase and real/imag waterfalls, matching
+ * matplotlib's RdBu_r in casm_vis_analysis (plotting/waterfall.py): negative
+ * values red, positive blue, white at zero. Plotly's built-in "RdBu" runs
+ * the other way (red high, blue low), so callers pass `reversescale: true`
+ * alongside this to reproduce RdBu_r exactly. */
+export const DIVERGING_COLORSCALE = "RdBu";

@@ -2,8 +2,8 @@
 // labels and the one muted section line above the panel grid (integration
 // time, obs UTC_START, reference used), mirroring lib/snapText.ts.
 
-import { formatUnixUtc, formatUtcStart } from "./statusSentence";
-import type { VisInputInfo, VisObsInfo, VisRef } from "./types";
+import { formatUnixUtc, formatUtcStamp, formatUtcStart } from "./statusSentence";
+import type { VisInputInfo, VisObsInfo, VisQuantity, VisRef, VisUnits } from "./types";
 
 /** `ant 26  N16E1  (pkt 25)`, the autos panel title, matching the SNAPs
  * house-figure format exactly (lib/snapText.ts panelTitle). */
@@ -49,10 +49,74 @@ export function integrationSentence(
   return parts.join(" ");
 }
 
+/** The short waterfall-matrix panel title: `ant 26` on the diagonal,
+ * `ant 26 x ant 30` off it, falling back to the packet index for an
+ * unwired input. */
+export function waterfallPanelTitle(inputI: VisInputInfo, inputJ: VisInputInfo | null): string {
+  const short = (inp: VisInputInfo) => (inp.antenna !== null ? `ant ${inp.antenna}` : `pkt ${inp.packet_idx}`);
+  if (!inputJ || inputJ.packet_idx === inputI.packet_idx) return short(inputI);
+  return `${short(inputI)} x ${short(inputJ)}`;
+}
+
+/** The waterfall-matrix panel tooltip: the full `ant N  station  (pkt idx)`
+ * pair, the closest thing this API has to the hardware SxAy pair used in the
+ * casm_vis_analysis reference figure (which the monitor's input model does
+ * not carry). */
+export function waterfallPanelTooltip(inputI: VisInputInfo, inputJ: VisInputInfo | null): string {
+  if (!inputJ || inputJ.packet_idx === inputI.packet_idx) return visPanelTitle(inputI);
+  return `${visPanelTitle(inputI)}  x  ${visPanelTitle(inputJ)}`;
+}
+
+const WATERFALL_QUANTITY_LABEL: Record<VisQuantity, string> = {
+  amp: "amplitude",
+  phase: "phase",
+  real: "real",
+  imag: "imag",
+  coh: "coherence",
+};
+
+/** The one shared colourbar sentence under a waterfall matrix, in place of a
+ * colorbar per panel. */
+export function waterfallLegendSentence(quantity: VisQuantity, units: VisUnits): string {
+  const label = WATERFALL_QUANTITY_LABEL[quantity];
+  let clause: string;
+  if (quantity === "phase") {
+    clause = units === "rad" ? `${label}, -3.14 to 3.14 rad, RdBu` : `${label}, -180 to 180 degrees, RdBu`;
+  } else if (quantity === "real" || quantity === "imag") {
+    clause = `${label}, +/- 99th percentile per panel, RdBu`;
+  } else if (quantity === "coh") {
+    clause = `${label}, 0 to 1, viridis`;
+  } else {
+    clause = `${label}, ${units}, viridis`;
+  }
+  return `${clause}; autos in dB, viridis.`;
+}
+
+/** The section sentence above a waterfall matrix: the window and the
+ * reference in force (docs/plan.md M2 "state is a sentence"). */
+export function waterfallWindowSentence(t0Iso: string, t1Iso: string, ref: VisRef): string {
+  const refClause = REF_CLAUSE[ref];
+  return `Window ${formatUtcStamp(t0Iso)} to ${formatUtcStamp(t1Iso)}. Reference: ${refClause}.`;
+}
+
 /** "2026-09-08 02:00-05:00 PT" for the coherence view's default-window
  * sentence. PT is treated as UTC-7 (PDT); the array is not sensitive enough
  * yet for a DST-correctness bug here to matter operationally. */
 const PT_OFFSET_H = 7;
+
+/** The one muted sentence under a server-rendered figure: the window, when it
+ * was rendered and the reference in force, e.g. "last 24 h to 2026-09-09
+ * 02:10 UTC, rendered 02:12 UTC, 621 integrations, fringe-stopped toward the
+ * Sun." (operator's own wording, 2026-09-08). */
+export function figureSentence(
+  manifest: { t1: number; rendered_utc: string; n_integrations: number } | null,
+  ref: VisRef,
+): string {
+  if (!manifest) return "No figures rendered yet for this view.";
+  const t1 = formatUnixUtc(manifest.t1);
+  const rendered = formatUtcStamp(manifest.rendered_utc).replace(/^\d{4}-\d{2}-\d{2} /, "");
+  return `last 24 h to ${t1}, rendered ${rendered}, ${manifest.n_integrations} integrations, ${REF_CLAUSE[ref]}.`;
+}
 
 export function lastNightWindowPT(): { t0: string; t1: string; sentence: string } {
   const now = new Date();

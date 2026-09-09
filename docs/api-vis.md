@@ -267,6 +267,75 @@ such).
   contribute samples from it rather than being NaN-poisoned or dropping the
   shard's other baselines.
 
+## Server-rendered figures (M2 figures, 2026-09-08)
+
+The Visibilities page's **default view** is a single server-rendered PNG, not
+the interactive Plotly/uPlot views above (kept behind `view=interactive` in
+the frontend). `casm_monitor/collectors/figures.py` renders every
+`(kind, set, ref)` combination every 1800 s (`cadences.figures`) from the last
+24 h of cached `vis_avg8` (falling back to `vis_full` when it is thin) into
+`store_root/figures/vis/<set>/<ref>/<kind>@{1x,2x}.png` plus a
+`manifest.json`; `casm_monitor/web/figures.py` serves that tree read-only.
+`set` is `live|wired`; `ref` is `raw|sun|cal` (`cal` only exists once the
+deployed cal resolves); `kind` is `matrix_<q>`/`spectra_<q>` for
+`q` in `amp|phase|real|imag|coh`, or `autos`.
+
+### `GET /api/figures/vis/manifest?set=&ref=`
+
+```json
+{
+  "rendered_utc": "2026-09-09T02:12:00Z",
+  "set": "wired",
+  "ref": "raw",
+  "t0": 1788839320.29,
+  "t1": 1788925720.29,
+  "n_integrations": 144,
+  "stream": "vis_avg8",
+  "obs": "2026-09-04-16:43:47",
+  "files": { "matrix_amp": { "1x": "matrix_amp@1x.png", "2x": "matrix_amp@2x.png" } },
+  "kinds": ["matrix_amp", "spectra_amp", "autos", "..."]
+}
+```
+
+`t0`/`t1` are the span of CACHED samples actually used (not the `[now-24h,
+now]` query boundary), so `t1` doubles as the collector's own
+skip-when-unchanged watermark. 404 when nothing has been rendered yet for
+that `set`/`ref` (e.g. `cal` before a cal file resolves).
+
+### `GET /api/figures/vis/<set>/<ref>/<kind>@1x.png` (and `@2x.png`)
+
+The PNG itself. `1x` is the page-default half-resolution image (matplotlib
+`dpi=55`); `2x` is the full-resolution "open full size" target
+(`dpi=110`, ~1.6 in per panel — a 24-input matrix is ~4200 px wide). Both are
+the same figure, so a browser `srcset="<1x> 1x, <2x> 2x"` picks the right one
+without a second render. Response headers: `ETag` (a 16-hex-char sha256
+prefix of the file's own bytes), `Cache-Control: public, max-age=1800`
+(the collector's own cadence) and `Last-Modified`; a matching
+`If-None-Match` gets a bare `304`. `kind`/`suffix` are validated against the
+exact whitelist the collector renders before any filesystem access — an
+unknown `kind` or a path-traversal attempt is a `400`, never a directory
+listing.
+
+### `GET /api/figures/vis/list`
+
+Which `(set, ref)` combos have at least one rendered manifest, for the
+frontend to know what exists without probing every combination:
+
+```json
+{
+  "kinds": ["matrix_amp", "..."],
+  "sets": ["live", "wired"],
+  "refs": ["raw", "sun", "cal"],
+  "combos": [{ "set": "wired", "ref": "raw", "rendered_utc": "2026-09-09T02:12:00Z", "kinds": ["..."] }]
+}
+```
+
+The frontend appends `?v=<rendered_utc>` (from the manifest) to every image
+URL, so an unchanged render is a guaranteed browser cache hit and a new one
+is a URL the browser has never seen — this is what makes toggling views feel
+instant after the first paint (which also prefetches the other four
+quantities' `@1x` images for the current set/ref/view in the background).
+
 ## Errors
 
 Same convention as the SNAPs contract: non-2xx responses carry a JSON body

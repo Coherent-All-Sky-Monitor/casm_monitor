@@ -33,6 +33,9 @@ import type {
   VisRef,
   VisSet,
   VisSpectraResponse,
+  VisFigureKind,
+  VisFigureListResponse,
+  VisFigureManifest,
   VisTimesResponse,
   VisUnits,
   VisWaterfallResponse,
@@ -311,6 +314,30 @@ export function getVisWaterfall(query: VisWaterfallQuery): Promise<VisWaterfallR
 export function getVisCoherence(t0: string, t1: string, set: VisSet): Promise<VisCoherenceResponse> {
   const params = new URLSearchParams({ t0, t1, set });
   return request<VisCoherenceResponse>(`/api/vis/coherence?${params.toString()}`);
+}
+
+// --- Visibilities server-rendered figures (M2 figures) ------------------
+
+export function getVisFigureManifest(set: VisSet, ref: VisRef): Promise<VisFigureManifest> {
+  const params = new URLSearchParams({ set, ref });
+  return request<VisFigureManifest>(`/api/figures/vis/manifest?${params.toString()}`);
+}
+
+export function getVisFigureList(): Promise<VisFigureListResponse> {
+  return request<VisFigureListResponse>("/api/figures/vis/list");
+}
+
+/** Same URL the <img> uses; ``v`` is the manifest's own rendered_utc so the
+ * browser cache is bookmarked to the render that actually produced it. */
+export function visFigureUrl(
+  set: VisSet,
+  ref: VisRef,
+  kind: VisFigureKind,
+  suffix: "1x" | "2x",
+  renderedUtc?: string | null,
+): string {
+  const v = renderedUtc ? `?v=${encodeURIComponent(renderedUtc)}` : "";
+  return `/api/figures/vis/${set}/${ref}/${kind}@${suffix}.png${v}`;
 }
 
 // --- Search (M2b) ---------------------------------------------------------
