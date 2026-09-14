@@ -1,0 +1,22 @@
+[Unit]
+Description=CASM monitor observation-preview workspace (127.0.0.1:8061, read-only, reached over ssh -L)
+After=network-online.target
+# Five restarts in ten minutes and systemd gives up, same guard as casm-monitor-web.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+WorkingDirectory=/home/casm/software/dev/casm_monitor
+Environment=CASM_MONITOR_OBSERVATION_ROOT=/home/casm/scratch/casm-observation-preview
+Environment=CASM_MONITOR_READ_ONLY=1
+Environment=CASM_MONITOR_WORKSPACE=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/casm/software/dev/casm_venvs/casm_offline_env/bin/python -m casm_monitor.web.app --port 8061
+Restart=on-failure
+RestartSec=15
+MemoryMax=4G
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
