@@ -29,7 +29,7 @@ Baseline phase
 
 ![Baseline phase](docs/screenshots/phase.png)
 
-T1 / RFI
+T1 / Hella streams
 
 ![T1](docs/screenshots/search.png)
 

@@ -1,59 +1,187 @@
-"""Existing emitted-candidate bins do not establish raw-peak saturation."""
+"""T1 page: stream liveness from the gulp ledger, candidates from cand_bins."""
 import json
-from datetime import datetime, timezone
 
+import pytest
+
+from casm_monitor import hella_log
 from casm_monitor.collectors.search import DM_EDGES, WIDTH_EDGES, ensure_tables
 from casm_monitor.store import Store
 from casm_monitor.web import t1
 
+NOW = 1_780_000_000.0
+SPAN = 86400.0
 
-def test_bounded_bins_and_dark_matplotlib(tmp_path, monkeypatch):
-    store = Store(tmp_path / "monitor.sqlite")
+
+def make_ledger(path, *, end=NOW, silent_stream=4, silent_for_s=1200.0, cap_stream=None,
+                tick_unix=None):
+    """Eight live streams at the 8.59 s cadence; one stopped ``silent_for_s`` ago."""
+    ledger = hella_log.HellaLogLedger(path, path.parent / "absent.log")
+    connection = ledger.connect()
+    rows = []
+    for stream in range(8):
+        newest = end - (silent_for_s if stream == silent_stream else 5.0)
+        for index in range(420):
+            stamp = newest - index * hella_log.GULP_S
+            cap = 1 if (cap_stream == stream and index == 0) else 0
+            rows.append((stamp, stream, 5.6, 0.12, 0.52, 3.7, 1.03, 0.17, cap, None, 472))
+    connection.executemany("INSERT INTO gulps (ts_unix, stream, wall_s, read_s, flag_s, dedisp_s, "
+                           "smooth_s, peak_s, cap_hit, beams_processed, blanked) "
+                           "VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+    ledger._set_watermark(connection, {"offset": 1234, "inode": 7, "size": 1234,
+                                       "last_tick_unix": end if tick_unix is None else tick_unix,
+                                       "log_path": "/data/casm/logs/bf_proc_hella.log"})
+    connection.commit()
+    ledger.close()
+    return path
+
+
+def add_cand_bins(store, entries):
     ensure_tables(store)
-    for stamp, job, n in ((100, 0, 120), (101, 0, 80), (102, 4, 25)):
-        dm = [n] + [0] * (len(DM_EDGES) - 2)
+    for stamp, stream, n in entries:
+        dm = [0, n] + [0] * (len(DM_EDGES) - 3)
         width = [n] + [0] * (len(WIDTH_EDGES) - 2)
         beam = [n] + [0] * 63
-        store.execute("INSERT INTO cand_bins VALUES (?,?,?,?,?,?,?,?,?)", (stamp, job, n, "[]", json.dumps(dm), json.dumps(width), json.dumps(beam), 15, 0))
-    result = t1.build_t1(store, t0="90", t1="110", log_path=tmp_path / "absent.log")
-    assert result["status"] == "ok"
-    assert result["n_candidates"] == 225
-    assert result["cap_fraction"] is None and result["skipped_beams"] is None
-    assert "cluster peaks" in result["note"]
-    assert sum(result["width_counts"]) == 225
-    assert t1.render_t1(result).startswith(b"\x89PNG")
-    from matplotlib.figure import Figure
-    save = Figure.savefig
-    captured = []
-    def inspect(fig, *args, **kwargs):
-        captured.append(fig)
-        return save(fig, *args, **kwargs)
-    monkeypatch.setattr(Figure, 'savefig', inspect)
-    for zone in ('America/Los_Angeles','UTC'):
-        t1.render_t1({**result,'time_tz':zone})
-        fig = captured[-1]
-        assert fig.axes[2].get_ylim() == (0,1000)
-        assert fig.axes[0].get_xlabel() == ('UTC' if zone == 'UTC' else 'OVRO local (PDT/PST)')
-    monkeypatch.setattr(t1, "MAX_ROWS", 1)
-    partial = t1.build_t1(store, t0="90", t1="110", log_path=tmp_path / "absent.log")
-    assert partial["status"] == "partial" and partial["n_candidates"] == 25
+        store.execute("INSERT INTO cand_bins VALUES (?,?,?,?,?,?,?,?,?)",
+                      (stamp, stream, n, "[]", json.dumps(dm), json.dumps(width),
+                       json.dumps(beam), 15, 0))
+
+
+@pytest.fixture
+def payload(tmp_path):
+    store = Store(tmp_path / "monitor.sqlite")
+    ledger_db = make_ledger(tmp_path / "hella_gulps.sqlite", cap_stream=2)
+    add_cand_bins(store, [(NOW - 100.0, 0, 120), (NOW - 108.6, 0, 80)])
+    data = t1.build_t1(store, t0=str(NOW - SPAN), t1=str(NOW), ledger_db=ledger_db)
+    store.close()
+    return data
+
+
+def test_stream_liveness_and_empty_gulps(payload):
+    streams = payload["streams"]
+    assert [row["stream"] for row in streams] == list(range(8))
+    assert [row["node"] for row in streams] == ["corr1"] * 4 + ["corr2"] * 4
+    assert [row["status"] for row in streams] == ["ok"] * 4 + ["silent"] + ["ok"] * 3
+    assert streams[4]["last_gulp_age_s"] == pytest.approx(1200.0)
+    assert streams[0]["gulps_last_hour"] == 419
+    assert streams[0]["expected_gulps_per_hour"] == pytest.approx(3600 / 8.59)
+    assert streams[0]["median_wall_s_last_hour"] == pytest.approx(5.6)
+    # Two of stream 0's gulps emitted candidates, the rest were empty.
+    assert streams[0]["empty_fraction_last_hour"] == pytest.approx((419 - 2) / 419)
+    assert streams[1]["empty_fraction_last_hour"] == 1.0
+    assert streams[2]["cap_hits_last_hour"] == 1
+    assert sum(row["cap_hits_last_hour"] for row in streams) == 1
+
+
+def test_age_is_measured_from_the_last_log_read(tmp_path):
+    store = Store(tmp_path / "monitor.sqlite")
+    ensure_tables(store)
+    # The ledger was read 300 s ago; a stream whose newest gulp was 5 s before
+    # that read is healthy, not 305 s "late".
+    ledger_db = make_ledger(tmp_path / "hella_gulps.sqlite", tick_unix=NOW - 300.0)
+    data = t1.build_t1(store, t0=str(NOW - SPAN), t1=str(NOW), ledger_db=ledger_db)
+    streams = data["streams"]
+    assert streams[0]["last_gulp_age_s"] == 0.0 and streams[0]["status"] == "ok"
+    assert streams[4]["last_gulp_age_s"] == pytest.approx(900.0)
+    assert streams[4]["status"] == "silent"
+    assert data["ledger"]["last_tick_unix"] == NOW - 300.0
+    assert data["ledger"]["read_age_s"] > 0
     store.close()
 
 
-def test_only_explicit_log_warning_measures_processed_beams(tmp_path):
-    path = tmp_path / "hella.log"
-    path.write_text("2 [2026-09-13 12:00:00.000] [warning] Only processed 3/64 beams - detected 10000 peaks\n"
-                    "2 [2026-09-13 12:00:01.000] [info] sending data\n")
-    start = datetime(2026, 9, 13, 19, tzinfo=timezone.utc).timestamp()
-    data = t1.log_evidence(path, start=start, end=start + 2)
-    assert data["cap_warnings"][0]["processed_beams"] == 3
-    assert data["cap_warnings"][0]["utc"].startswith("2026-09-13T19:00:00")
-    assert not data["complete_window"]
+def test_ledger_block_and_activity_states(payload):
+    ledger = payload["ledger"]
+    assert ledger["status"] == "ok" and ledger["rows_in_window"] == 8 * 420
+    assert ledger["watermark_offset"] == 1234 and ledger["last_tick_unix"] == NOW
+    assert ledger["log_path"].endswith("bf_proc_hella.log")
+    gulps = payload["activity"]["gulps"]
+    cands = payload["activity"]["cands"]
+    emitting = payload["activity"]["gulps_with_cands"]
+    caps = payload["activity"]["cap_hits"]
+    assert len(gulps) == t1.TIME_BINS and len(gulps[0]) == 8
+    assert payload["time_bin_seconds"] == pytest.approx(180.0)
+    assert sum(sum(bin_) for bin_ in gulps) == 8 * 420
+    assert sum(sum(bin_) for bin_ in cands) == 200 and payload["n_candidates"] == 200
+    assert sum(sum(bin_) for bin_ in caps) == 1
+    # The last bin holds both candidate gulps on stream 0.
+    last = t1.TIME_BINS - 1
+    assert cands[last][0] == 200 and gulps[last][0] > 0
+    # Two of that bin's gulps emitted; the colour is that fraction, not a flag.
+    assert emitting[last][0] == 2 and sum(sum(bin_) for bin_ in emitting) == 2
+    assert emitting[last][0] < gulps[last][0]
+    assert payload["quiet_bins"][last] is False
+    # Bins where streams ran but emitted nothing are quiet, not missing.
+    quiet = [i for i, flag in enumerate(payload["quiet_bins"]) if flag]
+    assert quiet and last not in quiet
+    assert all(sum(gulps[i]) > 0 for i in quiet)
 
 
-def test_missing_bins_not_zero(tmp_path):
+def test_histograms_and_removed_fields(payload):
+    assert payload["status"] == "ok" and payload["n_bin_rows"] == 2
+    assert sum(payload["width_counts"]) == 200
+    assert payload["dm_counts"][1] == 200 and payload["dm_counts"][0] == 0
+    assert len(payload["dm_time_counts"][0]) == len(DM_EDGES) - 1
+    assert len(payload["beam_time_counts"][0]) == 512
+    assert payload["refresh_s"] == 300
+    for gone in ("log", "per_job_counts", "per_job_peak_per_gulp", "observed_instance_gulps",
+                 "cap_fraction", "skipped_beams", "raw_peak_cap", "display_dm_max",
+                 "display_note", "coverage_note", "note"):
+        assert gone not in payload
+
+
+def test_render_full_payload(payload, monkeypatch):
+    from matplotlib.figure import Figure
+
+    captured = []
+    save = Figure.savefig
+
+    def inspect(fig, *args, **kwargs):
+        captured.append(fig)
+        return save(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect)
+    for zone in ("America/Los_Angeles", "UTC"):
+        assert t1.render_t1({**payload, "time_tz": zone}).startswith(b"\x89PNG")
+        axes = captured[-1].axes
+        # activity, activity cbar, beam, beam cbar, DM, DM cbar, width, DM hist
+        assert axes[0].get_xlabel() == ("UTC" if zone == "UTC" else "OVRO local (PDT/PST)")
+        assert axes[0].get_ylabel() == "Stream"
+        assert axes[2].get_ylabel() == "Beam index"
+        assert axes[4].get_yscale() == "log" and axes[7].get_xscale() == "log"
+
+
+def test_empty_ledger_and_empty_cand_bins(tmp_path):
     store = Store(tmp_path / "monitor.sqlite")
-    data = t1.build_t1(store, t0="90", t1="110", log_path=tmp_path / "missing.log")
-    assert data["status"] == "unavailable"
-    assert "n_candidates" not in data
+    ensure_tables(store)
+    empty = t1.build_t1(store, t0=str(NOW - SPAN), t1=str(NOW),
+                        ledger_db=tmp_path / "absent.sqlite")
+    assert empty["status"] == "empty" and empty["ledger"]["status"] == "missing_log"
+    assert all(row["status"] == "unknown" for row in empty["streams"])
+    assert not any(empty["quiet_bins"])
+    assert t1.render_t1(empty).startswith(b"\x89PNG")
+
+    ledger_db = make_ledger(tmp_path / "hella_gulps.sqlite")
+    quiet = t1.build_t1(store, t0=str(NOW - SPAN), t1=str(NOW), ledger_db=ledger_db)
+    assert quiet["status"] == "empty" and quiet["n_candidates"] == 0
+    assert any(quiet["quiet_bins"])
+    assert t1.render_t1(quiet).startswith(b"\x89PNG")
+    store.close()
+
+
+def test_missing_cand_bins_table_still_reports_streams(tmp_path):
+    store = Store(tmp_path / "monitor.sqlite")
+    ledger_db = make_ledger(tmp_path / "hella_gulps.sqlite")
+    data = t1.build_t1(store, t0=str(NOW - SPAN), t1=str(NOW), ledger_db=ledger_db)
+    assert data["status"] == "unavailable" and "n_candidates" not in data
+    assert [row["status"] for row in data["streams"]][4] == "silent"
+    assert t1.render_t1(data).startswith(b"\x89PNG")
+    store.close()
+
+
+def test_row_budget_marks_partial(tmp_path, monkeypatch):
+    store = Store(tmp_path / "monitor.sqlite")
+    add_cand_bins(store, [(NOW - 100.0, 0, 120), (NOW - 108.6, 0, 80)])
+    monkeypatch.setattr(t1, "MAX_ROWS", 1)
+    data = t1.build_t1(store, t0=str(NOW - SPAN), t1=str(NOW),
+                       ledger_db=tmp_path / "absent.sqlite")
+    assert data["status"] == "partial" and data["n_candidates"] == 120
     store.close()

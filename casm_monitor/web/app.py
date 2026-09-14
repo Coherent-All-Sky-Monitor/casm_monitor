@@ -29,6 +29,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from .. import __version__
+from .. import hella_log
 from ..config import Settings, load_settings
 from ..store import Store
 from ..util import iso, parse_iso
@@ -127,7 +128,19 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        # Hella gulp ledger: workspace only, and only if the log is there to
+        # tail. Its own sqlite file, never the production store.
+        refresher = None
+        hella_path = hella_log.log_path_from_env()
+        if workspace and hella_path.is_file():
+            ledger = hella_log.HellaLogLedger(
+                hella_log.ledger_path(settings.observation_cache_root), hella_path)
+            refresher = hella_log.LedgerRefresher(ledger)
+            refresher.start()
+            _app.state.hella_ledger = refresher
         yield
+        if refresher is not None:
+            refresher.stop()
         # Cancel outstanding WS handlers before tearing down the DB handles
         # they read/write through, otherwise a handler still mid-tick can
         # touch a closed connection.

@@ -10,8 +10,8 @@ generation or deployment occur through these endpoints.
 The opening page automatically renders rolling-24-hour cached raw phase and
 amplitude views on one geometry-selected long N-S baseline, alongside T1 plots.
 The baseline explorer automatically renders its cached selection on entry and
-after changes. Rolling windows refresh every two minutes while visible; choosing
-a historical day/range pauses rolling. Native reads and calibration comparisons
+after changes. Rolling windows refresh every two minutes while visible (the T1 stream page
+every five minutes); choosing a historical day/range pauses rolling. Native reads and calibration comparisons
 still require an explicit Render action. No worker or raw fallback was enabled.
 Cached request budgets and evidence limitations are unchanged.
 

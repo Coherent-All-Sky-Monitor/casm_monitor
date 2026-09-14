@@ -72,49 +72,67 @@ The application additionally gates these narrow preview mutations separately
 from telescope operations. Storage is `observation_cache_root/investigations.sqlite`;
 there is no fallback to the production store when the root is unset.
 
-## T1 scientific figures
+## T1 stream monitoring
 
-The opening page and T1 page load rolling-24-hour plots automatically. Live
-views refresh every two minutes while visible; selecting history pauses rolling.
-`time_tz=America/Los_Angeles` (default) or `UTC` controls plot clock labels and
-is echoed in the response and cache identity. API time bounds remain UTC.
-The DM panel displays 0–1000 pc cm^-3 (`display_dm_max=1000`). Counts, stored
-bins and JSON exports retain the full recorded range; search configuration
-and the collector are unchanged. `display_note` discloses this distinction.
+The T1 page answers one question first: are all eight Hella streams alive.
+Streams 0-3 run on corr1, 4-7 on corr2, 64 beams each.
 
-`GET /api/t1?t0=<ISO-or-unix>&t1=<ISO-or-unix>` defaults to rolling 24 hours,
-supports at most seven days and reads the existing collector's `cand_bins`
-table through a separate read-only SQLite connection. It streams at most
-700,000 stored instance-gulp rows with an eight-second processing budget;
-newest rows are retained first if either limit is reached. `partial` and the
-reason are explicit, and the operator can narrow the interval. Missing tables
-are `unavailable`; no stored bins is `empty`, not evidence of zero candidates.
+`GET /api/t1?t0=<ISO-or-unix>&t1=<ISO-or-unix>&time_tz=America/Los_Angeles|UTC`
+defaults to a rolling 24 hours, supports at most seven days and refreshes every
+five minutes (`refresh_s`). It reads two sources:
 
-Returned evidence includes counts, first/last recorded data, 480 display bins,
-per-job maximum emitted candidates per instance-gulp in each display bin,
-beam/time and DM/time histograms and width-index counts. DM edges and clipping
-follow the existing collector. Width index is not labelled as FWHM. Acquisition
-gaps and zero-candidate gulps absent from the source remain unknown.
+* the Hella gulp ledger, `observation_cache_root/hella_gulps.sqlite`, one row
+  per gulp per stream tailed by byte watermark from
+  `/data/casm/logs/bf_proc_hella.log` (override with `CASM_MONITOR_HELLA_LOG`,
+  tick interval with `CASM_MONITOR_HELLA_LOG_INTERVAL_S`, default 60 s: the
+  page refreshes every 5 minutes but a stream's reported staleness can never be
+  fresher than the last log read). The tailer runs only in workspace mode,
+  retains 14 days and never writes to the production store. Log timestamps are
+  OVRO local and are converted to unix time on read;
+* the collector's `cand_bins` table, which only holds rows for gulps that
+  emitted candidates.
 
-**The fork's emitted candidates are clustered peaks.** These counts cannot
-establish whether the pre-clustering 10,000-raw-peak cap was reached. No cap
-fraction or skipped-beam estimate is derived from emitted counts, occupancy,
-T2 job counts or the number of jobs reporting candidates.
+A gulp in the ledger with no `cand_bins` row is an EMPTY gulp: the normal
+healthy state, shown as such. A time bin with no ledger row is "no gulp
+recorded", which is the alarm condition. The two sources are counted per bin,
+never matched gulp to gulp: `cand_bins.gulp_ts` is the data clock and the
+ledger timestamp is the log wall clock.
 
-The endpoint also reads at most the last 2 MiB of
-`/data/casm/logs/bf_proc_hella.log`. Explicit `Only processed N/64 beams ...
-10000 peaks` messages are preserved with the original line and UTC conversion
-from the documented America/Los_Angeles log clock. This local tail is partial
-coverage and is not a full-day or full-week saturation census. Unknown warning
-absence remains unknown. Log timestamps do not identify the science sample
-with sub-gulp precision; correlate them with observing context before inferring
-a cause. No broad log scan or remote SSH is run by this route.
+Payload:
 
-The response's `plot_url` points at a content-hashed dark Matplotlib PNG with
-four scientific panels. The figure is downloadable and can be saved into an
-investigation. `GET /api/review/{id}` exports the record as JSON.
-`/api/t1/plot.png` is also a dynamic render endpoint, but is not
-a valid immutable evidence URL for saving. These routes use no Plotly.
+* `streams`: eight entries with `stream`, `node`, `last_gulp_unix`,
+  `last_gulp_age_s`, `gulps_last_hour`, `expected_gulps_per_hour` (3600/8.59),
+  `empty_fraction_last_hour`, `cap_hits_last_hour`, `median_wall_s_last_hour`
+  and `status` (`ok` under 60 s, `late` under 600 s, else `silent`; `unknown`
+  when the ledger has no rows for that stream). `last_gulp_age_s` is
+  `last_tick_unix - last_gulp_unix` clamped at 0, the stream's staleness as of
+  the last log read, not against wall clock: between ticks a wall-clock age
+  would grow to the tick interval on every healthy stream.
+* `ledger`: `status` (`ok`/`empty`/`missing_log`), `rows_in_window`,
+  `newest_unix`, `log_path`, `watermark_offset`, `last_tick_unix` and
+  `read_age_s` (now minus the last tick, so the UI can say "as of the log read
+  N s ago").
+* `activity`: `gulps`, `cands`, `gulps_with_cands` (count of `cand_bins` rows)
+  and `cap_hits`, each `[480][8]` over the `time_edges_unix` grid (180 s bins
+  over 24 hours).
+* `beam_time_counts` `[480][512]`, `dm_time_counts` `[480][30]`, `quiet_bins`
+  (480 flags: streams ran, nothing emitted), `dm_counts`, `width_counts`,
+  `dm_edges`, `width_edges`, `n_candidates`, `t0`, `t1`, `time_tz`, `plot_url`.
+
+`cand_bins` reads stay bounded: at most 700,000 rows with an eight-second
+budget, after which `status` is `partial` and the operator narrows the
+interval. A missing table is `unavailable` and still returns `streams`.
+
+`plot_url` points at a content-hashed dark Matplotlib PNG with four panels:
+gulp activity per stream, beam occupancy, DM over time (column-normalised, DM
+10-3000 pc cm^-3) and the width and DM histograms. Liveness lives in the page's
+HTML stream strip, not in the figure. Activity cells are coloured by
+`gulps_with_cands / gulps`, slate at 0 (healthy) to cyan at 1, with no-gulp
+bins transparent and cap hits overlaid in orange; a per-bin "any candidate"
+flag saturates at 21 gulps per bin and 90% empty gulps.
+`/api/t1/plot.png` renders the same figure dynamically and is not a valid
+immutable evidence URL for saving. These routes use no Plotly. Width index is
+not labelled as FWHM.
 
 ## Documentation impact and validation
 
