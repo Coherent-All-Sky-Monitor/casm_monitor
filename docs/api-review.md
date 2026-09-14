@@ -74,6 +74,14 @@ there is no fallback to the production store when the root is unset.
 
 ## T1 scientific figures
 
+The opening page and T1 page load rolling-24-hour plots automatically. Live
+views refresh every two minutes while visible; selecting history pauses rolling.
+`time_tz=America/Los_Angeles` (default) or `UTC` controls plot clock labels and
+is echoed in the response and cache identity. API time bounds remain UTC.
+The DM panel displays 0–1000 pc cm^-3 (`display_dm_max=1000`). Counts, stored
+bins and JSON exports retain the full recorded range; search configuration
+and the collector are unchanged. `display_note` discloses this distinction.
+
 `GET /api/t1?t0=<ISO-or-unix>&t1=<ISO-or-unix>` defaults to rolling 24 hours,
 supports at most seven days and reads the existing collector's `cand_bins`
 table through a separate read-only SQLite connection. It streams at most

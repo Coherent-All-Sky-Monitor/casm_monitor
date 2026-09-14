@@ -170,7 +170,7 @@ def render_transit(settings, reader, req):
             model_ax.set_ylabel('Ideal equal-amplitude array response (0–1)')
             model_ax.set_ylim(0,1.05)
             model_ax.legend(loc='upper right',fontsize=7)
-            fig.savefig(dest/'plot-0.png',dpi=130,bbox_inches='tight',facecolor='#111820')
+            fig.savefig(dest/'plot-0.png',dpi=130,bbox_inches='tight',facecolor='#000000')
             plt.close(fig)
         np.savez_compressed(dest/'data.npz',time_unix=result['time_unix'],power=result['power'][directions[0][0]],
                             control_power=result['power'][directions[1][0]],model_time_unix=exact['times'].unix,

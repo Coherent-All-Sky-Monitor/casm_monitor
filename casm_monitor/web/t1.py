@@ -15,6 +15,7 @@ import sqlite3
 import threading
 import tempfile
 import time
+from typing import Literal
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -142,11 +143,11 @@ def render_t1(data):
     from matplotlib.colors import LogNorm
 
     with _PLOT_LOCK:
-        fig = Figure(figsize=(13, 10), layout="constrained", facecolor="#111820")
+        fig = Figure(figsize=(13, 10), layout="constrained", facecolor="#000000")
         FigureCanvasAgg(fig)
         axes = fig.subplots(2, 2)
         for ax in axes.flat:
-            ax.set_facecolor("#111820")
+            ax.set_facecolor("#000000")
             ax.tick_params(colors="#c9d1d9")
             ax.xaxis.label.set_color("#c9d1d9")
             ax.yaxis.label.set_color("#c9d1d9")
@@ -182,9 +183,12 @@ def render_t1(data):
             axes[1, 1].set(title="Width distribution", xlabel="Hella width index (not FWHM)", ylabel="Emitted candidates")
             for ax in (axes[0, 0], axes[0, 1], axes[1, 0]):
                 ax.xaxis_date()
-                ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d\n%H:%M", tz=timezone.utc))
-                ax.set_xlabel("UTC")
-        fig.suptitle(f"CASM · T1 search evidence\n{data['t0']} to {data['t1']}", color="#e6edf3", fontsize=12)
+                ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d\n%H:%M", tz=ZoneInfo(data.get('time_tz','America/Los_Angeles'))))
+                ax.set_xlabel('UTC' if data.get('time_tz') == 'UTC' else 'OVRO local (PDT/PST)')
+        axes[1, 0].set_ylim(0,1000)
+        zone = ZoneInfo(data.get('time_tz','America/Los_Angeles'))
+        bounds = [datetime.fromisoformat(data[k].replace('Z','+00:00')).astimezone(zone).strftime('%Y-%m-%d %H:%M %Z') for k in ('t0','t1')]
+        fig.suptitle(f"CASM · T1 search evidence\n{bounds[0]} to {bounds[1]}", color="#e6edf3", fontsize=12)
         output = io.BytesIO()
         fig.savefig(output, format="png", dpi=130, facecolor=fig.get_facecolor())
         return output.getvalue()
@@ -195,21 +199,24 @@ def build_router(reader, settings):
     cache = {}
     lock = threading.Lock()
 
-    def get(t0, t1):
+    def get(t0, t1, time_tz):
         # Thirty-second in-process cache prevents duplicate JSON/PNG reads.
-        key = (t0, t1)
+        key = (t0, t1, time_tz)
         with lock:
             if key in cache and time.monotonic() - cache[key][0] < 30:
                 return cache[key][1]
             result = build_t1(reader, t0=t0, t1=t1)
+            result['time_tz'] = time_tz
+            result['display_dm_max'] = 1000
+            result['display_note'] = 'DM panel displays 0–1000 pc cm⁻³; totals and exported bins retain all recorded candidates.'
             if len(cache) > 2:
                 cache.clear()
             cache[key] = (time.monotonic(), result)
             return result
 
     @router.get("")
-    def overview(t0: str | None = None, t1: str | None = None):
-        data = get(t0, t1)
+    def overview(t0: str | None = None, t1: str | None = None, time_tz: Literal['America/Los_Angeles', 'UTC'] = 'America/Los_Angeles'):
+        data = get(t0, t1, time_tz)
         if settings.observation_cache_root and "plot_url" not in data:
             content = render_t1(data)
             digest = hashlib.sha256(content).hexdigest()
@@ -245,7 +252,7 @@ def build_router(reader, settings):
         return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private,max-age=31536000,immutable"})
 
     @router.get("/plot.png")
-    def plot(t0: str | None = None, t1: str | None = None):
-        return Response(render_t1(get(t0, t1)), media_type="image/png", headers={"Content-Disposition": 'inline; filename="casm-t1.png"'})
+    def plot(t0: str | None = None, t1: str | None = None, time_tz: Literal['America/Los_Angeles', 'UTC'] = 'America/Los_Angeles'):
+        return Response(render_t1(get(t0, t1, time_tz)), media_type="image/png", headers={"Content-Disposition": 'inline; filename="casm-t1.png"'})
 
     return router

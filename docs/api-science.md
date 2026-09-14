@@ -7,6 +7,20 @@ generation or deployment occur through these endpoints.
 
 ## Select and render
 
+The opening page automatically renders rolling-24-hour cached phase and
+amplitude views on one geometry-selected long N-S baseline, alongside T1 plots.
+The baseline explorer automatically renders its cached selection on entry and
+after changes. Rolling windows refresh every two minutes while visible; choosing
+a historical day/range pauses rolling. Native reads and calibration comparisons
+still require an explicit Render action. No worker or raw fallback was enabled.
+Cached request budgets and evidence limitations are unchanged.
+
+Plot/selection clocks default to America/Los_Angeles (PDT/PST), with a UTC
+toggle. Dates use midnight boundaries in that zone; API bounds remain UTC.
+Spring-forward nonexistent times are rejected. A repeated fall-back hour selects
+its earlier occurrence; use UTC for the other occurrence. Phase waterfalls
+label clock time, not hours elapsed from the first sample.
+
 `GET /api/science/catalog` returns input labels, ENU baseline lengths and
 orientations, plank groups, three long NS defaults from the matching inspected
 recorded payload union (falling back to intended participation),

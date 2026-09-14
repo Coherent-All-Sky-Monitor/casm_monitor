@@ -33,25 +33,33 @@ new workspace requests to production. `npm run preview` alone has no backend.
 Three primary tabs group the operator workflow:
 
 - Observation: rolling 24-hour injection recovery, T1/RFI, baseline phase,
-  source history, candidates and existing imaging products.
+  source history and candidates. Imaging is withdrawn from this preview UI.
 - Readiness: infrastructure, investigation queue, calibration-day comparison,
   independent Cyg A transit, manually confirmed build/review and events.
 - Antennas: geometry-selected baselines and existing SNAP history.
 
-`/observation` opens the morning-check page. `/vis` and `/antennas` use the
-selected-data explorer; `/search` uses T1 scientific plots; `/snaps` uses the
+`/observation` opens automatic rolling monitoring. `/vis` uses the baseline
+explorer; `/antennas` opens SNAP history; `/search` uses T1 scientific plots; `/snaps` uses the
 bounded transmitted-band history adapter. `/cal/compare`, `/cal/transit`,
 `/cal` and `/sources` expose their respective scientific workflows. Existing
-candidate/event and imaging routes remain available; no other service is retired.
+candidate/event routes remain available; no other service is retired. The old
+`/imaging` frontend route is removed; scientific code and backend artifacts remain untouched.
 
 The scientific controls select baseline pairs, quantity, reference, date/time and
-frequency interval. Rendering is explicit and bounded; no interactive Plotly
-widget or whole-array/raw-data fallback runs silently. Every new scientific view
+frequency interval. Cached overview/explorer plots load automatically and refresh
+every two minutes in rolling mode while visible. Day/range selections pause rolling;
+Live restores the past 24 hours. Native reads and comparisons remain explicit.
+No interactive Plotly widget or whole-array/raw-data fallback runs silently. Every new scientific view
 provides its image, numerical product and metadata downloads where supported.
 Saved investigations copy immutable plot pixels and preserve the selected data
 and processing. Workspace queue refresh retains newly seen injection misses
 locally; an explicit request changes `queued` to `requested`, not `running`.
 There is no agent executor or Slack integration.
+
+The interface uses a black background. Readiness leads with non-OK checks, then
+disk capacity and observation/data-flow checks; detailed measurements are collapsed.
+OVRO local (PDT/PST) is the default selection/plot clock; UTC is optional.
+Hella DM plots are limited to 0–1000 without changing counts or search configuration.
 
 T1 emitted candidate distributions and raw-peak cap warnings have different
 evidence. The fork's clustered output count cannot measure its pre-clustering

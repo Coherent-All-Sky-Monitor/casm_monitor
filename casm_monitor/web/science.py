@@ -283,7 +283,10 @@ def draw_views(req, z, stamps, freq, labels, comparison=None):
             ax.set_title('')
             ax.set_title(label + ' · ' + ('Sun fringe-stopped' if req.reference == 'sun' else 'Raw'),loc='left',fontsize=11,pad=12)
             ax.set_ylabel('Frequency (MHz)',fontsize=10)
-            ax.set_xlabel('Hours since first displayed integration',fontsize=10)
+            from matplotlib.ticker import FuncFormatter
+            from zoneinfo import ZoneInfo
+            ax.xaxis.set_major_formatter(FuncFormatter(lambda hours, pos: datetime.fromtimestamp(float(stamps[0])+hours*3600,ZoneInfo(req.time_tz)).strftime('%m-%d\n%H:%M')))
+            ax.set_xlabel('UTC' if req.time_tz == 'UTC' else 'OVRO local (PDT/PST)',fontsize=10)
             ax.tick_params(labelsize=9)
             cb = fig.colorbar(ax.collections[0],ax=ax,label='Phase (rad)',pad=.02,fraction=.025)
             cb.set_ticks([-np.pi,0,np.pi],labels=['−π','0','π'])
@@ -397,7 +400,7 @@ def render_product(settings, reader, req):
             images = []
             for n, fig in enumerate(figs):
                 name = f'plot-{n}.png'
-                fig.savefig(dest / name, dpi=130, bbox_inches='tight', facecolor='#111820')
+                fig.savefig(dest / name, dpi=130, bbox_inches='tight', facecolor='#000000')
                 plt.close(fig)
                 images.append({'url': f'/api/science/products/{pid}/{name}', 'label': labels[n] if len(figs) == len(labels) else req.kind})
         arrays = dict(vis=z, time_unix=stamps, freq_mhz=freq, pairs=np.asarray(req.pairs))

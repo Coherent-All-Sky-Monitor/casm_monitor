@@ -15,12 +15,15 @@ def main():
         page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto(URL+'/observation',wait_until='networkidle')
         page.get_by_role('heading',name='Science and search recovery').wait_for()
-        assert page.evaluate('getComputedStyle(document.body).backgroundColor')=='rgb(16, 21, 28)'
+        assert page.evaluate('getComputedStyle(document.body).backgroundColor')=='rgb(0, 0, 0)'
         assert page.locator('.js-plotly-plot').count()==0
+        assert page.get_by_role('link',name='Imaging',exact=True).count()==0
+        page.wait_for_function('document.querySelectorAll(".monitoring-overview .plot-surface img").length >= 3 && Array.from(document.querySelectorAll(".monitoring-overview .plot-surface img")).every(i=>i.complete&&i.naturalWidth>0)',timeout=60000)
+        assert page.get_by_role('combobox',name='Time zone').input_value()=='America/Los_Angeles'
         page.screenshot(path=str(OUTPUT/'workspace-observation.png'),full_page=False)
         page.goto(URL+'/vis',wait_until='networkidle')
         page.locator('.baseline.selected').first.wait_for()
-        page.get_by_role('button',name='Render selection',exact=True).click()
+        # Default rolling phase loads without pressing Render selection.
         page.locator('.product-plots img').first.wait_for(timeout=45000)
         page.wait_for_function('Array.from(document.querySelectorAll(".product-plots img")).every(i=>i.complete&&i.naturalWidth>0)')
         page.screenshot(path=str(OUTPUT/'workspace-phase.png'),full_page=True)
@@ -29,10 +32,18 @@ def main():
         page.get_by_placeholder('Describe the feature and the question to investigate.').fill('Browser validation only; not submitted.')
         assert page.get_by_role('button',name='Save plot and note').count()==1
         page.goto(URL+'/search',wait_until='networkidle')
-        page.get_by_role('button',name='Inspect interval',exact=True).click()
+        # Default Hella plots load without pressing Inspect interval.
         page.locator('.plot-surface img').wait_for(timeout=30000)
         page.wait_for_function('document.querySelector(".plot-surface img").naturalWidth>0')
         page.screenshot(path=str(OUTPUT/'workspace-t1.png'),full_page=True)
+        with page.expect_response(lambda r:'/api/t1?' in r.url and 'time_tz=UTC' in r.url) as changed:
+            page.get_by_role('combobox',name='Time zone').select_option('UTC')
+        payload=changed.value.json()
+        assert payload['display_dm_max']==1000 and payload['time_tz']=='UTC'
+        with page.expect_response(lambda r:'/api/t1?' in r.url and '2026-09-12T00' in r.url) as historical:
+            page.get_by_label('Observation day').fill('2026-09-12')
+        assert historical.value.json()['t0'].startswith('2026-09-12T00:00')
+        assert 'Historical interval' in page.locator('main').inner_text()
         page.goto(URL+'/review',wait_until='networkidle')
         page.get_by_role('heading',name='Investigation queue',exact=True).wait_for()
         assert page.get_by_role('button',name='Request investigation').count()>0
@@ -50,7 +61,9 @@ def main():
         assert page.get_by_role('button',name='Render history').is_enabled()
         page.screenshot(path=str(OUTPUT/'workspace-antennas.png'),full_page=False)
         page.goto(URL+'/readiness',wait_until='networkidle')
-        page.get_by_role('heading',name='Infrastructure and data availability').wait_for()
+        page.get_by_role('heading',name='What needs attention?').wait_for()
+        assert page.locator('.disk-row').count()==3
+        assert not page.locator('.readiness-details').evaluate('(e)=>e.open')
         page.screenshot(path=str(OUTPUT/'workspace-readiness.png'),full_page=False)
         page.set_viewport_size({'width':390,'height':844})
         page.goto(URL+'/vis',wait_until='networkidle')

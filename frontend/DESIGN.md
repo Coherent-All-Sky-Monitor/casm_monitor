@@ -1,13 +1,14 @@
 # Scientific operator workspace design
 
 This supersedes the initial light, equal-panel, Plotly-oriented design.
-The operator selects data, inspects scientific figures and preserves evidence.
+Monitoring plots appear before investigation controls. The operator can then
+change dates, bounds and selections, or preserve evidence.
 The DSA `dsa110-rt/tools/dashboard/dsa_monitor` workflow is the reference for
 useful task completion, including build, diagnostic review and separate approval.
 It is not authority to copy deployment controls.
 
-1. Dark neutral surfaces, readable axes and restrained blue controls. Current
-   tokens live in `src/workspace.css`: paper `#10151c`, ink `#e2e8ef`, muted
+1. Black page background with restrained near-black surfaces, readable axes and restrained blue controls. Current
+   tokens live in `src/workspace.css`: paper `#000000`, ink `#e2e8ef`, muted
    `#a0aebf`, hairline `#2b3644`, signal `#7cb8df`. No promotional cards,
    decorative emoji, gradients or purple UI accents.
 2. Scientific figures use existing CASM Matplotlib routines. No Plotly runtime

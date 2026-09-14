@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 
 export type Json = Record<string, any>;
-export async function api<T = Json>(url: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+let renderQueue: Promise<unknown> = Promise.resolve();
+export function api<T = Json>(url: string, body?: unknown, headers: Record<string,string> = {}): Promise<T> {
+  if (url !== "/api/science/render") return requestApi<T>(url,body,headers);
+  const next = renderQueue.then(()=>requestApi<T>(url,body,headers));
+  renderQueue = next.catch(()=>undefined);
+  return next;
+}
+async function requestApi<T = Json>(url: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
   const r = await fetch(url, body === undefined ? undefined : {method: "POST", headers: {"Content-Type": "application/json", "X-CASM-Workspace": "1", ...headers}, body: JSON.stringify(body)});
   if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(typeof e.detail === "string" ? e.detail : JSON.stringify(e.detail ?? `HTTP ${r.status}`)); }
   return r.json();
@@ -19,11 +26,7 @@ export function stamp(value: string | number | null | undefined) {
 export const utcInput = (d: Date) => d.toISOString().slice(0,16);
 export function initialWindow(hours = 24) { return {t0: utcInput(new Date(Date.now() - hours*3600000)), t1: utcInput(new Date())}; }
 export function isoInput(s: string) {return new Date(s + (s.endsWith("Z") ? "" : "Z")).toISOString();}
-export function TimeWindow({value, onChange}: {value: {t0: string;t1: string};onChange: (v: {t0:string;t1:string}) => void}) {
-  const [day, setDay] = useState(new Date().toISOString().slice(0,10));
-  const today = () => { const p = new Intl.DateTimeFormat("en-CA", {timeZone:"America/Los_Angeles",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date()); const get = (k:string) => p.find(x => x.type === k)?.value; const date = `${get("year")}-${get("month")}-${get("day")}`; const offset = new Intl.DateTimeFormat("en", {timeZone:"America/Los_Angeles",timeZoneName:"shortOffset"}).formatToParts(new Date()).find(x=>x.type==="timeZoneName")?.value; const h = Number(offset?.replace("GMT", "") || -8); onChange({t0:utcInput(new Date(Date.parse(date+"T00:00:00Z")-h*3600000)),t1:utcInput(new Date())}); };
-  return <div className="time-controls"><div className="choice-row"><button onClick={today}>Today · OVRO</button>{[1,24,168].map(h=><button key={h} onClick={()=>onChange(initialWindow(h))}>{h===1?"Last hour":h===24?"Last 24 h":"Last week"}</button>)}<label>UTC day<input type="date" value={day} onChange={e=>{setDay(e.target.value);if(e.target.value) {const d = new Date(e.target.value+"T00:00Z");onChange({t0:utcInput(d),t1:utcInput(new Date(Math.min(Date.now(),d.getTime()+86400000)))});}}}/></label></div><div className="field-row"><label>From · UTC<input aria-label="From UTC" type="datetime-local" value={value.t0} onChange={e=>onChange({...value,t0:e.target.value})}/></label><label>To · UTC<input aria-label="To UTC" type="datetime-local" value={value.t1} onChange={e=>onChange({...value,t1:e.target.value})}/></label></div></div>;
-}
+export { TimeWindow, TimeZone, LOCAL } from "./TimeControls";
 export function Notice({children}: {children: React.ReactNode}) { return <p className="workspace-notice" role="status">{children}</p>; }
 export function Evidence({value}: {value: unknown}) {return <details className="evidence"><summary>Selection and evidence</summary><pre>{JSON.stringify(value,null,2)}</pre></details>;}
 export function SaveInvestigation({selection, provenance, plotUrl}: {selection: Json;provenance?: Json;plotUrl?: string}) {

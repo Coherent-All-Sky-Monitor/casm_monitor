@@ -14,7 +14,6 @@ import ReadinessPage from "./pages/ReadinessPage";
 import CandEventPage from "./pages/CandEventPage";
 import CandsPage from "./pages/CandsPage";
 import EventsPage from "./pages/EventsPage";
-import ImagingPage from "./pages/ImagingPage";
 
 export default function App() {
   return (
@@ -33,7 +32,6 @@ export default function App() {
           <Route path="/search" element={<T1Page />} />
           <Route path="/review" element={<ReviewPage />} />
           <Route path="/sources" element={<SourceHistoryPage />} />
-          <Route path="/imaging" element={<ImagingPage />} />
           <Route path="/cal" element={<CommissioningPage />} />
           <Route path="/cal/compare" element={<SciencePage compare />} />
           <Route path="/cal/transit" element={<TransitPage />} />

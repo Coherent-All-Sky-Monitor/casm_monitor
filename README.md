@@ -12,6 +12,12 @@ injection recovery, T1/RFI, baseline phase, calibration comparison and independe
 Cyg A validation. Source history and saved investigations retain their evidence.
 The original M0 plan is historical context in [docs/plan.md](docs/plan.md).
 
+The opening page loads rolling-24-hour T1, phase and amplitude plots without a
+render click. Visible rolling views update every two minutes. Date/range controls
+pause rolling; local PDT/PST is default, with UTC optional. Hella DM display is
+0–1000; stored counts and search settings are unchanged. Readiness prioritizes
+attention flags and disk space. Imaging has been removed from the preview UI.
+
 ## Isolated operator workspace
 
 Production remains on port 8060. Run this checkout separately on 8061 with

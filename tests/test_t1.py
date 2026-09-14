@@ -22,6 +22,18 @@ def test_bounded_bins_and_dark_matplotlib(tmp_path, monkeypatch):
     assert "cluster peaks" in result["note"]
     assert sum(result["width_counts"]) == 225
     assert t1.render_t1(result).startswith(b"\x89PNG")
+    from matplotlib.figure import Figure
+    save = Figure.savefig
+    captured = []
+    def inspect(fig, *args, **kwargs):
+        captured.append(fig)
+        return save(fig, *args, **kwargs)
+    monkeypatch.setattr(Figure, 'savefig', inspect)
+    for zone in ('America/Los_Angeles','UTC'):
+        t1.render_t1({**result,'time_tz':zone})
+        fig = captured[-1]
+        assert fig.axes[2].get_ylim() == (0,1000)
+        assert fig.axes[0].get_xlabel() == ('UTC' if zone == 'UTC' else 'OVRO local (PDT/PST)')
     monkeypatch.setattr(t1, "MAX_ROWS", 1)
     partial = t1.build_t1(store, t0="90", t1="110", log_path=tmp_path / "absent.log")
     assert partial["status"] == "partial" and partial["n_candidates"] == 25

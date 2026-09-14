@@ -63,7 +63,7 @@ def build_router(settings, reader):
         if estimated > 256*1024**2 or len(shards)>10000:
             raise HTTPException(400, 'SNAP history exceeds 256 MiB read budget; narrow the time interval')
         selection = req.model_dump()
-        identity = hashlib.sha256(json.dumps([2,selection,[(s['id'],s['t1']) for s in shards]],sort_keys=True).encode()).hexdigest()[:24]
+        identity = hashlib.sha256(json.dumps([3,selection,[(s['id'],s['t1']) for s in shards]],sort_keys=True).encode()).hexdigest()[:24]
         display_bin_s = 60 if stream == STREAM_FULL else 10
         root = cache_dir(settings) / 'snap_views'
         out = root / identity
@@ -93,7 +93,7 @@ def build_router(settings, reader):
                                                       title=f'SNAP transmitted-band history · packet input {req.packet_idx}',
                                                       quantity='Power',chans=None,tz='America/Los_Angeles',
                                                       integration_s=display_bin_s)
-                            fig.savefig(out/'spectrum.png',dpi=120,bbox_inches='tight',facecolor='#111820')
+                            fig.savefig(out/'spectrum.png',dpi=120,bbox_inches='tight',facecolor='#000000')
                             plt.close(fig)
                     except ValueError as exc:
                         raise HTTPException(400,f'Selected SNAP data cannot be rendered: {exc}') from exc
