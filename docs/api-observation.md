@@ -1,5 +1,10 @@
 # Observation overview
 
+This aggregate API is retained by the operator workspace. The primary page
+now uses selectable scientific views described in [api-science.md](api-science.md),
+not the fixed-baseline solar image below. That image remains a compatibility
+product, not the current interaction design.
+
 `GET /api/observation` returns the site clock, observation freshness, array
 layout, recorded deployment membership, solar context and injection recovery.
 It reads small records and cached products. It never opens raw visibility files
@@ -44,6 +49,12 @@ or workers. A bounded manual render may call `render_observation` with a
 read-only production `Store` and preview output settings. No service restart,
 data acquisition, calibration build or deployment follows from viewing it.
 
+Adding `CASM_MONITOR_WORKSPACE=1` explicitly enables the allowlisted local
+render, review and confirmed-build routes, with same-origin protections.
+The retained investigation queue also mirrors newly seen misses locally on
+refresh. These exceptions do not enable operational writes; see `api-review.md`
+and `api-commissioning.md`.
+
 Mean LST uses installed offline Earth-orientation tables with downloads disabled.
 It is a display clock, not a precision calibration astrometry contract.
 
@@ -51,9 +62,9 @@ It is a display clock, not a precision calibration astrometry contract.
 
 The overview queries the existing T2 database with SQLite URI `mode=ro` and
 `query_only=ON`; it never uses the schema-migrating T2 connection helper.
-Counts cover today in UTC and trends cover seven UTC calendar days, capped at
+Counts cover rolling 24 hours and trends cover seven UTC calendar days, capped at
 5000 rows with an explicit partial status beyond the cap. The response includes
-30 recent trials and the latest completed trial. Completed fired trials form
+30 recent trials, all retained canonical misses and the latest completed trial. Completed fired trials form
 the recovery denominator; firing failures, pending/legacy and unknown outcomes
 remain separate. No ledger means unavailable, not a measured zero.
 
@@ -63,6 +74,9 @@ It rejects malformed IDs, arbitrary kinds and symlink escapes. A replay is a
 synthetic pulse re-added to recorded background; matching search evidence
 establishes live recovery. A missing replay does not invalidate recovery.
 No endpoint renders a replay, requests a dump, labels an event or sends Slack.
+The operator workspace adds an explicitly requested investigation queue and
+immutable scientific plot snapshots; see `api-review.md` for its separate
+preview-local write boundary.
 
 ## Documentation impact
 
@@ -71,5 +85,6 @@ navigation and figure refreshing, and adds a shared prepared-array solar
 renderer. Central documentation: `casm-software-docs/docs/guides/monitoring.md`,
 `guides/solar-waterfall.md`, package API/source snapshot and
 `docs/maintaining-docs.md`. Existing science examples retain historical inputs.
-Cross-day calibration, Cyg A modeling and layout-policy implementation remain
-deferred. Fourier Space/Kafka code and production observation state are unchanged.
+The superseding workspace implements cross-day Sun-phase comparison and
+stationary Cyg A/control modeling. Layout-policy implementation remains deferred.
+Fourier Space/Kafka code and production observation state are unchanged.

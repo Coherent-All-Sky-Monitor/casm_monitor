@@ -41,8 +41,10 @@ def test_denominator_and_missing_trial_evidence(tmp_path):
     before = settings.t2_db.read_bytes()
     result = overview.build_injection_overview(settings, now=NOW, events_root=tmp_path / "events")
     assert result["status"] == "ok"
-    assert result["counts"]["completed_fired"] == 3
-    assert result["counts"]["recovery_fraction"] == 1 / 3
+    assert result["counts"]["completed_fired"] == 4
+    assert result["counts"]["recovery_fraction"] == 1 / 2
+    assert result["window_start_utc"] == "2026-09-12T23:00:00+00:00"
+    assert len(result["misses"]) == 2
     assert result["counts"]["pending"] == result["counts"]["unknown"] == 1
     assert result["latest_completed"]["outcome"] == "fire_failed"
     assert len(result["trend"]) == 7

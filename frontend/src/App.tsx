@@ -2,18 +2,19 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import AlertLine from "./components/AlertLine";
 import Header from "./components/Header";
 import DiagnosticNav from "./components/DiagnosticNav";
-import ObservationPage from "./pages/ObservationPage";
+import OperationsPage from "./pages/OperationsPage";
+import SciencePage from "./pages/SciencePage";
+import ReviewPage from "./pages/ReviewPage";
+import T1Page from "./pages/T1Page";
+import CommissioningPage from "./pages/CommissioningPage";
+import SourceHistoryPage from "./pages/SourceHistoryPage";
+import SnapWorkspacePage from "./pages/SnapWorkspacePage";
+import TransitPage from "./pages/TransitPage";
 import ReadinessPage from "./pages/ReadinessPage";
-import AntennasPage from "./pages/AntennasPage";
-import CalBuildPage from "./pages/CalBuildPage";
-import CalPage from "./pages/CalPage";
 import CandEventPage from "./pages/CandEventPage";
 import CandsPage from "./pages/CandsPage";
 import EventsPage from "./pages/EventsPage";
 import ImagingPage from "./pages/ImagingPage";
-import SearchPage from "./pages/SearchPage";
-import SnapsPage from "./pages/SnapsPage";
-import VisPage from "./pages/VisPage";
 
 export default function App() {
   return (
@@ -24,15 +25,19 @@ export default function App() {
       <main className="main">
         <Routes>
           <Route path="/" element={<Navigate to="/observation" replace />} />
-          <Route path="/observation" element={<ObservationPage />} />
+          <Route path="/observation" element={<OperationsPage />} />
           <Route path="/readiness" element={<ReadinessPage />} />
-          <Route path="/antennas" element={<AntennasPage />} />
-          <Route path="/snaps" element={<SnapsPage />} />
-          <Route path="/vis" element={<VisPage />} />
-          <Route path="/search" element={<SearchPage />} />
+          <Route path="/antennas" element={<SnapWorkspacePage />} />
+          <Route path="/snaps" element={<SnapWorkspacePage />} />
+          <Route path="/vis" element={<SciencePage />} />
+          <Route path="/search" element={<T1Page />} />
+          <Route path="/review" element={<ReviewPage />} />
+          <Route path="/sources" element={<SourceHistoryPage />} />
           <Route path="/imaging" element={<ImagingPage />} />
-          <Route path="/cal" element={<CalPage />} />
-          <Route path="/cal/:tag" element={<CalBuildPage />} />
+          <Route path="/cal" element={<CommissioningPage />} />
+          <Route path="/cal/compare" element={<SciencePage compare />} />
+          <Route path="/cal/transit" element={<TransitPage />} />
+          <Route path="/cal/:tag" element={<CommissioningPage />} />
           <Route path="/cands" element={<CandsPage />} />
           <Route path="/cands/:name" element={<CandEventPage />} />
           <Route path="/events" element={<EventsPage />} />

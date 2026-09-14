@@ -97,7 +97,7 @@ def build_injection_overview(
 ) -> dict[str, Any]:
     """Read at most 5001 ledger rows in seven UTC calendar days.
 
-    Counts describe today in UTC; trend includes today and six preceding days.
+    Counts describe rolling 24 hours; trend includes today and six preceding days.
     An unset outcome is exposed separately as pending/legacy bookkeeping.
     If the row budget is exceeded, counts are explicitly incomplete.
     """
@@ -105,11 +105,13 @@ def build_injection_overview(
     now = now.replace(tzinfo=timezone.utc) if now.tzinfo is None else now.astimezone(timezone.utc)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     start = today - timedelta(days=6)
+    rolling_start = now - timedelta(hours=24)
     result: dict[str, Any] = {
         "status": "unavailable", "as_of_utc": now.isoformat(),
-        "window_start_utc": today.isoformat(), "trend_start_utc": start.isoformat(),
+        "window_start_utc": rolling_start.isoformat(), "window_end_utc": now.isoformat(),
+        "window_label": "Rolling 24 hours", "trend_start_utc": start.isoformat(),
         "counts": _counts([]), "counts_complete": False, "trend": [],
-        "latest_completed": None, "recent": [],
+        "latest_completed": None, "recent": [], "misses": [],
         "pending_note": "Unset outcomes are pending or legacy bookkeeping, not search misses.",
         "recovery_note": "Completed, fired shots only; compare like DM, width, S/N and observing conditions.",
         "source": str(settings.t2_db),
@@ -135,7 +137,8 @@ def build_injection_overview(
     result.update(status="partial" if truncated else "ok", counts_complete=not truncated)
     if truncated:
         result["reason"] = "Seven-day row budget exceeded; displayed counts are incomplete."
-    result["counts"] = _counts([row for row in rows if row["inject_utc"][:10] == today.date().isoformat()])
+    result["counts"] = _counts([row for row in rows if row["inject_utc"] >= rolling_start.isoformat()])
+    result["misses"] = [_shot(row, events_root) for row in rows if row["outcome"] in inject_outcome.MISSES]
     result["trend"] = [
         {"date_utc": day.date().isoformat(), **_counts([row for row in rows if row["inject_utc"][:10] == day.date().isoformat()])}
         for day in (start + timedelta(days=i) for i in range(7))

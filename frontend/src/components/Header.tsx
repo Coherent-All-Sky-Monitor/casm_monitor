@@ -11,7 +11,7 @@ const TABS: { path: string; label: string }[] = [
  * the status sentence below. */
 export default function Header() {
   const { pathname } = useLocation();
-  const group = /^\/(snaps|vis|antennas)/.test(pathname) ? "/antennas" : /^\/(cal|events|readiness)/.test(pathname) ? "/readiness" : "/observation";
+  const group = /^\/(snaps|antennas)/.test(pathname) ? "/antennas" : /^\/(cal|events|readiness|review)/.test(pathname) ? "/readiness" : "/observation";
   return (
     <header className="header">
       <h1 className="header__title">CASM · OVRO</h1>

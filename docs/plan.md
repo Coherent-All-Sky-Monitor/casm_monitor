@@ -1,11 +1,35 @@
 # casm_monitor: independent CASM monitoring web service
 
-Current direction, approved 2026-09-13: Observation, Readiness and Antennas
-are the three top-level views. The isolated read-only first milestone is
-documented in `api-observation.md`; canonical scope and authority are in
-casm-wiki/monitor-product-direction.md. The original milestone plan below
-is historical context, not new authorization for operations. Grafana is
-deferred and Fourier Space/Kafka code must not be modified by this work.
+## Current workspace supersedes the historical plan
+
+Operator requirements were refined on 2026-09-13: dark scientific presentation,
+no Plotly, selection-driven time/frequency and baseline exploration, rolling
+24-hour injection review, per-gulp T1 evidence, calibration-day comparisons,
+independent stationary Cyg A checks, B0329 history and requested investigations.
+Observation, Readiness and Antennas remain the primary navigation groups.
+
+Implemented contracts: [api-science.md](api-science.md),
+[api-review.md](api-review.md) and [api-commissioning.md](api-commissioning.md).
+The SNAP workspace adapts existing `/api/snaps/history` through
+`POST /api/snap-workspace/render`, with bounded reads and saved scientific
+figures. The initial static overview in `api-observation.md` remains supporting
+evidence, not the current exploration workflow.
+
+The isolated port-8061 workspace reads production data without changing it and
+stores figures, queue evidence and manually confirmed canonical Sun builds under
+its explicit artifact root. Newly seen misses persist until human review.
+Requesting investigation records intent; no runner or Slack integration starts.
+Deployment, restart defaults, SNAP operations, injections and dumps remain
+disabled. Grafana is deferred; Fourier Space/Kafka code is outside edit authority.
+Canonical scope: casm-wiki/monitor-product-direction.md and
+casm-wiki/monitor-operator-workflow.md.
+
+## Historical plan, 2026-09-08
+
+The text below preserves the original design and decisions. Its light styling,
+Plotly stack, deployment controls, active-count examples and historical milestone
+claims do not describe or authorize the current workspace. Do not implement an
+old requirement below in preference to the current contracts above.
 
 Plan file. Repo: `/home/casm/software/dev/casm_monitor` (empty, remote
 `Coherent-All-Sky-Monitor/casm_monitor`, branch `main`). Written 2026-09-08 after

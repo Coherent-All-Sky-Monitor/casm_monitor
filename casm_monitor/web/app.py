@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -40,6 +41,12 @@ from .vis import build_router as build_vis_router
 from .search import build_router as build_search_router
 from .figures import build_router as build_figures_router
 from .observation import build_router as build_observation_router
+from .science import build_router as build_science_router
+from .snap_workspace import build_router as build_snap_workspace_router
+from .review import build_router as build_review_router
+from .t1 import build_router as build_t1_router
+from .commissioning import build_router as build_commissioning_router
+from .source_history import build_router as build_source_history_router
 
 log = logging.getLogger("casm_monitor.web")
 
@@ -100,6 +107,14 @@ code{background:#eee;padding:0 .2rem}</style></head>
 def create_app(settings: Settings | None = None, *, read_only: bool = False) -> FastAPI:
     settings = settings or load_settings()
     read_only = read_only or os.environ.get("CASM_MONITOR_READ_ONLY") == "1"
+    workspace = os.environ.get("CASM_MONITOR_WORKSPACE") == "1"
+    if workspace:
+        if not read_only or settings.observation_cache_root is None:
+            raise ValueError("Workspace requires read-only production Store and explicit isolated artifact root")
+        root = Path(settings.observation_cache_root).resolve()
+        production = Path(settings.store_root).resolve()
+        if root == production or production in root.parents:
+            raise ValueError("Workspace artifact root must be outside the production store")
 
     # The write handle also ensures the schema exists so a fresh store can be
     # served before the collector's first pass.
@@ -127,12 +142,18 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
     app.state.reader = reader
     app.state.writer = writer
     app.state.ws_tasks = ws_tasks
-    if read_only:
-        @app.middleware("http")
-        async def refuse_writes(request, call_next):
-            if request.method not in {"GET", "HEAD", "OPTIONS"}:
-                return JSONResponse({"detail": "Read-only observation preview"}, status_code=403)
-            return await call_next(request)
+    @app.middleware("http")
+    async def refuse_writes(request, call_next):
+        local_route = re.fullmatch(r"/api/(?:science/(?:render|transit)|snap-workspace/render|review(?:/[A-Za-z0-9_-]+/request)?|commissioning/(?:stage|[0-9a-f]{32}/start))", request.url.path)
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            if read_only or local_route:
+                allowed = workspace and request.method == "POST" and re.fullmatch(
+                    r"/api/(?:science/(?:render|transit)|snap-workspace/render|review(?:/[A-Za-z0-9_-]+/request)?|commissioning/(?:stage|[0-9a-f]{32}/start))", request.url.path)
+                origin = f"{request.url.scheme}://{request.url.netloc}"
+                safe_origin = request.url.hostname in {"localhost", "127.0.0.1", "::1", "testserver"} and request.headers.get("origin") == origin
+                if not allowed or not safe_origin or request.headers.get("x-casm-workspace") != "1":
+                    return JSONResponse({"detail": "Operational writes disabled. Local workspace requests require same-origin protection."}, status_code=403)
+        return await call_next(request)
 
     # SNAPs tab (M1): boards, live Kafka bandpass, history, trends. Read-only
     # handle; snaps.py's 501 board-read stubs auto-disable once this module is
@@ -152,6 +173,12 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
     app.include_router(build_search_router(reader, settings))
     app.include_router(build_figures_router(settings))
     app.include_router(build_observation_router(settings, reader))
+    app.include_router(build_science_router(settings, reader))
+    app.include_router(build_snap_workspace_router(settings, reader))
+    app.include_router(build_review_router(settings))
+    app.include_router(build_t1_router(reader, settings))
+    app.include_router(build_commissioning_router(settings))
+    app.include_router(build_source_history_router())
 
     # Candidates tab (M5): a prefix-aware router over casm_t3's own T2 event
     # store (mount only — see casm_monitor.web.cands module docstring for why

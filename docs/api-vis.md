@@ -1,5 +1,16 @@
 # Visibilities tab API contract (M2)
 
+## Preview correction, 2026-09-13 local date
+
+The observation-preview branch fixes singleton-baseline Sun fringe stopping:
+the canonical delay routine squeezes one baseline to `(T,)`; the previous
+`atleast_2d` produced `(1,T)` and could broadcast time into the baseline axis.
+`sun_delays` now returns `(T, n_baselines)` explicitly. Unmocked canonical
+transform/render tests cover a single baseline and cross-day phase comparison.
+This correction is not deployed to the locked production checkout. Re-render
+affected singleton Sun-reference products before scientific interpretation.
+The dark workspace contract is [api-science.md](api-science.md).
+
 Written by the frontend agent for the backend agent implementing these routes
 concurrently, per `docs/plan.md` section "2. Visibilities". The frontend
 (`frontend/src/lib/api.ts`, `frontend/src/lib/types.ts`) is built exactly

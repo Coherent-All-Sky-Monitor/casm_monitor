@@ -6,8 +6,49 @@ that shows it. Additive by construction — it never touches the medusa /
 Fourier-Space flow (read-only Redis PING, group-less Kafka reads, no medusa
 restarts, no SNAP programming path).
 
-M0 (this milestone) ships the package, the store, the status strip, the events
-table, the job queue and the systemd units. Plan: `docs/plan.md`.
+The current operator workspace evolves the existing monitor into a dark,
+server-rendered scientific interface without Plotly. Its morning workflow is
+injection recovery, T1/RFI, baseline phase, calibration comparison and independent
+Cyg A validation. Source history and saved investigations retain their evidence.
+The original M0 plan is historical context in [docs/plan.md](docs/plan.md).
+
+## Isolated operator workspace
+
+Production remains on port 8060. Run this checkout separately on 8061 with
+existing production stores read-only and an explicit local artifact directory:
+
+```bash
+CASM_MONITOR_OBSERVATION_ROOT=/home/casm/scratch/casm-observation-preview \
+CASM_MONITOR_READ_ONLY=1 CASM_MONITOR_WORKSPACE=1 PYTHONDONTWRITEBYTECODE=1 \
+/home/casm/software/dev/casm_venvs/casm_offline_env/bin/python -m casm_monitor.web.app --port 8061
+```
+
+Workspace mode permits only the narrowly validated local scientific rendering,
+evidence saving, investigation requests and manually confirmed Sun-build routes.
+It does not enable the production job queue, deployment, restart-default changes,
+injections, dumps, SNAP acquisition/programming or Slack. Do not start collectors
+or the production job worker for this preview. Fourier Space/Kafka is unchanged;
+Grafana remains deferred.
+
+- [Scientific exploration](docs/api-science.md): geometry-based baseline
+  selection, raw/Sun-fringe-stopped amplitude and phase, autos, selected time and
+  frequency ranges, cross-day comparisons and stationary Cyg A checks. Reads are
+  bounded; native recordings require explicit selection rather than fallback.
+- [Search and investigations](docs/api-review.md): rolling 24-hour injection
+  statistics, emitted T1 candidates and separately evidenced raw-peak cap warnings.
+  Queue refresh persists newly seen misses locally. They remain queued until a
+  human requests investigation; **requested does not mean running**. Saved plots
+  retain exact pixels, selection and provenance. No agent runner is connected.
+- [Build review and source history](docs/api-commissioning.md): reviewed Sun
+  recipe and antenna snapshot, separate manual build confirmation through the
+  canonical generator, diagnostic review and B0329 ledger/plot history. A build
+  is not deployment; no expensive build is run just by opening the page.
+
+`POST /api/snap-workspace/render` adapts the existing SNAP history reader and
+shared scientific renderer without acquisition. It selects a time/frequency
+interval from transmitted-band caches, caps manifest-declared reads at 256 MiB,
+refuses time averaging that would hide gaps, and exposes PNG/NPZ/metadata
+downloads. Historical samples do not establish a fresh board measurement.
 
 ## Layout
 
@@ -23,7 +64,10 @@ table, the job queue and the systemd units. Plan: `docs/plan.md`.
 
     /home/casm/software/dev/casm_venvs/casm_offline_env/bin/pip install -e . --no-deps
 
-## Run
+## Production service reference
+
+These are existing deployment commands, not required workspace setup. Running
+or restarting production services requires separate operator authority.
 
     casm-monitor-collect          # collectors -> /mnt/nvme3/casm_monitor
     casm-monitor-web              # FastAPI/uvicorn on 127.0.0.1:8060
@@ -39,12 +83,12 @@ As services (units are linked but never enabled/started by the script):
     bash deploy/install.sh
     systemctl --user enable --now casm-monitor-collect casm-monitor-web casm-monitor-jobs
 
-The service writes nothing outside its store root (`/mnt/nvme3/casm_monitor`):
+The production collectors/jobs write only inside their store root (`/mnt/nvme3/casm_monitor`):
 every shard path, job directory and retention deletion is resolved and refused
 unless it is inside that root, stream names and shard ids are restricted to
 `[A-Za-z0-9_.-]+`, and deleted shards go through `store_root/.trash/` rather
-than an `rm -rf` of a manifest-supplied path. `deploy/install.sh` is the single,
-documented exception: run by an operator by hand, it writes the unit symlinks
+than an `rm -rf` of a manifest-supplied path. Service installation is a separate
+operator action: `deploy/install.sh` writes the unit symlinks
 and their `CASM_MONITOR_CONFIG` drop-ins under
 `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/`, which is how a systemd
 `--user` unit gets installed at all. No collector, job or web handler ever calls
@@ -69,10 +113,12 @@ needs a CSRF token and a single-use authorization — see the security-model
 section of `docs/api-cal.md`, which also documents the
 `store_root/inhibit/deploy.active` marker `casm-track` operators should test.
 
-The observation preview adds `/api/observation` and a cached solar-context
-figure. Wiring, intended participation and actual per-beam weight membership
-are reported separately. See [docs/api-observation.md](docs/api-observation.md)
-for bounded rendering, evidence semantics and the read-only preview setup.
+The workspace keeps `/api/observation` for aggregate evidence and separates
+wiring, intended participation and inspected per-beam weight membership.
+[docs/api-observation.md](docs/api-observation.md) documents that original
+overview contract; the selected-data workspace manuals above supersede its
+static-front-page scope. Existing production operation routes remain disabled
+in the isolated workspace.
 
 ## Tests
 

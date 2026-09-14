@@ -1,107 +1,84 @@
 # casm_monitor frontend
 
-React + TypeScript app (Vite), built once and committed as static assets into
-`../casm_monitor/web/static/` so the backend never needs node at runtime. See
-`../docs/plan.md` ("Decisions" -> Stack) for the rationale.
+React and TypeScript with Vite, built into `../casm_monitor/web/static/`.
+The backend needs no Node runtime. The current workspace uses a dark interface
+and server-rendered scientific figures, with no Plotly in the reachable bundle.
+Legacy plotting source files remain for reference, not as current design rules.
+See [DESIGN.md](DESIGN.md) and the superseding section of
+[the original plan](../docs/plan.md).
 
-## Install
+## Build and development
 
-Node 18 (`/usr/bin/node`, v18.19.1) and npm 9.2 are available on corr1. There
-is no direct internet; go through the proxy:
+Reuse the available `node_modules` dependency tree when possible. A fresh
+environment can use `npm install`; `.npmrc` contains this machine's npm proxy
+configuration. Installing another plotting stack is not part of this workspace.
 
-```sh
-export http_proxy=http://10.70.0.1:8118 https_proxy=http://10.70.0.1:8118
-```
-
-`.npmrc` in this directory already sets `proxy`/`https-proxy` for npm, so a
-plain install works once the shell env vars above are exported (needed for
-npm's own bootstrap and for any other proxy-aware tool):
-
-```sh
-cd frontend
-npm install
-```
-
-## Dev
-
-```sh
-npm run dev
-```
-
-Starts the Vite dev server. `/api` and `/ws` are proxied to
-`http://127.0.0.1:8060` (see `vite.config.ts`), so run the backend
-(`casm-monitor-web.service` or its dev equivalent) on that port first.
-
-## Build
-
-```sh
+```bash
 npm run build
 ```
 
-Type-checks with `tsc --noEmit` then runs `vite build`. Output goes to
-`../casm_monitor/web/static/` (`emptyOutDir: true`, `base: '/'`) and is the
-thing that gets committed — `frontend/node_modules` and `frontend/dist` are
-gitignored, `casm_monitor/web/static/*` is not.
+This type-checks and builds the static assets. `emptyOutDir: true` replaces this
+checkout's old assets; build only in the isolated workspace, not the running
+production checkout. Commit the generated assets with the source. Do not commit
+`node_modules`, including a local dependency-reuse symlink.
 
-## Preview
+`npm run dev` starts Vite. Its existing `/api` and `/ws` proxy targets port 8060;
+that default is **production**, not the isolated writable-evidence workspace.
+For end-to-end workspace checks use the built application on port 8061 with the
+environment flags in the [repository README](../README.md), rather than sending
+new workspace requests to production. `npm run preview` alone has no backend.
 
-```sh
-npm run preview
-```
+## Interface and routes
 
-Serves the production build locally without a backend, for a quick sanity
-check when :8060 isn't up.
+Three primary tabs group the operator workflow:
 
-## Look
+- Observation: rolling 24-hour injection recovery, T1/RFI, baseline phase,
+  source history, candidates and existing imaging products.
+- Readiness: infrastructure, investigation queue, calibration-day comparison,
+  independent Cyg A transit, manually confirmed build/review and events.
+- Antennas: geometry-selected baselines and existing SNAP history.
 
-`DESIGN.md` in this directory is the whole visual spec: white paper, a grid of
-equal panels, tiny grey panel titles, thin signal-blue lines, viridis
-waterfalls, and state written as sentences rather than badges. Tokens live in
-`src/lib/theme.ts` (for Plotly) and as CSS custom properties at the top of
-`src/styles.css` (for the page); keep the two copies identical.
+`/observation` opens the morning-check page. `/vis` and `/antennas` use the
+selected-data explorer; `/search` uses T1 scientific plots; `/snaps` uses the
+bounded transmitted-band history adapter. `/cal/compare`, `/cal/transit`,
+`/cal` and `/sources` expose their respective scientific workflows. Existing
+candidate/event and imaging routes remain available; no other service is retired.
 
-## Layout
+The scientific controls select baseline pairs, quantity, reference, date/time and
+frequency interval. Rendering is explicit and bounded; no interactive Plotly
+widget or whole-array/raw-data fallback runs silently. Every new scientific view
+provides its image, numerical product and metadata downloads where supported.
+Saved investigations copy immutable plot pixels and preserve the selected data
+and processing. Workspace queue refresh retains newly seen injection misses
+locally; an explicit request changes `queued` to `requested`, not `running`.
+There is no agent executor or Slack integration.
 
-The default route is `/observation`. Three primary tabs organize existing
-diagnostics: Observation (science overview, search, candidates and imaging),
-Readiness (status, calibration products and events), and Antennas (SNAPs and
-visibilities). Existing diagnostic URLs remain valid.
+T1 emitted candidate distributions and raw-peak cap warnings have different
+evidence. The fork's clustered output count cannot measure its pre-clustering
+10k cap. Coverage and bounded log-tail limits must stay visible. Missing data,
+missing artifacts and failed requests must not become zero counts or flat spectra.
 
-The science overview polls the read-only `/api/observation` endpoint every
-30 seconds. It shows recorded solar products and injection outcomes, including
-explicitly labelled synthetic replay links. Layout wiring, intended selection,
-and inspected deployed membership are distinct; the beam selector highlights
-the inspected union or a single beam. Counts never come from filenames.
-The coordinate selector compares current-layout and recorded weights-product
-positions; product mode omits antennas without product coordinates. Unresolved
-slot identities are not highlighted as deployed. A replay thumbnail names its
-own trial, which can differ from the latest completed trial.
-An API failure retains the last overview with a visible stale-evidence notice.
-SNAP and visibility figure manifests are refreshed every minute; their images
-remain cached by render timestamp. No scientific computation is triggered by
-these page refreshes.
-Interactive SNAP history defaults to the last hour; the saved overview figures
-retain their existing 24-hour window.
+Build staging shows the recipe and antenna selection. A separate confirmation
+starts only the canonical Sun calibration driver under resource bounds; it is
+not a deployment approval. No SNAP acquisition, operational injection/dump,
+deployment or restart-default change is enabled by workspace navigation.
 
-The frontend uses the aggregate API's local, UTC and LST values; the displayed
-clock updates with its 30-second evidence poll. It is not a continuously ticking
-instrument clock. Product timestamps and observation coverage are shown
-separately from the time the browser last checked the API.
+## Implementation pointers
 
-- `src/lib/` — `api.ts` (typed fetch client), `types.ts` (API contract types),
-  `toast.ts` (error bus feeding the one alert sentence), `useStatus.ts`
-  (WebSocket + polling fallback), `statusSentence.ts` (status payload to
-  prose), `snapText.ts` (every string the SNAPs page says), `theme.ts` +
-  `plotStyle.ts` (design tokens and the shared Plotly styling), `useColumns.ts`
-  (grid columns, so only the bottom row and left column carry axis ticks),
-  `useUrlParam.ts` / `timeRange.ts` (URL-backed control state), `plotly.ts`
-  (single Plotly import point — the cartesian bundle, which is the smallest
-  dist carrying the `heatmap` trace the waterfalls need).
-- `src/components/` — `Header`, `StatusLine`, `AlertLine`, and the plain
-  controls (`Segmented`, `TimeRangePicker`); `components/snaps/` has
-  `SpectrumPanel` (one input), `BoardSection` (one board's line plus its
-  panels) and `InputDetail` (the expanded view that replaces the grid).
-- `src/pages/` — one page per tab; `PlaceholderPage` renders the one-sentence
-  copy from `lib/placeholderCopy.ts`, `EventsPage` is the real M0 Events tab.
-- `?mock=1` on the SNAPs page serves synthetic boards from `lib/mockSnaps.ts`,
-  for working on the layout without the backend.
+- `src/App.tsx`: current reachable routes; do not infer bundle use from legacy
+  source files merely remaining in the tree.
+- `src/workspace.css`: current dark tokens, layout and controls, loaded after
+  the retained base stylesheet.
+- `src/components/Workspace.tsx`: range controls, plot/download presentation and
+  saving investigation selections.
+- `src/pages/SciencePage.tsx`, `T1Page.tsx`, `ReviewPage.tsx`,
+  `SnapWorkspacePage.tsx`, `CommissioningPage.tsx`, `TransitPage.tsx` and
+  `SourceHistoryPage.tsx`: operator workflow pages.
+- API contracts: [science](../docs/api-science.md),
+  [search/review](../docs/api-review.md),
+  [commissioning/source history](../docs/api-commissioning.md).
+
+Run the repository's `scripts/check_workspace_browser.py` against the isolated
+backend for desktop/mobile overflow, route, scientific-render and safe-request
+checks. Browser checks are not proof of scientific usefulness or calibration
+validity; compare the selected plots and their provenance with trusted workflows.

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -331,7 +332,13 @@ def test_stats_route_and_funnel_plot(cands_settings: Settings) -> None:
         assert "render_figures" in plot.json()["detail"]
 
 
-def test_injections_route(cands_settings: Settings) -> None:
+def test_injections_route(cands_settings: Settings, monkeypatch) -> None:
+    # The route's rolling-day count must use the fixture's date, not the wall
+    # clock on whichever day pytest runs. Pagination itself is not time-limited.
+    from casm_t3.web import statsplot
+    now = datetime(2026, 9, 9, 18, tzinfo=timezone.utc)
+    monkeypatch.setattr(statsplot, "utc_cut", lambda hours: (
+        now - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S"))
     conn = _connect(cands_settings.t2_db)
     try:
         conn.execute(

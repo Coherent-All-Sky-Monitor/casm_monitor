@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 interface Counts { recovered: number; missed_t1: number; missed_t2: number; fire_failed: number; pending: number; unknown: number; completed_fired: number; recovery_fraction: number | null }
 interface Injection { file_id: string; inject_utc: string; beam: number; dm?: number; rec_snr?: number; inject_snr?: number; outcome: string | null; fail_reason?: string; replay?: { available: boolean; caption: string; artifacts: { png?: { available: boolean; url: string } } } }
 interface Point { antenna: number; name: string; east_m: number; north_m: number; wired: boolean | null; intended: boolean | null; deployed: boolean | null; slot_identity_matches?: boolean; geometry_source?: string; deployed_east_m?: number; deployed_north_m?: number }
-interface Overview {
+export interface Overview {
   clock: { utc: string; local: string; lst: string };
   location: { name: string; latitude_deg: number; longitude_deg: number; elevation_m: number };
   observation: { id: string | null; state?: { value: string; age_s: number | null }; vis_age?: { value: number | null; age_s: number | null } };
@@ -27,7 +27,7 @@ function clockStamp(value: string | null | undefined, timeZone = "UTC") {
 function stamp(value: string | null | undefined) { return clockStamp(value); }
 function age(value: string | null | undefined) { const s = value ? (Date.now() - Date.parse(value)) / 1000 : NaN; return Number.isFinite(s) ? s < 120 ? `${Math.max(0, Math.round(s))} s ago` : s < 7200 ? `${Math.round(s / 60)} min ago` : `${(s / 3600).toFixed(1)} h ago` : "age unknown"; }
 
-function Geometry({ data }: { data: Overview }) {
+export function Geometry({ data }: { data: Overview }) {
   const [beam, setBeam] = useState("union");
   const [coordinates, setCoordinates] = useState("current");
   const points = data.layout.points.map(p => coordinates === "product" ? {

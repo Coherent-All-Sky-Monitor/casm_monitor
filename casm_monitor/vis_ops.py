@@ -281,7 +281,9 @@ def sun_delays(
     times = np.atleast_1d(np.asarray(times_unix, dtype=np.float64))
     s_enu = source_enu("sun", times)
     tau = geometric_delay(s_enu, baseline_vectors(positions_enu, pairs))
-    return np.atleast_2d(np.asarray(tau, dtype=np.float64))
+    # geometric_delay squeezes its one-baseline axis to (T,). at least_2d
+    # would produce (1,T), making time broadcast into the baseline dimension.
+    return np.asarray(tau, dtype=np.float64).reshape(times.size, len(pairs))
 
 
 def fringe_stop_tfb(

@@ -12,6 +12,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -50,6 +51,17 @@ from casm_monitor.web.search import build_router, field_edges, step_and_bins, wi
 OBS = "2026-09-04-16:42:39"
 OBS_UNIX = utc_start_to_unix(OBS)
 HEADER = "SNR SAMP_START TIME_START WIDTH DM_IDX DM BEAM_IDX\n"
+
+
+@pytest.fixture
+def fixed_observation_clock(monkeypatch):
+    """Keep dated ingestion fixtures inside the real seven-day TTL.
+
+    Patch only this collector's clock object, not Python's shared time module;
+    dynamic backfill/retention tests below still exercise their own timestamps.
+    """
+    now = utc_start_to_unix("2026-09-09-18:00:00")
+    monkeypatch.setattr(search_mod, "time", SimpleNamespace(time=lambda: now))
 
 
 def row(snr: float, samp: int, width: int, dm_idx: int, dm: float, beam: int) -> str:
@@ -300,7 +312,7 @@ def make_collector(settings: Settings, runner) -> SearchCollector:
     )
 
 
-def test_tick_ingests_both_nodes_and_watermarks_advance(settings, store, ctx) -> None:
+def test_tick_ingests_both_nodes_and_watermarks_advance(settings, store, ctx, fixed_observation_clock) -> None:
     for job in (0, 1, 2, 3):
         write_file(settings, OBS, job, HEADER + row(16.0 + job, 100 + job, 3, 4, 50.0, 64 * job + 1))
     corr2_files = {
@@ -338,7 +350,7 @@ def test_tick_ingests_both_nodes_and_watermarks_advance(settings, store, ctx) ->
     assert store.query("SELECT COUNT(*) AS n FROM cands")[0]["n"] == 10
 
 
-def test_partial_last_line_is_completed_next_tick(settings, store, ctx) -> None:
+def test_partial_last_line_is_completed_next_tick(settings, store, ctx, fixed_observation_clock) -> None:
     write_file(settings, OBS, 0, HEADER + row(16.0, 100, 3, 4, 50.0, 1) + "17.5 8300 0.0001 4")
     collector = make_collector(settings, fake_ssh({}))
     collector.collect(ctx)
@@ -351,7 +363,7 @@ def test_partial_last_line_is_completed_next_tick(settings, store, ctx) -> None:
     assert snrs == [16.0, 17.5]
 
 
-def test_failing_insert_leaves_watermark_unchanged(settings, store, ctx) -> None:
+def test_failing_insert_leaves_watermark_unchanged(settings, store, ctx, fixed_observation_clock) -> None:
     """A candidate/bin insert failure must not advance the byte watermark
     (review P0): the whole chunk commit is one transaction."""
     write_file(settings, OBS, 0, HEADER + row(16.0, 100, 3, 4, 50.0, 1))
@@ -384,7 +396,7 @@ def test_failing_insert_leaves_watermark_unchanged(settings, store, ctx) -> None
     ).stat().st_size
 
 
-def test_obs_rollover_resets_watermarks_and_emits_event(settings, store, ctx) -> None:
+def test_obs_rollover_resets_watermarks_and_emits_event(settings, store, ctx, fixed_observation_clock) -> None:
     write_file(settings, OBS, 0, HEADER + row(16.0, 100, 3, 4, 50.0, 1))
     collector = make_collector(settings, fake_ssh({}))
     collector.collect(ctx)
@@ -409,7 +421,7 @@ def test_obs_rollover_resets_watermarks_and_emits_event(settings, store, ctx) ->
     assert sorted(float(r["snr"]) for r in store.query("SELECT snr FROM cands")) == [16.0, 19.0]
 
 
-def test_corr2_unreachable_is_reported_not_fatal(settings, store, ctx) -> None:
+def test_corr2_unreachable_is_reported_not_fatal(settings, store, ctx, fixed_observation_clock) -> None:
     write_file(settings, OBS, 0, HEADER + row(16.0, 100, 3, 4, 50.0, 1))
     for job in JOBS_CORR2:
         write_file(settings, OBS, job, HEADER + row(20.0, 200, 4, 5, 60.0, 64 * job + 2))
