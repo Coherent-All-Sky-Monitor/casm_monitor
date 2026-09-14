@@ -5,3 +5,10 @@ __pycache__/
 node_modules/
 frontend/dist/
 .pytest_cache/
+
+# Claude Code and Codex instruction files stay local, never in the public history.
+CLAUDE.md
+AGENTS.md
+HANDOVER.md
+.claude/
+.codex/
