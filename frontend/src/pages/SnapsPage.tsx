@@ -215,7 +215,7 @@ export default function SnapsPage() {
   }, [api, reading, retryAfterS, pollJob, allBoardIps]);
 
   // --- history mode ------------------------------------------------------
-  const [histRange] = useUrlParam("hist_range_range", "24h");
+  const [histRange] = useUrlParam("hist_range_range", "1h");
   const [histFrom] = useUrlParam("hist_range_from", "");
   const [histIdx, setHistIdx] = useUrlParam("hist_i", "0");
 
@@ -331,7 +331,7 @@ export default function SnapsPage() {
           paramKey="input_set"
           defaultValue="beamforming"
           options={[
-            { value: "beamforming", label: "beamforming" },
+            { value: "beamforming", label: "intended" },
             { value: "all", label: "all 12 ADCs" },
           ]}
         />
@@ -376,7 +376,7 @@ export default function SnapsPage() {
           </span>
         </span>
         {view === "interactive" && mode === "history" && (
-          <TimeRangePicker paramPrefix="hist_range" defaultRange="24h" />
+          <TimeRangePicker paramPrefix="hist_range" defaultRange="1h" />
         )}
       </div>
 

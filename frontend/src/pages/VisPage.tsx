@@ -222,7 +222,7 @@ export default function VisPage() {
           paramKey="set"
           defaultValue="live"
           options={[
-            { value: "live", label: "live" },
+            { value: "live", label: "intended" },
             { value: "wired", label: "wired" },
           ]}
           onChange={setSet}

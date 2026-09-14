@@ -1,5 +1,12 @@
 # casm_monitor: independent CASM monitoring web service
 
+Current direction, approved 2026-09-13: Observation, Readiness and Antennas
+are the three top-level views. The isolated read-only first milestone is
+documented in `api-observation.md`; canonical scope and authority are in
+casm-wiki/monitor-product-direction.md. The original milestone plan below
+is historical context, not new authorization for operations. Grafana is
+deferred and Fourier Space/Kafka code must not be modified by this work.
+
 Plan file. Repo: `/home/casm/software/dev/casm_monitor` (empty, remote
 `Coherent-All-Sky-Monitor/casm_monitor`, branch `main`). Written 2026-09-08 after
 surveying casm-wiki, casm_io, casm_vis_analysis, casm_calibrator,

@@ -61,12 +61,9 @@ function weightsClause(items: Record<string, StatusItem>): string | null {
   const file = items.weights_file?.value;
   if (typeof file !== "string" || !file) return null;
   const date = file.match(/(\d{4})(\d{2})(\d{2})/);
-  const ants = file.match(/(\d+)ant/);
   if (!date) return "the deployed weights";
   const when = `${date[1]}-${date[2]}-${date[3]}`;
-  return ants
-    ? `the weights of ${when} (${ants[1]} antennas)`
-    : `the weights of ${when}`;
+  return `the recorded weights of ${when}`;
 }
 
 function hellaClause(items: Record<string, StatusItem>): string | null {

@@ -80,6 +80,7 @@ class Settings:
     """Immutable service settings."""
 
     store_root: Path = Path("/mnt/nvme3/casm_monitor")
+    observation_cache_root: Path | None = None
     web_host: str = "127.0.0.1"
     web_port: int = 8060
     vis_dir: Path = Path("/mnt/nvme4/data/casm/visibilities_64ant")
@@ -309,6 +310,8 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
 
     if os.environ.get("CASM_MONITOR_STORE_ROOT"):
         kw["store_root"] = Path(os.environ["CASM_MONITOR_STORE_ROOT"])
+    if os.environ.get("CASM_MONITOR_OBSERVATION_ROOT"):
+        kw["observation_cache_root"] = Path(os.environ["CASM_MONITOR_OBSERVATION_ROOT"])
     if os.environ.get("CASM_MONITOR_WEB_HOST"):
         kw["web_host"] = os.environ["CASM_MONITOR_WEB_HOST"]
     if os.environ.get("CASM_MONITOR_WEB_PORT"):

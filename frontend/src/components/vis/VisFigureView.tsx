@@ -36,11 +36,14 @@ export default function VisFigureView({ set, reference, view, quantity }: VisFig
     let cancelled = false;
     setManifest(null);
     setLoadError(false);
-    getVisFigureManifest(set, reference)
-      .then((m) => !cancelled && setManifest(m))
+    const refresh = () => getVisFigureManifest(set, reference)
+      .then((m) => { if (!cancelled) { setManifest(m); setLoadError(false); } })
       .catch(() => !cancelled && setLoadError(true));
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, [set, reference]);
 

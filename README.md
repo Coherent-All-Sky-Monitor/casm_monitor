@@ -69,6 +69,11 @@ needs a CSRF token and a single-use authorization — see the security-model
 section of `docs/api-cal.md`, which also documents the
 `store_root/inhibit/deploy.active` marker `casm-track` operators should test.
 
+The observation preview adds `/api/observation` and a cached solar-context
+figure. Wiring, intended participation and actual per-beam weight membership
+are reported separately. See [docs/api-observation.md](docs/api-observation.md)
+for bounded rendering, evidence semantics and the read-only preview setup.
+
 ## Tests
 
     /home/casm/software/dev/casm_venvs/casm_offline_env/bin/python -m pytest -q

@@ -35,11 +35,14 @@ export default function SnapFigureView({ inputSet, view }: SnapFigureViewProps) 
     let cancelled = false;
     setManifest(null);
     setLoadError(false);
-    getSnapFigureManifest(inputSet)
-      .then((m) => !cancelled && setManifest(m))
+    const refresh = () => getSnapFigureManifest(inputSet)
+      .then((m) => { if (!cancelled) { setManifest(m); setLoadError(false); } })
       .catch(() => !cancelled && setLoadError(true));
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, [inputSet]);
 

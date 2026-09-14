@@ -62,6 +62,32 @@ waterfalls, and state written as sentences rather than badges. Tokens live in
 
 ## Layout
 
+The default route is `/observation`. Three primary tabs organize existing
+diagnostics: Observation (science overview, search, candidates and imaging),
+Readiness (status, calibration products and events), and Antennas (SNAPs and
+visibilities). Existing diagnostic URLs remain valid.
+
+The science overview polls the read-only `/api/observation` endpoint every
+30 seconds. It shows recorded solar products and injection outcomes, including
+explicitly labelled synthetic replay links. Layout wiring, intended selection,
+and inspected deployed membership are distinct; the beam selector highlights
+the inspected union or a single beam. Counts never come from filenames.
+The coordinate selector compares current-layout and recorded weights-product
+positions; product mode omits antennas without product coordinates. Unresolved
+slot identities are not highlighted as deployed. A replay thumbnail names its
+own trial, which can differ from the latest completed trial.
+An API failure retains the last overview with a visible stale-evidence notice.
+SNAP and visibility figure manifests are refreshed every minute; their images
+remain cached by render timestamp. No scientific computation is triggered by
+these page refreshes.
+Interactive SNAP history defaults to the last hour; the saved overview figures
+retain their existing 24-hour window.
+
+The frontend uses the aggregate API's local, UTC and LST values; the displayed
+clock updates with its 30-second evidence poll. It is not a continuously ticking
+instrument clock. Product timestamps and observation coverage are shown
+separately from the time the browser last checked the API.
+
 - `src/lib/` — `api.ts` (typed fetch client), `types.ts` (API contract types),
   `toast.ts` (error bus feeding the one alert sentence), `useStatus.ts`
   (WebSocket + polling fallback), `statusSentence.ts` (status payload to

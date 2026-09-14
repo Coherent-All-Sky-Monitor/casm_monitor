@@ -372,7 +372,7 @@ def _shard_meta_times(shard: dict[str, Any]) -> list[float]:
     return times or [float(shard["t0"])]
 
 
-def load_baseline_rows(shard: dict[str, Any], flat: Sequence[int]) -> np.ndarray:
+def load_baseline_rows(shard: dict[str, Any], flat: Sequence[int], *, allow_full_fallback: bool = True) -> np.ndarray:
     """Read only the selected baseline rows of a shard, as ``(T, n_sel, F)``.
 
     ``vis_full`` is chunked one baseline per chunk, so a waterfall over 34
@@ -390,6 +390,8 @@ def load_baseline_rows(shard: dict[str, Any], flat: Sequence[int]) -> np.ndarray
             return np.asarray(array.oindex[idx, :])[None]
         return np.asarray(array.oindex[:, idx, :])
     except Exception:
+        if not allow_full_fallback:
+            raise
         log.debug("vis: row-wise shard read failed for %s; loading it whole", shard["path"])
         group = zarr.open_group(store=str(shard["path"]), mode="r")
         whole = np.asarray(group[DATA_ARRAY][...])
@@ -484,7 +486,8 @@ class VisStore:
         return out
 
     def series(
-        self, stream: str, t0: float, t1: float, pairs: Sequence[tuple[int, int]]
+        self, stream: str, t0: float, t1: float, pairs: Sequence[tuple[int, int]],
+        *, allow_full_fallback: bool = True,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int]]:
         """Stack one baseline set over time from ``stream``.
 
@@ -531,7 +534,7 @@ class VisStore:
                 else:
                     a, b = (ri, rj) if ri <= rj else (rj, ri)
                     flat.append(triu_flat_index(n_shard, a, b))
-            cube = load_baseline_rows(shard, flat)
+            cube = load_baseline_rows(shard, flat, allow_full_fallback=allow_full_fallback)
             if times.size != cube.shape[0]:
                 times = np.linspace(shard["t0"], shard["t1"], cube.shape[0])
             keep = (times >= t0) & (times <= t1)

@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -38,6 +39,7 @@ from .status import build_status, collect_age_s
 from .vis import build_router as build_vis_router
 from .search import build_router as build_search_router
 from .figures import build_router as build_figures_router
+from .observation import build_router as build_observation_router
 
 log = logging.getLogger("casm_monitor.web")
 
@@ -95,12 +97,13 @@ code{background:#eee;padding:0 .2rem}</style></head>
 """
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, read_only: bool = False) -> FastAPI:
     settings = settings or load_settings()
+    read_only = read_only or os.environ.get("CASM_MONITOR_READ_ONLY") == "1"
 
     # The write handle also ensures the schema exists so a fresh store can be
     # served before the collector's first pass.
-    writer = Store(settings.db_path, store_root=settings.store_root)
+    writer = Store(settings.db_path, store_root=settings.store_root, read_only=read_only)
     reader = Store(settings.db_path, read_only=True, store_root=settings.store_root)
 
     ws_tasks: set[asyncio.Task[None]] = set()
@@ -124,6 +127,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.reader = reader
     app.state.writer = writer
     app.state.ws_tasks = ws_tasks
+    if read_only:
+        @app.middleware("http")
+        async def refuse_writes(request, call_next):
+            if request.method not in {"GET", "HEAD", "OPTIONS"}:
+                return JSONResponse({"detail": "Read-only observation preview"}, status_code=403)
+            return await call_next(request)
 
     # SNAPs tab (M1): boards, live Kafka bandpass, history, trends. Read-only
     # handle; snaps.py's 501 board-read stubs auto-disable once this module is
@@ -142,6 +151,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(build_cal_router(reader, writer, settings))
     app.include_router(build_search_router(reader, settings))
     app.include_router(build_figures_router(settings))
+    app.include_router(build_observation_router(settings, reader))
 
     # Candidates tab (M5): a prefix-aware router over casm_t3's own T2 event
     # store (mount only — see casm_monitor.web.cands module docstring for why

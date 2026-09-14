@@ -1,0 +1,5 @@
+import { Link } from "react-router-dom";
+
+export default function AntennasPage() {
+  return <section><h2>Antenna performance</h2><p>Explore spectra, visibility amplitude and phase, and their recorded history.</p><div className="science-columns"><section><h3>SNAP spectra and history</h3><p>Compare correlator bandpasses and saved board spectra. Select an input for time and frequency exploration.</p><p><Link to="/snaps?view=interactive&mode=history&hist_range_range=1h">Open spectrum history</Link> · <Link to="/snaps">Saved overview figures</Link></p></section><section><h3>Visibilities</h3><p>Inspect raw, Sun fringe-stopped or calibration-divided data. Expand a baseline for amplitude, phase and frequency detail.</p><p><Link to="/vis?view=interactive">Explore visibilities</Link> · <Link to="/vis">Saved visibility figures</Link></p></section></div><p className="note">“Intended” follows the current layout selection. It is distinct from wiring and deployed weights. Solar variability alone is not evidence of an instrumental change.</p></section>;
+}

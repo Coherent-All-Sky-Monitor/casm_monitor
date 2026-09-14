@@ -60,7 +60,7 @@ log = logging.getLogger("casm_monitor.jobs.render_figures")
 MAX_WORKERS = 8
 BASE_REFS = ("raw", "sun")
 
-TARGETS = ("vis", "snaps", "imaging", "cands")
+TARGETS = ("vis", "snaps", "imaging", "cands", "observation")
 
 
 def _vf():
@@ -1140,6 +1140,9 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {"reason": reason, "targets": targets}
     try:
         started = time.time()
+        if "observation" in targets:
+            from ..figures.observation import render_observation
+            result["observation"] = render_observation(store, settings)
         if "vis" in targets:
             print("render_figures: rendering vis", flush=True)
             result["vis"] = _render_vis(store, settings)

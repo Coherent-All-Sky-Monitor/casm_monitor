@@ -48,7 +48,7 @@ RENDER_FIGURES_KIND = "render_figures"
 #: so adding it does not lengthen the job by a 24 h re-render. ``cands`` (M5)
 #: renders the T2 funnel PNGs the Candidates tab serves, which used to be
 #: rendered by the GET route itself (2026-09-09 review, finding 1).
-SCHEDULED_TARGETS = ["vis", "snaps", "imaging", "cands"]
+SCHEDULED_TARGETS = ["observation", "vis", "snaps", "imaging", "cands"]
 SUBMIT_INTERVAL_S = 1800.0  # 30 min
 LAST_SUBMIT_STREAM = "figures"
 LAST_SUBMIT_KEY = "last_submit_ts"
