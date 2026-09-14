@@ -80,12 +80,28 @@ configuration and complete outcome text, including non-detections, nulls and
 retractions. Multiple qualified S/N/width measurements in one row are retained
 as prose; `snr` and `width_ms` are null rather than guessed from the first number.
 
+Each row's `status` is one of `non_detection`, `contested`, `detection` or
+`recorded_attempt`. `detection` is set only when the outcome prose (outside any
+backticked filename) contains the word DETECTION and does not contain
+NON-DETECTION, and the row is not `contested`; a plot merely named
+`..._detection.png` does not set it. Status is never inferred from `snr` or any
+number in the text.
+
 Saved PNGs are discovered only under explicit ledger directories and that date's
 wiki evidence folder: at most two nested levels, 3000 directory entries and
 80 images per attempt. Raw/filterbank/dump subtrees are excluded. Each artifact
 has an opaque identifier and URL; symlinks and out-of-root paths are refused.
 The September 13 read-only check found 22 attempt rows and 250 associated images.
 This is archive discovery, not new folding or scientific reclassification.
+
+`artifacts[0]` is the headline plot: every backticked `.png` basename named in
+the row's outcome, then its directory text (brace patterns like `name.{png,log}`
+expanded, full paths matched by basename), is promoted to the front of
+`artifacts` in that order. A name not found among the row's own scanned
+artifacts is borrowed from another row sharing the same `YYYY-MM-DD` date
+prefix (same URL, not a copy). `headline_from_ledger` is true when
+`artifacts[0]` was named this way, false when it is merely the first PNG the
+scan happened to find; the frontend captions the thumbnail accordingly.
 
 `artifact_scan_partial` reports a discovery cap. Missing files do not remove the
 attempt. A directory-associated plot is not automatically a valid detection;

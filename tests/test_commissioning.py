@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from casm_monitor.config import Settings
 from casm_monitor.web import commissioning as c
+from casm_monitor.web import source_history as sh
 from casm_monitor.web.source_history import attempt_rows, images_for, source_history
 
 
@@ -104,6 +105,49 @@ def test_history_retains_nulls_and_retractions_and_bounded_artifacts(tmp_path):
     assert [p.name for p in images_for(rows[0], tmp_path)[0]] == ['b0329_pdmp.png']
     assert len(source_history('B0329', tmp_path)['sources'][0]['attempts']) == 2
     assert source_history('unknown', tmp_path)['state'] == 'no_match'
+
+
+def test_history_status_detection_word_and_filename_trap(tmp_path):
+    ledger = ('## B0329+54 attempt table\n'
+              '| 2026-07-01 | no archive | test | FIRST DETECTION 9.2 sigma pdmp, beam 2 |\n'
+              '| 2026-07-02 | no archive | test | weak, CONTESTED |\n'
+              '| 2026-07-03 | no archive | test | Plot `out/cb_detection.png` only, no claim in prose |\n'
+              '| 2026-07-04 | no archive | test | DETECTIONS on all 13 folds |\n'
+              '## Fold recipe\n')
+    (tmp_path / 'detections.md').write_text(ledger)
+    rows = {r['date']: r for r in attempt_rows(tmp_path)}
+    assert rows['2026-07-01']['status'] == 'detection'
+    assert rows['2026-07-02']['status'] == 'contested'
+    # the word only appears inside a backticked filename, not a prose claim
+    assert rows['2026-07-03']['status'] == 'recorded_attempt'
+    assert rows['2026-07-04']['status'] == 'detection'
+
+
+def test_referenced_pngs_orders_and_expands_braces():
+    text = ('Plots `fold_lock/b470_s02_lock_pdmp.png` and `fold_lock/b377_s02_lock_pdmp.{png,log}` '
+            'and `evidence/x/{a.png,b.txt,c.png}`')
+    assert sh.referenced_pngs(text) == ['b470_s02_lock_pdmp.png', 'b377_s02_lock_pdmp.png', 'a.png', 'c.png']
+
+
+def test_promote_headline_artifacts_reorders_borrows_and_flags(tmp_path):
+    rows = [
+        dict(date='2026-07-10', outcome='DETECTION `fold_lock/bhead_pdmp.png` seen', directory='no dirs',
+             artifacts=[dict(id='1', name='aaa_pdmp.png', url='/a'), dict(id='2', name='bhead_pdmp.png', url='/b')]),
+        dict(date='2026-07-10', outcome='non-detection retry', directory='folds `fold_lock/bhead_pdmp.{png,log}`',
+             artifacts=[dict(id='3', name='other_pdmp.png', url='/c')]),
+        dict(date='2026-07-11', outcome='no reference here', directory='none',
+             artifacts=[dict(id='4', name='zzz_pdmp.png', url='/d')]),
+    ]
+    sh._promote_headline_artifacts(rows)
+    # named basename promoted to front even though scan order put it second
+    assert rows[0]['artifacts'][0]['name'] == 'bhead_pdmp.png'
+    assert rows[0]['headline_from_ledger'] is True
+    # row 2 has no local match; borrows the same-date row's artifact (same url)
+    assert rows[1]['artifacts'][0]['url'] == '/b'
+    assert rows[1]['headline_from_ledger'] is True
+    # row 3 names nothing, so it keeps its own first artifact and is flagged false
+    assert rows[2]['artifacts'][0]['name'] == 'zzz_pdmp.png'
+    assert rows[2]['headline_from_ledger'] is False
 
 
 def test_artifact_allowlist_and_traversal(setup):

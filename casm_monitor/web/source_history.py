@@ -33,13 +33,41 @@ def attempt_rows(wiki: Path = WIKI) -> list[dict]:
             if entry.startswith(('/home/casm/', '/mnt/')) and not any(c in entry for c in '*{}'):
                 roots.append(entry.rstrip('/'))
         upper = outcome.upper()
+        # backticked spans are filenames/paths (e.g. `..._cb_detection.png`), not claims
+        upper_prose = re.sub(r'`[^`]+`', '', upper)
         status = ('non_detection' if 'NON-DETECTION' in upper or upper.startswith('NULL') else
-                  'contested' if 'CONTESTED' in upper else 'recorded_attempt')
+                  'contested' if 'CONTESTED' in upper else
+                  'detection' if 'DETECTION' in upper_prose else 'recorded_attempt')
         rows.append(dict(id=identity, date=date, source='B0329+54', directory=directory,
                          config=config, outcome=outcome, status=status,
                          contains_retraction='RETRACT' in (config + outcome).upper(),
                          roots=roots, provenance=str(path), snr=None, width_ms=None))
     return sorted(rows, key=lambda r: r['date'], reverse=True)
+
+
+def _expand_braces(token: str) -> list[str]:
+    """Shell-style {a,b} expansion, e.g. name.{png,log} or dir/{a.png,b.png}."""
+    match = re.search(r'\{([^{}]*)\}', token)
+    if not match:
+        return [token]
+    prefix, suffix = token[:match.start()], token[match.end():]
+    out = []
+    for alt in match.group(1).split(','):
+        out.extend(_expand_braces(prefix + alt + suffix))
+    return out
+
+
+def referenced_pngs(text: str) -> list[str]:
+    """Basenames of every backticked .png reference, in order of appearance."""
+    names, seen = [], set()
+    for token in re.findall(r'`([^`]+)`', text):
+        for expanded in _expand_braces(token):
+            if expanded.lower().endswith('.png'):
+                name = Path(expanded).name
+                if name not in seen:
+                    names.append(name)
+                    seen.add(name)
+    return names
 
 
 def images_for(row: dict, wiki: Path = WIKI) -> tuple[list[Path], bool]:
@@ -85,10 +113,40 @@ def source_history(query: str, wiki: Path = WIKI) -> dict:
                                  url=f"/api/sources/B0329/attempts/{row['id']}/artifacts/{hashlib.sha256(str(p).encode()).hexdigest()[:20]}") for p in images]
         row['artifact_scan_partial'] = partial
         row['evidence_note'] = 'Saved files associated by ledger directory, not newly validated detections. Full recorded S/N, width and qualifications remain in outcome text.'
+    _promote_headline_artifacts(attempts)
     return {'state': 'ready' if attempts else 'unavailable',
             'sources': [{'name': 'B0329+54', 'attempts': attempts}],
             'provenance': str(wiki / 'detections.md'),
             'note': 'All canonical attempt rows, including non-detections and retractions. Artifact discovery is bounded; missing plots do not erase an attempt.'}
+
+
+def _promote_headline_artifacts(rows: list[dict]) -> None:
+    """Put the ledger-named plot first; borrow it from a same-date row if this
+    row's own scan missed it. Never invents plots, only reorders/borrows."""
+    for row in rows:
+        refs = referenced_pngs(row['outcome']) + referenced_pngs(row['directory'])
+        by_name = {a['name']: a for a in row['artifacts']}
+        ordered, placed = [], set()
+        for name in refs:
+            if name in placed:
+                continue
+            match = by_name.get(name)
+            if match is None:
+                same_date = row['date'][:10]
+                for other in rows:
+                    if other is row or other['date'][:10] != same_date:
+                        continue
+                    match = next((a for a in other['artifacts'] if a['name'] == name), None)
+                    if match is not None:
+                        break
+            if match is not None:
+                ordered.append(match)
+                placed.add(name)
+        for a in row['artifacts']:
+            if a['name'] not in placed:
+                ordered.append(a)
+        row['artifacts'] = ordered
+        row['headline_from_ledger'] = bool(ordered) and ordered[0]['name'] in placed
 
 
 def build_router(wiki: Path = WIKI) -> APIRouter:
