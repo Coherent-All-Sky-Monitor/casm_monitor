@@ -33,6 +33,10 @@ T1 / Hella streams
 
 ![T1](docs/screenshots/search.png)
 
+Source history: B0329 fold ledger
+
+![Source history](docs/screenshots/sources.png)
+
 Readiness
 
 ![Readiness](docs/screenshots/readiness.png)
