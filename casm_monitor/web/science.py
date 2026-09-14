@@ -40,7 +40,7 @@ def code_provenance():
     import inspect
     from casm_vis_analysis import fringe_stop, solar_waterfall
     from casm_vis_analysis.plotting import fringe_diag, phase_freq, autocorr
-    files = [Path(__file__), Path(__file__).with_name('science_recorded.py'), Path(__file__).with_name('science_transit.py')]
+    files = [Path(__file__), Path(__file__).with_name('science_recorded.py'), Path(__file__).with_name('science_transit.py'), Path(__file__).with_name('calibration_reference.py')]
     files.extend(Path(inspect.getfile(m)) for m in [vis_ops, fringe_stop, solar_waterfall, fringe_diag, phase_freq, autocorr])
     import importlib
     files.extend(Path(inspect.getfile(importlib.import_module(name))) for name in [
@@ -61,6 +61,7 @@ class ScienceRequest(BaseModel):
     layout_id: str | None = None
     compare_t0: float | None = None
     compare_t1: float | None = None
+    calibration_reference_id: str | None = Field(default=None, pattern=r'^[0-9a-f]{32}$')
     time_tz: Literal['America/Los_Angeles', 'UTC'] = 'America/Los_Angeles'
 
     @field_validator('t0', 't1', 'compare_t0', 'compare_t1', mode='before')
@@ -299,7 +300,7 @@ def draw_views(req, z, stamps, freq, labels, comparison=None):
         panels = [(f'Selected day · {req.reference}', avg)]
         if comparison is not None:
             cz, ct, cf = comparison
-            panels.append(('Comparison day · Sun', vis_ops._nanmean(np.swapaxes(cz, 1, 2), axis=0, dtype=np.complex128)[None]))
+            panels.append(('Calibration day · Sun' if req.calibration_reference_id else 'Comparison day · Sun', vis_ops._nanmean(np.swapaxes(cz, 1, 2), axis=0, dtype=np.complex128)[None]))
         figs = plot_phase_vs_freq(panels, freq, labels, unwrap=False, time_unix=stamps, time_tz=req.time_tz)
         for fig in figs:
             fig.set_size_inches(12, max(3,2.5*len(labels)))
@@ -308,7 +309,7 @@ def draw_views(req, z, stamps, freq, labels, comparison=None):
                 for text in list(fig.texts):
                     text.remove()
                 fig.text(.075,.995,'Selected: '+format_time_range(stamps,req.time_tz),ha='left',va='top',fontsize=8,color='#b6c2ce')
-                fig.text(.075,.94,'Comparison: '+format_time_range(comparison[1],req.time_tz),ha='left',va='top',fontsize=8,color='#b6c2ce')
+                fig.text(.075,.94,('Calibration day: ' if req.calibration_reference_id else 'Comparison: ')+format_time_range(comparison[1],req.time_tz),ha='left',va='top',fontsize=8,color='#b6c2ce')
             for n,ax in enumerate(fig.axes):
                 row = n//len(panels)
                 ax.set_title('')
@@ -337,6 +338,20 @@ def draw_views(req, z, stamps, freq, labels, comparison=None):
 
 def render_product(settings, reader, req):
     validate_request(req)
+    calibration_reference = None
+    if req.calibration_reference_id:
+        from .calibration_reference import references, LOCAL, utc
+        day = datetime.fromtimestamp(req.t0, timezone.utc).astimezone(LOCAL).date().isoformat()
+        calibration_reference = next((r for r in references(settings, day)['references']
+                                      if r['id'] == req.calibration_reference_id), None)
+        if calibration_reference is None:
+            raise HTTPException(409, 'Calibration reference changed or is unavailable; reload the comparison')
+        expected = [utc(t).timestamp() for t in calibration_reference['comparison_window'] + calibration_reference['source_window']]
+        if (req.reference != 'sun' or req.kind != 'phase_spectrum' or req.resolution != 'recorded' or
+                [req.t0, req.t1, req.compare_t0, req.compare_t1] != expected):
+            raise HTTPException(400, 'Comparison must use the verified calibration and selected-day Sun phase windows')
+        if not calibration_reference['can_render']:
+            raise HTTPException(400, calibration_reference['reason'])
     layout = select_layout(req.t0, req.t1, req.layout_id)
     inputs, baselines = geometry(layout['path'])
     labels_by_input = {r['packet_idx']: r['label'] for r in inputs}
@@ -344,6 +359,8 @@ def render_product(settings, reader, req):
         raise HTTPException(400, 'Selected input is not wired in the matching dated layout')
     hardware_labels = [labels_by_input[i] if i == j else f'{labels_by_input[i]} × {labels_by_input[j]}' for i, j in req.pairs]
     by_packet = {r['packet_idx']:r for r in inputs}
+    if calibration_reference and any(by_packet[i]['antenna'] not in calibration_reference['antennas'] for pair in req.pairs for i in pair):
+        raise HTTPException(400, 'Baseline is outside the recorded calibration antenna set')
     by_pair = {(b['i'],b['j']):b for b in baselines}
     labels=[]
     for i,j in req.pairs:
@@ -416,7 +433,7 @@ def render_product(settings, reader, req):
             warnings.append('Comparison uses explicitly selected intervals; equal LST/source geometry and analog state must be reviewed before interpreting drift. No calibration is applied or generated.')
         result = {'id': pid, 'images': images, 'metadata_url': f'/api/science/products/{pid}/metadata.json',
                   'data_url': f'/api/science/products/{pid}/data.npz', 'selection': selection,
-                  'provenance': {'code': code, 'baseline_labels':hardware_labels, 'layout': identity['layout'], 'stream': stream, 'source_shards': evidence,
+                  'provenance': {'code': code, 'calibration_reference': calibration_reference, 'baseline_labels':hardware_labels, 'layout': identity['layout'], 'stream': stream, 'source_shards': evidence,
                                  'comparison_shards': compare_evidence, 'samples': len(stamps), 'channels': len(freq),
                                  'actual_t0': float(stamps[0]), 'actual_t1': float(stamps[-1]), 'omitted_known_junk_or_missing': omitted,
                                  'rendered_at': time.time(), 'fringe_sign': -1 if req.reference == 'sun' else None,

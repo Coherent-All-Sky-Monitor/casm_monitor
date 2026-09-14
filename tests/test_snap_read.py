@@ -24,7 +24,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from casm_monitor.collectors.base import CollectorContext
-from casm_monitor.collectors.snapread import SnapReadCollector, snap_read_interval_s
+from casm_monitor.collectors.snapread import SnapReadCollector, snap_read_interval_s, SCHEDULE_KEY
 from casm_monitor.config import Settings
 from casm_monitor.jobs.kinds import KINDS
 from casm_monitor.jobs.snap_read import (
@@ -612,6 +612,9 @@ def test_manual_read_takes_the_hourly_zapdos_slot(
 
     # Even once that job is finished and the lock free, the hour is spent.
     snap_store.finish_job(job_id, "done", {"status": "ok"})
+    # The actual worker records completion during ingest; finish_job alone is
+    # just the synthetic queue state transition used by this fixture.
+    snap_store.set_watermark(LOCK_STREAM, "last_read_ts", time.time())
     collector.collect(ctx)
     assert len([j for j in snap_store.list_jobs() if j["kind"] == "snap_read"]) == 1
     assert float(snap_store.get_watermark("zapdos", "last_probe_ts")) == float(claimed)
@@ -670,13 +673,39 @@ def test_scheduler_claims_at_most_once_per_hour(
     assert len(jobs) == 1
     assert jobs[0]["params"] == {"ips": None, "reason": "scheduled"}
 
-    # The slot is the same one the liveness probe uses, and it is an hour long.
+    # The SNAP slot is independent; a submitted read also stamps liveness.
     assert snap_read_interval_s(snap_settings) == 3600.0
     last = float(snap_store.get_watermark("zapdos", "last_probe_ts"))
-    snap_store.set_watermark("zapdos", "last_probe_ts", last - 3601.0)
+    assert snap_store.get_watermark(LOCK_STREAM, SCHEDULE_KEY) == last
+    snap_store.set_watermark(LOCK_STREAM, SCHEDULE_KEY, last - 3601.0)
     snap_store.finish_job(jobs[0]["id"], "done", {"status": "ok"})
     collector.collect(ctx)
     assert len([j for j in snap_store.list_jobs() if j["kind"] == "snap_read"]) == 2
+
+
+def test_liveness_probe_cannot_starve_due_two_hour_spectra(snap_store, snap_settings):
+    from dataclasses import replace
+    settings = replace(snap_settings, snap_read_interval_s=7200, zapdos_min_interval_s=7200)
+    now = time.time()
+    snap_store.set_watermark("zapdos", "last_probe_ts", now)
+    snap_store.set_watermark(LOCK_STREAM, "last_read_ts", now - 7201)
+    ctx = CollectorContext(settings=settings, store=snap_store,
+                           shards=ShardWriter(snap_store, settings.shards_root))
+    collector = SnapReadCollector(settings)
+    collector.collect(ctx)
+    jobs = [j for j in snap_store.list_jobs() if j["kind"] == "snap_read"]
+    assert len(jobs) == 1
+    snap_store.finish_job(jobs[0]["id"], "failed", {"error": "fixture"})
+    collector.collect(ctx)
+    assert len([j for j in snap_store.list_jobs() if j["kind"] == "snap_read"]) == 1
+
+
+def test_recent_manual_completion_delays_scheduled_read(snap_store, snap_settings):
+    snap_store.set_watermark(LOCK_STREAM, "last_read_ts", time.time())
+    ctx = CollectorContext(settings=snap_settings, store=snap_store,
+                           shards=ShardWriter(snap_store, snap_settings.shards_root))
+    SnapReadCollector(snap_settings).collect(ctx)
+    assert not [j for j in snap_store.list_jobs() if j["kind"] == "snap_read"]
 
 
 def test_scheduler_does_not_double_up_on_a_manual_read(

@@ -58,6 +58,28 @@ def selection(**kwargs):
     return module.Selection(packet_idx=0, t0="90", t1="170", **kwargs)
 
 
+def test_board_overview_reuses_dark_renderer_and_invalidates_on_acquisition(workspace, monkeypatch):
+    settings, store, calls, source, render, artifact = workspace
+    from casm_monitor.figures import snap_figures
+    from casm_monitor.jobs import snap_read
+    reads = {'fixture': {'ts': 100, 'shard_id': 7}}
+    monkeypatch.setattr(snap_read, 'latest_reads', lambda reader: reads)
+    monkeypatch.setattr(snap_figures, 'board_table', lambda: [{'ip': 'fixture', 'role': 'antenna', 'feng_id': 0}])
+    def renderer(reader, configuration, kind, selection, **kwargs):
+        calls.append((kind, selection, kwargs))
+        return {'2x': b'fixturePNG'}, {'board_read_ts': reads['fixture']['ts']}
+    monkeypatch.setattr(snap_figures, 'render_kind', renderer)
+    route = next(r.endpoint for r in module.build_router(settings, store).routes if r.path.endswith('/board-overview'))
+    first = route()
+    assert calls[0][:2] == ('spectra_board', 'all12')
+    assert calls[0][2]['dark'] is True
+    assert first['provenance']['boards'][0]['ts'] == 100
+    assert route()['id'] == first['id'] and len(calls) == 1
+    reads['fixture'] = {'ts': 200, 'shard_id': 8}
+    assert route()['id'] != first['id'] and len(calls) == 2
+    assert artifact(first['id'], 'spectrum.png').path.read_bytes() == b'fixturePNG'
+
+
 def test_reuses_history_and_power_conversion(workspace):
     settings, store, calls, source, render, artifact = workspace
     shard_id = register(store, [2, 1, 3])

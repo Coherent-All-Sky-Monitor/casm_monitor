@@ -7,7 +7,7 @@ export default function SciencePage({compare = false}: {compare?:boolean}) {
   const [params,setParams]=useSearchParams();
   const [window,setWindow]=useState(()=>({t0:params.get("t0")?.slice(0,16)||initialWindow(compare?1:24).t0,t1:params.get("t1")?.slice(0,16)||initialWindow().t1}));
   const [kind,setKind]=useState(params.get("kind")||(compare?"phase_spectrum":"phase_waterfall"));
-  const [reference,setReference]=useState(params.get("reference")||"sun"), [layout,setLayout]=useState("");
+  const [reference,setReference]=useState(params.get("reference")||(compare?"sun":"raw")), [layout,setLayout]=useState("");
   const [fmin,setFmin]=useState(params.get("fmin")||"390.625"),[fmax,setFmax]=useState(params.get("fmax")||"484.375");
   const [resolution,setResolution]=useState(compare?"full":"avg8"),[filter,setFilter]=useState("long_ns"),[plank,setPlank]=useState(""),[length,setLength]=useState("");
   const [selected,setSelected]=useState<string[]>(()=>params.get("pairs")?.split(";").filter(Boolean)||[]),[product,setProduct]=useState<Json|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);

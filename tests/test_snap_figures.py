@@ -52,6 +52,27 @@ def _png_size(data: bytes) -> tuple[int, int]:
     return width, height
 
 
+def test_dark_theme_preserves_scientific_data_and_axes():
+    from matplotlib.figure import Figure
+    from matplotlib.colors import to_rgba
+    fig = Figure()
+    ax = fig.subplots()
+    line, = ax.plot([500, 375], [10, 20], color=sf.SIGNAL)
+    ax.set_xlabel('Frequency (MHz)')
+    ax.set_ylabel('Power (dB)')
+    ax.set_xlim(500, 375)
+    before = line.get_data()
+    sf.dark_scientific_style(fig)
+    assert fig.get_facecolor() == to_rgba('#000000')
+    assert ax.get_facecolor() == to_rgba('#000000')
+    assert line.get_color() == '#77c7cf'
+    assert ax.get_xlim() == (500, 375)
+    assert ax.get_xlabel() == 'Frequency (MHz)'
+    assert ax.get_ylabel() == 'Power (dB)'
+    np.testing.assert_array_equal(line.get_xdata(), before[0])
+    np.testing.assert_array_equal(line.get_ydata(), before[1])
+
+
 def seed_kafka_sub(store, settings, rows: list[int], now: float, n_samples: int = 30, dt_s: float = 600.0):
     shards = ShardWriter(store, settings.shards_root)
     times = [now - (n_samples - 1 - k) * dt_s for k in range(n_samples)]

@@ -39,8 +39,9 @@ Three primary tabs group the operator workflow:
 - Antennas: geometry-selected baselines and existing SNAP history.
 
 `/observation` opens automatic rolling monitoring. `/vis` uses the baseline
-explorer; `/antennas` opens SNAP history; `/search` uses T1 scientific plots; `/snaps` uses the
-bounded transmitted-band history adapter. `/cal/compare`, `/cal/transit`,
+explorer with raw phase by default; `/antennas` and `/snaps` open stored full-board
+spectra in the same black scientific style, with selected history available.
+`/search` uses T1 scientific plots. `/cal/compare`, `/cal/transit`,
 `/cal` and `/sources` expose their respective scientific workflows. Existing
 candidate/event routes remain available; no other service is retired. The old
 `/imaging` frontend route is removed; scientific code and backend artifacts remain untouched.
@@ -68,8 +69,13 @@ missing artifacts and failed requests must not become zero counts or flat spectr
 
 Build staging shows the recipe and antenna selection. A separate confirmation
 starts only the canonical Sun calibration driver under resource bounds; it is
-not a deployment approval. No SNAP acquisition, operational injection/dump,
-deployment or restart-default change is enabled by workspace navigation.
+not a deployment approval. **Get latest spectra** explicitly submits the existing
+SNAP diagnostic read through a narrowly protected fixed loopback bridge. The
+production worker retains serialization and cooldown; no parallel reader exists.
+Acquisition times, overdue status and job state are distinct from display refresh.
+Navigation performs no acquisition. Operational injection/dump, deployment and
+restart-default changes remain disabled. Calibration comparison starts with a
+verified reference product and matched local-clock windows, not two blank ranges.
 
 ## Implementation pointers
 

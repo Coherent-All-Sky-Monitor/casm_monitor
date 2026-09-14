@@ -19,6 +19,8 @@ def main():
         assert page.locator('.js-plotly-plot').count()==0
         assert page.get_by_role('link',name='Imaging',exact=True).count()==0
         page.wait_for_function('document.querySelectorAll(".monitoring-overview .plot-surface img").length >= 3 && Array.from(document.querySelectorAll(".monitoring-overview .plot-surface img")).every(i=>i.complete&&i.naturalWidth>0)',timeout=60000)
+        overview_metadata=page.locator('.monitoring-overview a',has_text='Provenance JSON').first.get_attribute('href')
+        assert page.request.get(URL+overview_metadata).json()['selection']['reference']=='raw'
         assert page.get_by_role('combobox',name='Time zone').input_value()=='America/Los_Angeles'
         page.screenshot(path=str(OUTPUT/'workspace-observation.png'),full_page=False)
         page.goto(URL+'/vis',wait_until='networkidle')
@@ -52,12 +54,24 @@ def main():
         page.get_by_role('button',name='Stage reviewed recipe').wait_for(timeout=20000)
         assert page.get_by_role('button',name='Stage reviewed recipe').is_disabled()
         page.screenshot(path=str(OUTPUT/'workspace-calibration.png'),full_page=False)
+        page.goto(URL+'/cal/compare',wait_until='networkidle')
+        page.get_by_role('heading',name='Does the baseline phase still match?').wait_for()
+        page.get_by_role('heading',name='Two matched clock windows').wait_for()
+        assert page.get_by_role('button',name='Read both windows and compare phase').is_enabled()
+        assert page.locator('.product-plots img').count()==0
+        page.screenshot(path=str(OUTPUT/'workspace-calibration-comparison.png'),full_page=True)
         page.goto(URL+'/sources',wait_until='networkidle')
         page.locator('.history-entry').first.wait_for(timeout=20000)
         assert page.locator('.history-entry').count()>=20
         page.screenshot(path=str(OUTPUT/'workspace-source-history.png'),full_page=False)
         page.goto(URL+'/antennas',wait_until='networkidle')
         page.get_by_role('heading',name='SNAP spectra and history').wait_for()
+        assert page.get_by_role('button',name='Get latest spectra').count()==1
+        page.locator('.product-plots img').first.wait_for(timeout=30000)
+        page.wait_for_function('document.querySelector(".product-plots img").naturalWidth>0')
+        assert page.locator('.js-plotly-plot').count()==0
+        page.screenshot(path=str(OUTPUT/'workspace-snaps.png'),full_page=True)
+        page.get_by_role('button',name='Selected input history').click()
         assert page.get_by_role('button',name='Render history').is_enabled()
         page.screenshot(path=str(OUTPUT/'workspace-antennas.png'),full_page=False)
         page.goto(URL+'/readiness',wait_until='networkidle')

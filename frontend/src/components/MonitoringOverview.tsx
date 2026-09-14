@@ -18,7 +18,7 @@ export default function MonitoringOverview() {
       try {
         const catalog = await api("/api/science/catalog");
         if (!active) return;
-        const selection = {pairs:catalog.default_pairs.slice(0,1),t0:isoInput(window.t0),t1:isoInput(window.t1),fmin:390.625,fmax:484.375,reference:"sun",resolution:"avg8",time_tz:zone};
+        const selection = {pairs:catalog.default_pairs.slice(0,1),t0:isoInput(window.t0),t1:isoInput(window.t1),fmin:390.625,fmax:484.375,reference:"raw",resolution:"avg8",time_tz:zone};
         const results:Json = {selection,preset:catalog.preset_source};
         const q = new URLSearchParams({t0:selection.t0,t1:selection.t1,time_tz:zone});
         try {results.t1=await api("/api/t1?"+q);}catch(e){results.t1={error:(e as Error).message};}
@@ -44,7 +44,7 @@ export default function MonitoringOverview() {
     {!data&&<p role="status">Loading the recent visibility and search plots…</p>}
     {data&&<><p className="muted">One long N–S reference baseline · {data.preset}. Native channels remain available in the baseline explorer.</p><div className="workflow-links"><Link to="/vis">Change baselines / processing</Link><Link to="/search">Explore T1 distributions</Link></div>
       <h3>T1 candidate distributions</h3>{data.t1?.error?<Notice>{data.t1.error}</Notice>:data.t1?.plot_url&&<figure className="plot-surface"><img src={data.t1.plot_url} alt="Rolling T1 gulp, beam, DM and width distributions"/><div className="plot-actions"><a download href={data.t1.plot_url}>Download PNG</a><Link to="/search">Coverage and cap-warning logs</Link></div><figcaption>{data.t1.note} DM display: 0–1000 pc cm⁻³.</figcaption></figure>}
-      {[["phase_waterfall","Visibility phase"],["amplitude_waterfall","Dynamic spectrum"]].map(([kind,label])=><section key={kind}><h3>{label}</h3>{data[kind]?.error?<Notice>{data[kind].error}</Notice>:data[kind]&&<ProductPlots product={data[kind]}/>}</section>)}
+      {[["phase_waterfall","Raw visibility phase"],["amplitude_waterfall","Dynamic spectrum"]].map(([kind,label])=><section key={kind}><h3>{label}</h3>{data[kind]?.error?<Notice>{data[kind].error}</Notice>:data[kind]&&<ProductPlots product={data[kind]}/>}</section>)}
 
     </>}
   </section>;

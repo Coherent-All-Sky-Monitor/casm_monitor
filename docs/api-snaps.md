@@ -1,10 +1,8 @@
 # SNAPs tab API contract (M1)
 
-Written by the frontend agent for the backend agent implementing these routes
-concurrently, per `docs/plan.md` section "1. SNAPs". The frontend
-(`frontend/src/lib/api.ts`, `frontend/src/lib/types.ts`) is built exactly
-against this; please implement to the letter or, if a field needs to change,
-edit this file and ping so both sides stay in sync.
+The legacy APIs remain available. The current dark preview uses the workspace
+overview and acquisition routes below; old frontend descriptions in the legacy
+sections are historical context, not its current presentation contract.
 
 All timestamps are ISO 8601 strings (UTC, e.g. `"2026-09-08T12:00:00Z"`).
 `age_s` fields are seconds (float ok), server-computed at response time so the
@@ -50,8 +48,8 @@ by the backend; cheap to poll occasionally, not on every render).
   in ADC order.
 - `packet_idx`/`antenna`/`station` are `null` for an unwired ADC channel (no
   row at all for that `(snap, adc)` in the layout).
-- `in_bf` = included in the live beamforming set; `functional` = wired/live
-  in the current layout (may be true with `in_bf` false).
+- `in_bf` reflects the layout's intended `include_in_beamforming` flag, not
+  verified deployed membership. `functional` is the wiring flag.
 - A row that exists in the layout but is marked non-functional (a gated/dead
   feed) keeps its layout `packet_idx` and `station` — the correlator input
   index does not change when a feed is gated — but reports `antenna: null`
@@ -111,8 +109,8 @@ Latest correlator-side (Kafka) bandpass for all 12 ADC inputs of one board.
 
 ## `GET /api/snaps/board-read?ip=<ip>`
 
-Latest board-side read via zapdos (may be old; only refreshed hourly or on
-click).
+Latest saved board-side read via zapdos. Its age may exceed the configured
+two-hour interval; read the scheduler caveat below.
 
 ```json
 {
@@ -161,6 +159,74 @@ live boards — treat these as amendments to the shape above):
   timestamps a few seconds apart rather than one shared value.
 
 ## `POST /api/snaps/board-read`
+
+### Current workspace acquisition bridge and scheduler coordination
+
+`GET /api/snap-workspace/board-overview` is the default Antennas view. It renders
+stored board spectra through `figures.snap_figures.render_spectra_board`, with
+black surfaces, restrained traces, scientific axes and per-input power scales.
+It returns immutable PNG and JSON evidence links under the isolated artifact
+root. Per-board acquisition timestamps remain distinct from rendering time;
+the overview provenance stores acquisition times as Unix seconds.
+missing board spectra are labelled. No Plotly or new scientific reader is used.
+The browser polls the saved overview every minute and after a read job finishes.
+Selected transmitted-band history retains the existing bounded solar-style
+renderer, through `POST /api/snap-workspace/render`.
+
+The isolated workspace exposes `GET /api/snap-workspace/acquisition` for stored
+board timestamps, the latest `snap_read` job, cooldown, configured interval and
+whether a read is due. GET never contacts hardware or the production HTTP API.
+The configured interval is not a verification that acquisition is working;
+`cadence_verified` remains false and actual read ages are shown separately.
+
+`POST /api/snap-workspace/acquire`, body `{"confirm":true,"ips":null}`, forwards
+one request to the fixed existing production endpoint
+`http://127.0.0.1:8060/api/snaps/board-read`. Explicit configured IPs may replace
+null. Arbitrary fields, destinations, jobs and unknown boards are refused.
+Workspace mode, same-origin `Origin`, `X-CASM-Workspace: 1` and the GET token in
+`X-CASM-Snap-CSRF` are required. The bridge uses no proxy, follows no redirects
+and performs no automatic retry. Its five-second HTTP/64 KiB response budget
+is for job acceptance, not hardware completion. A timeout has unknown receipt;
+inspect status before retrying. A successful receipt is a job ID, not fresh data.
+
+The existing production route, atomic pending-job checks, persisted read lease,
+minimum five-minute manual cooldown and existing worker remain authoritative.
+The preview neither writes production SQLite directly nor adds another hardware
+reader, queue worker or scheduler. Other operational job routes remain disabled.
+
+The scheduler source now uses a separate `snap_read/last_scheduled_ts` slot and
+the last completed read to enforce its configured interval. Successful job
+submission also stamps the existing liveness slot. A liveness-only `ssh true`
+can no longer consume the SNAP scheduling slot and indefinitely postpone
+spectra. Queued/running jobs and the worker lease still exclude concurrent reads;
+failed scheduled attempts retain their interval slot to avoid retry storms.
+This source fix requires an explicitly approved production collector rollout;
+changing the isolated preview does not change the running scheduler.
+
+The 2026-09-14 read-only check found both configured intervals at 7200 seconds,
+fresh `snapread`/`zapdos` collector heartbeats, a last completed scheduled read
+from 2026-09-12 22:09 UTC, and a liveness slot refreshed on September 14.
+Evidence: production `/mnt/nvme3/casm_monitor/monitor.sqlite`, `jobs` record 237,
+`collector_heartbeat`, `watermarks` and `snap_read_latest`. These facts support
+the shared-slot starvation finding, not a board-failure diagnosis. No hardware
+acquisition or production restart was performed for this investigation.
+The bounded query results and production source hashes are saved in
+`/home/casm/scratch/casm-observation-preview/snap-scheduler-audit-20260914.json`.
+
+"Diagnostic acquisition" is more precise than literal register-read-only:
+the existing `get_new_spectra` implementation selects the autocorrelator mux and
+arms its readout. It does not change EQ, program FPGA images, issue PPS sync,
+replace beam weights or change observation configuration. The existing remote
+reader retains sequential boards and hard per-call/per-board timeouts. Source:
+`casm_monitor/remote/snap_read_remote.py` and the installed-stack reference
+`/home/casm/software/casm_snap_f/software/casm_f/src/casm_f/blocks/autocorr.py`.
+
+Tests use fake HTTP receipts and fake boards only. `test_snap_acquisition.py`
+checks the narrow bridge; `test_snap_read.py` checks scheduling, leases and the
+existing reader. Central monitoring docs and the canonical wiki must carry the
+paired source revision and the distinction between implemented and deployed.
+
+### Existing production endpoint contract
 
 Body: `{"ips": ["192.168.120.52", "..."] }` or `{"ips": null}` (null/omitted
 = all boards, both antenna and relay).

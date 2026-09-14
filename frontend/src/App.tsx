@@ -4,6 +4,7 @@ import Header from "./components/Header";
 import DiagnosticNav from "./components/DiagnosticNav";
 import OperationsPage from "./pages/OperationsPage";
 import SciencePage from "./pages/SciencePage";
+import CalibrationComparisonPage from "./pages/CalibrationComparisonPage";
 import ReviewPage from "./pages/ReviewPage";
 import T1Page from "./pages/T1Page";
 import CommissioningPage from "./pages/CommissioningPage";
@@ -33,7 +34,7 @@ export default function App() {
           <Route path="/review" element={<ReviewPage />} />
           <Route path="/sources" element={<SourceHistoryPage />} />
           <Route path="/cal" element={<CommissioningPage />} />
-          <Route path="/cal/compare" element={<SciencePage compare />} />
+          <Route path="/cal/compare" element={<CalibrationComparisonPage />} />
           <Route path="/cal/transit" element={<TransitPage />} />
           <Route path="/cal/:tag" element={<CommissioningPage />} />
           <Route path="/cands" element={<CandsPage />} />

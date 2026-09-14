@@ -7,7 +7,7 @@ generation or deployment occur through these endpoints.
 
 ## Select and render
 
-The opening page automatically renders rolling-24-hour cached phase and
+The opening page automatically renders rolling-24-hour cached raw phase and
 amplitude views on one geometry-selected long N-S baseline, alongside T1 plots.
 The baseline explorer automatically renders its cached selection on entry and
 after changes. Rolling windows refresh every two minutes while visible; choosing
@@ -92,13 +92,40 @@ layouts is therefore inferred and disclosed. Selections crossing dated-layout
 boundaries are rejected. Experimental layout variants cannot be selected. A
 future collector provenance change is needed for proven layout association.
 
-For a calibration-day comparison, select `kind=phase_spectrum`,
-`reference=sun`, and `compare_t0`/`compare_t1` (at most six hours). The same
-baseline and frequency axis are used, with separate Sun fringe-stopping for
-each date. Different layout epochs are rejected. The caller must choose
-physically comparable source/LST windows and review analog-state changes.
-No deployed calibration is applied, no new solution is built, and changed
-phase does not constitute deployment approval.
+## Product-led calibration-day comparison
+
+The comparison page starts with the ledger-recorded calibration/product reference,
+not two unexplained time controls. `GET /api/science/calibration-references`
+returns its adjacent canonical report, source solve window, reported antenna set
+and product context. The report must identify the calibration through its
+canonical `out_dir`/`tag` output path and contain a Sun `source_window` of at most
+one hour. No date is inferred from the calibration filename. Missing or mismatched
+evidence produces an unavailable state instead of a guessed calibration day.
+
+`comparison_date=YYYY-MM-DD` selects an OVRO local date, default today. The
+proposed interval matches the reference's local clock bounds and duration,
+with daylight-saving offsets applied per date. Both intervals, report evidence,
+calibration antennas and recorded product appear before rendering. A solar
+window that has not completed is not shortened: choose an earlier day. The
+comparison day is initially limited to the past week. Matching clock windows
+does not guarantee identical Sun geometry or unchanged analog conditions.
+
+One long N-S baseline is selected initially, restricted to antennas in the
+reference's recorded recipe. Up to three baselines can be compared. Only the
+explicit **Read both windows and compare phase** action requests native recordings,
+at most one hour and 64 MiB of selected complex samples per window. It reuses
+`/api/science/render`, `kind=phase_spectrum`, `reference=sun`, `resolution=recorded`,
+with selected-day `t0`/`t1` and reference-day `compare_t0`/`compare_t1`.
+`calibration_reference_id` binds those exact windows, native resolution,
+Sun phase processing and baseline membership to the verified report. Stale IDs
+or mismatched selections are rejected before data access; the reference and
+report hash are included in saved provenance.
+
+The same baseline and frequency axis are used, with separate Sun fringe-stopping
+for each date. Different layout epochs are rejected. No deployed calibration is
+applied, no solution is built, and changed phase does not constitute deployment
+approval. A mixed factorial weights product may use several calibration solutions;
+the ledger reference is not asserted to apply to every beam.
 
 Waterfalls render as one landscape panel per baseline with horizontal station
 and geometry titles. Full antenna/SNAP/ADC labels remain in provenance. Phase

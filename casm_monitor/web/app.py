@@ -47,6 +47,8 @@ from .review import build_router as build_review_router
 from .t1 import build_router as build_t1_router
 from .commissioning import build_router as build_commissioning_router
 from .source_history import build_router as build_source_history_router
+from .calibration_reference import build_router as build_calibration_reference_router
+from .snap_acquisition import build_router as build_snap_acquisition_router
 
 log = logging.getLogger("casm_monitor.web")
 
@@ -144,11 +146,11 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
     app.state.ws_tasks = ws_tasks
     @app.middleware("http")
     async def refuse_writes(request, call_next):
-        local_route = re.fullmatch(r"/api/(?:science/(?:render|transit)|snap-workspace/render|review(?:/[A-Za-z0-9_-]+/request)?|commissioning/(?:stage|[0-9a-f]{32}/start))", request.url.path)
+        local_route = re.fullmatch(r"/api/(?:science/(?:render|transit)|snap-workspace/(?:render|acquire)|review(?:/[A-Za-z0-9_-]+/request)?|commissioning/(?:stage|[0-9a-f]{32}/start))", request.url.path)
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             if read_only or local_route:
                 allowed = workspace and request.method == "POST" and re.fullmatch(
-                    r"/api/(?:science/(?:render|transit)|snap-workspace/render|review(?:/[A-Za-z0-9_-]+/request)?|commissioning/(?:stage|[0-9a-f]{32}/start))", request.url.path)
+                    r"/api/(?:science/(?:render|transit)|snap-workspace/(?:render|acquire)|review(?:/[A-Za-z0-9_-]+/request)?|commissioning/(?:stage|[0-9a-f]{32}/start))", request.url.path)
                 origin = f"{request.url.scheme}://{request.url.netloc}"
                 safe_origin = request.url.hostname in {"localhost", "127.0.0.1", "::1", "testserver"} and request.headers.get("origin") == origin
                 if not allowed or not safe_origin or request.headers.get("x-casm-workspace") != "1":
@@ -179,6 +181,8 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
     app.include_router(build_t1_router(reader, settings))
     app.include_router(build_commissioning_router(settings))
     app.include_router(build_source_history_router())
+    app.include_router(build_calibration_reference_router(settings))
+    app.include_router(build_snap_acquisition_router(settings, reader))
 
     # Candidates tab (M5): a prefix-aware router over casm_t3's own T2 event
     # store (mount only — see casm_monitor.web.cands module docstring for why

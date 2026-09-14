@@ -517,6 +517,9 @@ def render_spectra_board(
                 rms_list = summary.get("adc_rms") or []
                 if adc < len(rms_list) and rms_list[adc] is not None:
                     suffix = f"  rms {float(rms_list[adc]):.1f}"
+            else:
+                ax.text(0.5, 0.5, 'No saved spectrum', transform=ax.transAxes,
+                        ha='center', va='center', fontsize=8, color=MUTED)
             ax.set_title(f"{title}{suffix}", fontsize=9, color=color)
             _style_axes(ax)
             ax.set_xlim(freq_board.max(), freq_board.min())
@@ -645,9 +648,33 @@ def figure_to_png(fig: Figure, dpi: float) -> bytes:
     return buf.getvalue()
 
 
-def _figure_to_pngs(fig: Figure) -> dict[str, bytes]:
+def _figure_to_pngs(fig: Figure, *, facecolor: str = PAPER) -> dict[str, bytes]:
     """``{"1x": ..., "2x": ...}``, drawing the figure only once (see ``_png``)."""
-    return render_pngs(fig, DPI_2X, DPI_1X, facecolor=PAPER)
+    return render_pngs(fig, DPI_2X, DPI_1X, facecolor=facecolor)
+
+
+def dark_scientific_style(fig: Figure) -> None:
+    """Restyle the existing scientific figure without changing its data or axes."""
+    from matplotlib.text import Text
+
+    fig.set_facecolor("#000000")
+    for ax in fig.axes:
+        ax.set_facecolor("#000000")
+        ax.tick_params(colors="#b8b8b8")
+        for spine in ax.spines.values():
+            spine.set_color("#444444")
+        for line in ax.get_xgridlines() + ax.get_ygridlines():
+            line.set_color("#555555")
+            line.set_alpha(0.25)
+        for line in ax.get_lines():
+            if line.get_color() == SIGNAL:
+                line.set_color("#77c7cf")
+            elif line.get_color() == MUTED:
+                line.set_color("#aaaaaa")
+        for patch in ax.patches:
+            patch.set_facecolor("#242424")
+    for label in fig.findobj(match=Text):
+        label.set_color("#a8a8a8" if label.get_color() == MUTED else "#e6e6e6")
 
 
 _RENDERERS = {
@@ -665,6 +692,7 @@ def render_kind(
     set_name: str,
     *,
     boards: list[dict[str, Any]] | None = None,
+    dark: bool = False,
 ) -> tuple[dict[str, bytes], dict[str, Any]]:
     """Render one (kind, set) combo; returns ``{"1x": png, "2x": png}`` + info.
 
@@ -680,7 +708,12 @@ def render_kind(
         boards = board_table()
     fig, info = renderer(store, settings, set_name, boards)
     try:
-        pngs = _figure_to_pngs(fig)
+        if dark:
+            dark_scientific_style(fig)
+            if kind == 'spectra_board':
+                fig.supxlabel('Frequency (MHz)', color='#e6e6e6', fontsize=11)
+                fig.supylabel('Power (dB)', color='#e6e6e6', fontsize=11)
+        pngs = _figure_to_pngs(fig, facecolor="#000000" if dark else PAPER)
     finally:
         fig.clear()
     return pngs, info
