@@ -34,6 +34,11 @@ def check_stream_cards(page):
           })};
         }''')
         assert details['background']=='rgb(247, 248, 251)'
+        assert card.evaluate('(e)=>getComputedStyle(e).borderTopWidth')=='6px'
+        assert card.locator('.stream-status').evaluate('''e=>{
+          const box=e.getBoundingClientRect(),row=e.parentElement.getBoundingClientRect();
+          return box.height>=28&&Math.abs(box.width-row.width)<1&&getComputedStyle(e).color==='rgb(255, 255, 255)';
+        }''')
         for label in details['labels']:
             light,dark=sorted([luminance(label['colour']),luminance(label['background'])],reverse=True)
             assert (light+.05)/(dark+.05)>=4.5,label
@@ -72,6 +77,7 @@ def main():
             assert card.locator('.stream-node').inner_text()==stream['node']
             assert card.locator('.stream-status').inner_text().lower()==stream['status']
         page.locator('.stream-strip').screenshot(path=str(OUT/'search-stream-cards.png'))
+        page.locator('.stream-strip').screenshot(path=str(OUT/'search-stream-status-bands.png'))
         assert 'Updates every 5 minutes' in page.locator('main').inner_text()
         assert payload['refresh_s']==300 and payload['time_bin_seconds']==180
         assert payload['dm_edges'][1]==10 and payload['dm_edges'][-1]==3000

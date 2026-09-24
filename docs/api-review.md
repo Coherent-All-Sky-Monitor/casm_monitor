@@ -163,8 +163,9 @@ shared display-zoom viewer with Fit, +/− and pan. Zoom pins the selected PNG
 and interval, without new queries, rebinning or count normalization. Downloads,
 immutable investigation snapshots and the same-interval visibility link remain.
 The page retains rolling 24 hours with five-minute refresh. Off-white stream
-cards use dark text, explicit last-gulp and rate labels, and small status badges
-with coloured top borders: green OK, amber late, red silent, grey unknown.
+cards use dark text, explicit last-gulp and rate labels, and full-width solid
+status bands with white labels and thicker matching top borders: green OK,
+amber late, red silent, grey unknown.
 Missing ages/fractions remain `no gulps`/`n/a`; empty gulps do not imply a stopped
 stream. Cards wrap from eight to four or two columns on narrow screens.
 Search settings, candidate counts,
