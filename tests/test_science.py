@@ -15,7 +15,7 @@ def request(**kw):
 
 
 @pytest.mark.parametrize('change', [dict(t0=float('nan')), dict(t1=1789315200.), dict(t1=1789999999.),
-                                   dict(fmin=500), dict(pairs=[(18, 8)]), dict(pairs=[(8, 8)]),
+                                   dict(fmin=500), dict(pairs=[(18, 8)]), dict(pairs=[(-1, 8)]),
                                    dict(compare_t0=1789228800.), dict(resolution='full', t1=1789400000.)])
 def test_invalid_selection(change):
     with pytest.raises(HTTPException):

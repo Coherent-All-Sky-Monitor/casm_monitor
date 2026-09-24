@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, Evidence, initialWindow, isoInput, Json, Notice, ProductPlots, TimeWindow, TimeZone, LOCAL, useResource } from "../components/Workspace";
+import ArrayVisibilityPage from "./ArrayVisibilityPage";
 
-const KINDS = [["phase_waterfall","Phase waterfall"],["amplitude_waterfall","Amplitude waterfall"],["phase_spectrum","Phase / frequency"],["amplitude_spectrum","Amplitude spectrum"],["autos","Autocorrelations"]];
+const KINDS = [["phase_waterfall","Phase dynamic spectrum"],["amplitude_waterfall","Amplitude dynamic spectrum"],["phase_spectrum","Phase / frequency"],["amplitude_spectrum","Amplitude spectrum"],["real_spectrum","Real(V) spectrum"],["imag_spectrum","Imag(V) spectrum"],["real_waterfall","Real(V) dynamic spectrum"],["imag_waterfall","Imag(V) dynamic spectrum"],["autos","Autocorrelations"]];
 export default function SciencePage({compare = false}: {compare?:boolean}) {
+  const [params]=useSearchParams();
+  return compare||params.get('view')==='detail'||params.has('pairs')?<BaselineInspector compare={compare}/>:<ArrayVisibilityPage/>;
+}
+function BaselineInspector({compare = false}: {compare?:boolean}) {
   const [params,setParams]=useSearchParams();
-  const [window,setWindow]=useState(()=>({t0:params.get("t0")?.slice(0,16)||initialWindow(compare?1:24).t0,t1:params.get("t1")?.slice(0,16)||initialWindow().t1}));
+  const [window,setWindow]=useState(()=>({t0:params.get("t0")?.replace(/Z$/,"")||initialWindow(compare?1:24).t0,t1:params.get("t1")?.replace(/Z$/,"")||initialWindow().t1}));
   const [kind,setKind]=useState(params.get("kind")||(compare?"phase_spectrum":"phase_waterfall"));
   const [reference,setReference]=useState(params.get("reference")||(compare?"sun":"raw")), [layout,setLayout]=useState("");
   const [fmin,setFmin]=useState(params.get("fmin")||"390.625"),[fmax,setFmax]=useState(params.get("fmax")||"484.375");
@@ -14,6 +19,7 @@ export default function SciencePage({compare = false}: {compare?:boolean}) {
   const [zone,setZone]=useState(params.get("time_tz")||LOCAL),[rolling,setRolling]=useState(!compare&&!params.has("t0"));
   const rendering=useRef(false);
   const [comparison,setComparison]=useState(initialWindow(1));
+  const [statistic,setStatistic]=useState(params.get("spectrum_statistic")||(compare?'mean':'latest'));
   const {data:catalog,error:catalogError}=useResource("/api/science/catalog"+(layout?`?layout_id=${encodeURIComponent(layout)}`:""));
   const baselines:Json[]=catalog?.baselines??[];
   const key=(b:Json)=>`${b.i},${b.j}`;
@@ -22,8 +28,8 @@ export default function SciencePage({compare = false}: {compare?:boolean}) {
     const n=Math.abs(b.ns_m??0),e=Math.abs(b.ew_m??0);
     if(filter==="long_ns"&&!(n>=7&&e<=1.5))return false;
     if(filter==="ns"&&e>1.5)return false;
-    if(filter==="same_row"&&n>0.5)return false;
-    if(filter==="adjacent_row"&&!(n>0.5&&n<7))return false;
+    if(filter==="same_row"&&!b.same_plank)return false;
+    if(filter==="adjacent_row"&&(b.same_plank||n>=7))return false;
     if(plank&&!`${JSON.stringify(b.planks)} ${b.label}`.toLowerCase().includes(plank.toLowerCase()))return false;
     return !length||Math.abs(b.length_m-Number(length))<=0.8;
   }),[baselines,filter,plank,length]);
@@ -31,16 +37,17 @@ export default function SciencePage({compare = false}: {compare?:boolean}) {
   const render=async(automatic=false)=>{if(rendering.current)return;rendering.current=true;setBusy(true);setError("");try {
     let pairs=selected.map(s=>s.split(",").map(Number));
     if(kind==="autos")pairs=Array.from(new Set(pairs.flat())).slice(0,6).map(i=>[i,i]);
-    const request:Json={pairs,t0:isoInput(window.t0),t1:isoInput(window.t1),fmin:Number(fmin),fmax:Number(fmax),kind,reference,resolution,time_tz:zone};
+    const request:Json={pairs,t0:isoInput(window.t0),t1:isoInput(window.t1),fmin:Number(fmin),fmax:Number(fmax),kind,reference,resolution,time_tz:zone,spectrum_statistic:statistic};
     if(layout)request.layout_id=layout;
     if(compare){request.compare_t0=isoInput(comparison.t0);request.compare_t1=isoInput(comparison.t1);}
     const result=await api("/api/science/render",request);setProduct(result);
-    if(!automatic)setParams({t0:request.t0,t1:request.t1,kind,reference,fmin,fmax,time_tz:zone,pairs:selected.join(";")},{replace:true});
+    if(!automatic)setParams({view:'detail',t0:request.t0,t1:request.t1,kind,reference,fmin,fmax,time_tz:zone,pairs:selected.join(";")},{replace:true});
   }catch(e){setError((e as Error).message);}finally{rendering.current=false;setBusy(false);}};
-  useEffect(()=>{if(compare||resolution!=="avg8"||!selected.length)return;const timer=globalThis.setInterval(()=>{if(rendering.current)return;globalThis.clearInterval(timer);void render(true);},450);return()=>globalThis.clearInterval(timer);},[selected.join(";"),window.t0,window.t1,kind,reference,resolution,zone,layout,compare]);
+  useEffect(()=>{if(compare||resolution!=="avg8"||!selected.length)return;const timer=globalThis.setInterval(()=>{if(rendering.current)return;globalThis.clearInterval(timer);void render(true);},450);return()=>globalThis.clearInterval(timer);},[selected.join(";"),window.t0,window.t1,kind,reference,resolution,zone,layout,compare,statistic]);
   useEffect(()=>{if(!rolling||compare||resolution!=="avg8")return;const timer=globalThis.setInterval(()=>{if(!document.hidden&&!rendering.current)setWindow(initialWindow());},120000);return()=>globalThis.clearInterval(timer);},[rolling,compare,resolution]);
   return <div className="workspace-page"><div className="page-heading"><div><p className="eyebrow">{compare?"Calibration validity":"Visibility inspection"}</p><h2>{compare?"Compare the same baseline across days":"Baseline amplitude and phase"}</h2><p className="muted">{compare?"Compare Sun-fringe-stopped phase with the calibration day. Phase drift prompts investigation, not deployment.":"Select physical baselines, then inspect amplitude, phase and frequency structure. No raw acquisition or telescope changes."}</p></div></div>
     {(catalogError||error)&&<Notice>{error||catalogError}</Notice>}
+    {!compare&&<div className="choice-row"><button onClick={()=>setParams({})}>← Array overview</button><label>Spectrum at<select value={statistic} onChange={e=>setStatistic(e.target.value)}><option value="latest">Latest integration</option><option value="mean">Window mean</option></select></label></div>}
     <div className="workspace-layout"><aside className="selection-panel"><h3>Baselines</h3><label>Geometry preset<select value={filter} onChange={e=>setFilter(e.target.value)}><option value="long_ns">Long N–S</option><option value="ns">North–south</option><option value="same_row">Same plank row</option><option value="adjacent_row">Nearby rows (&lt;7 m N–S)</option><option value="all">All available pairs</option></select></label>
       <div className="field-row"><label>Length ≈ m<input type="number" step="0.1" value={length} onChange={e=>setLength(e.target.value)} placeholder="10.5"/></label><label>Plank / station<input value={plank} onChange={e=>setPlank(e.target.value)} placeholder="e.g. N21"/></label></div>
       <p className="muted">{selected.length} selected · up to 6 panels. Length filter ±0.8 m.</p><div className="choice-row"><button onClick={()=>setSelected(visible.slice(0,3).map(key))}>Select first three</button><button onClick={()=>setSelected([])}>Clear</button></div>

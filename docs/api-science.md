@@ -5,11 +5,63 @@ CASM scientific Matplotlib routines. Native recordings are read only in the
 explicit bounded `recorded` mode. No Plotly, telescope commands, weights
 generation or deployment occur through these endpoints.
 
-## Select and render
+## Array snapshot
+
+`/vis` opens **Visibilities**: spectra in station-row/E-column positions,
+north up and east right, beside a clickable layout map. All 17 inspection
+antennas start selected. This saved operator preset is independent of deployed
+beam membership or health: antennas 9, 10, 15, 18, 19, 22, 23, 24, 26, 30, 32,
+36, 38, 40, 42, 44, 45. All wired inputs remain individually selectable.
+Station-row spacing is compressed, not a physical distance scale.
+
+Choose autos or baselines to a reference antenna, then **Real(V)**, **Imag(V)**,
+**|V|**, or **Phase**. Spectrum, dynamic spectrum (time-frequency image), and
+all-pairs matrix share that quantity selection. Clicking a tile enlarges it;
+clicking a matrix cell opens its spectrum. Cross tiles consistently show
+`V(target, reference)`, conjugating reversed stored pairs. The reference tile
+shows its auto. Detailed exports use the stored ascending packet pair instead,
+explicitly identified in the title. Diagonal phase is available, normally zero
+for positive real autos; phase at exactly zero visibility is undefined.
+
+`GET /api/science/array` accepts `mode=auto|cross`, `reference=raw|sun`,
+`reference_input` (packet index, default 8), `hours` (0.1–24, default 2),
+`fmin`/`fmax` in MHz (390.625/484.375). It anchors to the newest cached sample,
+returns its actual date/time and sample count, and never substitutes wall time
+for stale data. The browser polls every minute while visible.
+
+The gzip JSON contains geometry, the default selection, spectra for all four
+quantities (latest and window mean), PNG data-URI previews, the latest-band
+all-pairs matrix, and selection/provenance. Quantity/view/antenna toggles use
+already loaded data; reference, processing, window and band changes request
+a new snapshot. A four-entry in-memory cache avoids repeated array reads.
+At most 32 wired inputs, 24 hours and the existing 12-million-cell budget are
+admitted. Reads use only `vis_avg8`, without acquisition or native fallback.
+Layout identities and source shards enter the cache key.
+
+Spectra retain all selected cached channels. Dynamic previews reduce only
+frequency to at most 128 bins; all recorded integrations remain present and
+actual timestamp gaps remain blank. Per-panel scales are labelled: magnitude
+uses a logarithmic 2–98% display range, signed quantities a symmetric 98th
+absolute-percentile range, phase a cyclic fixed −π to π. These are display
+limits, not normalization or data clipping. The matrix is a selected-band
+summary of the newest integration, not a time average or a coherence estimate.
+Latest-integration spectra are the UI default; window means are explicit.
+
+Acceptance checks (run from the repository with the offline venv):
+`python -m pytest tests/test_science_array.py tests/test_science.py`,
+`PYTHONPATH=. python scripts/check_array_science.py` and
+`python scripts/check_array_browser.py`. The numerical sweep compares latest
+and mean spectra and all wired matrix pairs with independent arithmetic on
+read-only cached complex samples, then exercises all detailed renderers and
+24-hour/Sun-reference snapshots. Its local evidence is
+`/home/casm/scratch/casm-observation-preview/array-visibility-audit.json`.
+This validates display arithmetic, not antenna health or astrophysical origin.
+
+## Detailed selection and render
 
 The opening page automatically renders rolling-24-hour cached raw phase and
 amplitude views on one geometry-selected long N-S baseline, alongside T1 plots.
-The baseline explorer automatically renders its cached selection on entry and
+The detailed baseline inspector (`/vis?view=detail`) automatically renders its cached selection on entry and
 after changes. Rolling windows refresh every two minutes while visible (the T1 stream page
 every five minutes); choosing a historical day/range pauses rolling. Native reads and calibration comparisons
 still require an explicit Render action. No worker or raw fallback was enabled.
@@ -40,7 +92,12 @@ minor horizontal component is no more than 10% of the major component.
 
 Pairs are ascending packet indices, not antenna IDs. Kinds are
 `phase_waterfall`, `amplitude_waterfall`, `phase_spectrum`,
-`amplitude_spectrum`, and `autos` (diagonal pairs). References are `raw` and
+`amplitude_spectrum`, `real_spectrum`, `imag_spectrum`, `real_waterfall`,
+`imag_waterfall`, and `autos` (diagonal pairs). `spectrum_statistic=latest|mean`
+selects the spectrum estimator (API default `mean` for compatibility; UI default
+`latest`). Comparisons require `mean`. `amplitude_normalization=none|channel_mean`
+defaults to `none`; the legacy channel-normalized dynamic spectrum is explicit.
+References are `raw` and
 `sun`. Native cached `full` resolution requires a window at most six hours;
 `avg8` allows seven days. At most six selected pairs, 4,600 integration rows
 and 12 million complex cells are admitted per interval. Missing full-resolution
@@ -69,11 +126,12 @@ They contain the actual reference-transformed values plotted, not raw files.
 
 ## Scientific interpretation
 
-Phase spectra use the angle of a complex time mean, never a mean of wrapped
-phase angles. Solar waterfalls reuse `plot_dynamic_spectrum`, plotting
-`|cached V|` normalized by each channel's own selected-window mean. Amplitude
-spectra use a time mean of magnitude, in linear counts; autos are already power
-and are not squared again. First-of-file integrations are retained in cached
+Phase uses the angle of the complex value or selected complex mean, never a
+mean of wrapped angles. Exact-zero phase is blank. Real/imaginary views preserve
+the signed components; amplitude means average magnitude, not the magnitude
+of the complex mean. Amplitude dynamic spectra now show `|cached V|` without
+hidden per-channel normalization. Autos are already power and are not squared
+again. Values are correlator counts, not calibrated flux. First-of-file integrations are retained in cached
 and recorded views, for both Raw and Sun fringe-stopped processing. File position
 alone does not establish bad data. Missing values remain missing, and actual
 timestamp gaps in phase waterfalls are masked. Raw keeps its existing label

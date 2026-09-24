@@ -24,6 +24,9 @@ def main():
         assert page.get_by_role('combobox',name='Time zone').input_value()=='America/Los_Angeles'
         page.screenshot(path=str(OUTPUT/'workspace-observation.png'),full_page=False)
         page.goto(URL+'/vis',wait_until='networkidle')
+        page.locator('.antenna-plot').first.wait_for(timeout=90000)
+        assert page.locator('.antenna-plot').count()==17
+        page.get_by_role('button',name='Detailed baseline inspector →').click()
         page.locator('.baseline.selected').first.wait_for()
         # Default rolling phase loads without pressing Render selection.
         page.locator('.product-plots img').first.wait_for(timeout=45000)

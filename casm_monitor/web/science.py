@@ -40,7 +40,7 @@ def code_provenance():
     import inspect
     from casm_vis_analysis import fringe_stop, solar_waterfall
     from casm_vis_analysis.plotting import fringe_diag, phase_freq, autocorr
-    files = [Path(__file__), Path(__file__).with_name('science_recorded.py'), Path(__file__).with_name('science_transit.py'), Path(__file__).with_name('calibration_reference.py')]
+    files = [Path(__file__), Path(__file__).with_name('science_recorded.py'), Path(__file__).with_name('science_transit.py'), Path(__file__).with_name('calibration_reference.py'), Path(__file__).with_name('science_array.py'), Path(__file__).with_name('science_plotting.py')]
     files.extend(Path(inspect.getfile(m)) for m in [vis_ops, fringe_stop, solar_waterfall, fringe_diag, phase_freq, autocorr])
     import importlib
     files.extend(Path(inspect.getfile(importlib.import_module(name))) for name in [
@@ -55,7 +55,9 @@ class ScienceRequest(BaseModel):
     t1: float
     fmin: float = 390.0
     fmax: float = 485.0
-    kind: Literal['phase_waterfall', 'amplitude_waterfall', 'phase_spectrum', 'amplitude_spectrum', 'autos'] = 'phase_waterfall'
+    kind: Literal['phase_waterfall', 'amplitude_waterfall', 'phase_spectrum', 'amplitude_spectrum', 'real_waterfall', 'imag_waterfall', 'real_spectrum', 'imag_spectrum', 'autos'] = 'phase_waterfall'
+    spectrum_statistic: Literal['latest', 'mean'] = 'mean'
+    amplitude_normalization: Literal['none', 'channel_mean'] = 'none'
     reference: Literal['raw', 'sun'] = 'sun'
     resolution: Literal['avg8', 'full', 'recorded'] = 'avg8'
     layout_id: str | None = None
@@ -178,13 +180,13 @@ def validate_request(req):
         raise HTTPException(400, 'Use distinct ascending packet-index pairs, i <= j')
     if req.kind == 'autos' and any(i != j for i, j in req.pairs):
         raise HTTPException(400, 'Autos require i == j')
-    if 'phase' in req.kind and any(i == j for i, j in req.pairs):
-        raise HTTPException(400, 'Phase views require cross baselines')
     if (req.compare_t0 is None) != (req.compare_t1 is None):
         raise HTTPException(400, 'Provide both comparison bounds')
     if req.compare_t0 is not None:
         if req.kind != 'phase_spectrum' or req.reference != 'sun':
             raise HTTPException(400, 'Day comparison uses Sun fringe-stopped phase spectra')
+        if req.spectrum_statistic != 'mean':
+            raise HTTPException(400, 'Day comparison requires the window complex mean')
         if not np.isfinite([req.compare_t0, req.compare_t1]).all() or not 0 < req.compare_t1 - req.compare_t0 <= 6 * 3600:
             raise HTTPException(400, 'Comparison interval must be positive and no longer than six hours')
 
@@ -249,6 +251,9 @@ def _gap_phase(cube, stamps):
 
 
 def draw_views(req, z, stamps, freq, labels, comparison=None):
+    if comparison is None:
+        from .science_plotting import draw_visibility_views
+        return draw_visibility_views(req, z, stamps, freq, labels)
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -427,8 +432,9 @@ def render_product(settings, reader, req):
                                  'comparison_shards': compare_evidence, 'samples': len(stamps), 'channels': len(freq),
                                  'actual_t0': float(stamps[0]), 'actual_t1': float(stamps[-1]), 'omitted_known_junk_or_missing': omitted,
                                  'rendered_at': time.time(), 'fringe_sign': -1 if req.reference == 'sun' else None,
-                                 'normalization': 'per-channel mean magnitude' if req.kind == 'amplitude_waterfall' else 'none',
-                                 'phase_statistic': 'angle of complex mean' if req.kind == 'phase_spectrum' else 'angle per cached integration'},
+                                 'normalization': 'per-channel mean magnitude' if req.kind == 'amplitude_waterfall' and req.amplitude_normalization == 'channel_mean' else 'none',
+                                 'spectrum_statistic': req.spectrum_statistic,
+                                 'phase_statistic': 'angle of complex mean' if req.kind == 'phase_spectrum' and req.spectrum_statistic == 'mean' else 'angle per cached integration'},
                   'warnings': warnings}
         temporary = dest / 'metadata.tmp'
         temporary.write_text(json.dumps(result, indent=2))
@@ -440,7 +446,9 @@ def render_product(settings, reader, req):
 
 def build_router(settings, reader):
     from .science_transit import TransitRequest, render_transit
+    from .science_array import register_routes
     router = APIRouter(prefix='/api/science', tags=['science'])
+    register_routes(router, settings, reader)
 
     @router.get('/catalog')
     def get_catalog(layout_id: str | None = None):
