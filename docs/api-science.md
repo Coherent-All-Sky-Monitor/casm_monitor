@@ -86,6 +86,12 @@ Spectrum axes are Frequency (MHz) versus the selected quantity (counts or rad).
 Dynamic-spectrum axes are Time (named time zone) and Frequency (MHz), with the
 quantity and units on the colourbar. Counts are uncalibrated correlator units,
 not Jy; a logarithmic magnitude scale is labelled as such, not as dB.
+Axes use rounded intermediate ticks rather than endpoints alone. Dynamic
+frequency/time tick density follows the rendered image size, including zoom;
+the default band uses 10 MHz frequency ticks in overview panels and 5 MHz in
+the enlarged view. Clock ticks use short times, with the dated interval below
+the axis. Narrow-band spectrum labels reserve space for their extra decimals.
+Ticks do not resample or change the plotted values.
 
 Acceptance checks (run from the repository with the offline venv):
 `python -m pytest tests/test_science_array.py tests/test_science.py`,
@@ -101,6 +107,10 @@ quantity changes, plot-click zoom, mobile scrolling and minute refresh.
 Local pair evidence is `array-pairs-audit.json` in the same directory as
 `/home/casm/scratch/casm-observation-preview/array-visibility-audit.json`.
 This validates display arithmetic, not antenna health or astrophysical origin.
+Axis-spacing acceptance: `python scripts/check_visibility_ticks.py` checks
+label bounding boxes in compact, station-grid, mobile, enlarged and narrow-band
+views. Pure tick-selection tests run with
+`cd frontend && node --test tests/plot-ticks.test.mjs`.
 
 ## Detailed selection and render
 

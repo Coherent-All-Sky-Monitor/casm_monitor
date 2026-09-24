@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { frequencyLabel, niceTicks, timeTicks } from "./PlotTicks";
 
 export type Quantity = "amp" | "real" | "imag" | "phase";
 export type Antenna = {packet_idx:number; antenna:number; station:string; position_enu_m:number[]};
@@ -36,9 +37,14 @@ export function Spectrum({values,freq,quantity,log=false,range}:{values:(number|
       path+=`${active&&!wrap?'L':'M'}${x.toFixed(2)},${y.toFixed(2)} `;
       active=true;previous=v;
     });
-    const ticks=quantity==='phase'?[-Math.PI,-Math.PI/2,0,Math.PI/2,Math.PI]:[lo,(lo+hi)/2,hi];
+    const ticks=quantity==='phase'?[-Math.PI,-Math.PI/2,0,Math.PI/2,Math.PI]:niceTicks(lo,hi,6);
+    let frequencyTicks=niceTicks(f0,f1,11);
+    // SVG text scales with the figure, so reserve space in viewBox units.
+    const longest=Math.max(...frequencyTicks.map(f=>frequencyLabel(f).length));
+    const count=Math.floor(244/(longest*5+8))+1;
+    if(frequencyTicks.length>count)frequencyTicks=niceTicks(f0,f1,count);
     const label=(v:number)=>quantity==='phase'?(v===0?'0':v===Math.PI?'π':v===-Math.PI?'−π':v<0?'−π/2':'π/2'):number(log?10**v:v);
-    return {lo,hi,path,f0,f1,ticks,label};
+    return {lo,hi,path,f0,f1,ticks,frequencyTicks,label};
   },[values,freq,quantity,log,range]);
   return <div className="array-spectrum">
     <svg viewBox="0 0 324 192" role="img" aria-label={`${axisLabel(quantity)} versus Frequency (MHz)`}
@@ -50,9 +56,10 @@ export function Spectrum({values,freq,quantity,log=false,range}:{values:(number|
       <line x1="64" y1="12" x2="64" y2="149"/><line x1="64" y1="149" x2="308" y2="149"/>
       {chart.ticks.map(v=>{const y=12+(chart.hi-v)/(chart.hi-chart.lo)*137;return <g key={v}>
         <line className="spectrum-guide" x1="64" y1={y} x2="308" y2={y}/>
-        <text x="59" y={y+3} textAnchor="end">{chart.label(v)}</text>
+        <line x1="61" y1={y} x2="64" y2={y}/>
+        <text className="spectrum-y-tick" x="59" y={y+3} textAnchor="end">{chart.label(v)}</text>
       </g>;})}
-      {[chart.f0,(chart.f0+chart.f1)/2,chart.f1].map(f=><text key={f} x={64+(f-chart.f0)/(chart.f1-chart.f0)*244} y="163" textAnchor="middle">{f.toFixed(1)}</text>)}
+      {chart.frequencyTicks.map(f=>{const x=64+(f-chart.f0)/(chart.f1-chart.f0)*244;return <g key={f}><line x1={x} y1="149" x2={x} y2="152"/><text className="spectrum-x-tick" x={x} y="163" textAnchor="middle">{frequencyLabel(f)}</text></g>;})}
       <text className="axis-label" x="186" y="183" textAnchor="middle">Frequency (MHz)</text>
       <text className="axis-label" transform="translate(14 80) rotate(-90)" textAnchor="middle">{axisLabel(quantity)}{log?' · log scale':''}</text>
       <path d={chart.path}/>
@@ -63,14 +70,27 @@ export function Spectrum({values,freq,quantity,log=false,range}:{values:(number|
 
 export type DynamicAxes = Pick<Snapshot,'freq_mhz'|'t0'|'t1'|'integration_s'>;
 export function DynamicSpectrum({tile,data,zone,quantity}:{tile:Tile;data:DynamicAxes;zone:string;quantity:Quantity}) {
-  const dated=data.t1-data.t0>20*3600;
+  const raster=useRef<HTMLImageElement>(null);
+  const [size,setSize]=useState({width:300,height:170});
+  useEffect(()=>{
+    const observer=new ResizeObserver(([entry])=>{
+      const width=Math.round(entry.contentRect.width),height=Math.round(entry.contentRect.height);
+      setSize(old=>old.width===width&&old.height===height?old:{width,height});
+    });
+    if(raster.current)observer.observe(raster.current);
+    return()=>observer.disconnect();
+  },[]);
+  const f0=Math.min(...data.freq_mhz),f1=Math.max(...data.freq_mhz);
+  const frequencyTicks=niceTicks(f0,f1,Math.min(25,size.height/17+1));
+  const frequencyWidth=Math.max(37,...frequencyTicks.map(f=>frequencyLabel(f).length*6+4));
+  const times=timeTicks(data.t0,data.t1,size.width,zone);
   return <div className="dynamic-figure">
-    <div className="array-dynamic">
+    <div className="array-dynamic" style={{gridTemplateColumns:`15px ${frequencyWidth}px minmax(0, 1fr)`}}>
       <span className="dynamic-y-label">Frequency (MHz)</span>
-      <div className="dynamic-frequency"><span>{Math.max(...data.freq_mhz).toFixed(1)}</span><span>{Math.min(...data.freq_mhz).toFixed(1)}</span></div>
-      <img src={tile.src} alt={`${quantityLabel(quantity)} dynamic spectrum`} draggable={false}/>
-      <div className="dynamic-time"><span>{clock(data.t0,zone,dated)}</span><span>{clock(data.t1,zone,dated)}</span></div>
-      <div className="dynamic-x-label">Time ({zone==='UTC'?'UTC':zone})</div>
+      <div className="dynamic-frequency">{frequencyTicks.map(f=>{const p=(f1-f)/(f1-f0),anchor=p<.03?0:p>.97?100:50;return <span key={f} style={{top:`${p*100}%`,transform:`translateY(-${anchor}%)`,['--tick-anchor' as string]:`${anchor}%`}}>{frequencyLabel(f)}</span>;})}</div>
+      <img ref={raster} src={tile.src} alt={`${quantityLabel(quantity)} dynamic spectrum`} draggable={false}/>
+      <div className="dynamic-time">{times.map(t=>{const p=(t-data.t0)/(data.t1-data.t0),anchor=p<.05?0:p>.95?100:50;return <span key={t} title={clock(t,zone,true)} style={{left:`${p*100}%`,transform:`translateX(-${anchor}%)`,['--tick-anchor' as string]:`${anchor}%`}}>{clock(t,zone)}</span>;})}</div>
+      <div className="dynamic-x-label">Time ({zone==='UTC'?'UTC':zone})<small>{clock(data.t0,zone,true)} – {clock(data.t1,zone,true)}</small></div>
     </div>
     <div className="tile-scale" aria-label={`${axisLabel(quantity)} colour scale`}>
       <span>{axisLabel(quantity)}{tile.log?' · log scale':''}</span>

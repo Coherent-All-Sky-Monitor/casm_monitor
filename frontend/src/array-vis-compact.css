@@ -68,10 +68,15 @@
 .dynamic-figure { background: white; color: #252525; padding-bottom: 10px; }
 .dynamic-figure .array-dynamic { grid-template-columns: 15px 37px minmax(0, 1fr); grid-template-rows: 170px auto auto; padding: 8px 14px 5px 8px; gap: 5px; }
 .dynamic-y-label { grid-row: 1; grid-column: 1; writing-mode: vertical-rl; transform: rotate(180deg); text-align: center; font-size: 11px; }
-.dynamic-figure .dynamic-frequency { grid-row: 1; grid-column: 2; font-size: 10px; }
+.dynamic-figure .dynamic-frequency { grid-row: 1; grid-column: 2; font-size: 10px; position: relative; display: block; }
+.dynamic-frequency > span { position: absolute; right: 0; white-space: nowrap; line-height: 12px; }
+.dynamic-frequency > span::after { content: ''; position: absolute; right: -5px; top: var(--tick-anchor); width: 3px; border-top: 1px solid #555; }
 .dynamic-figure .array-dynamic > img { grid-row: 1; grid-column: 3; height: 170px; }
-.dynamic-figure .dynamic-time { grid-column: 3; grid-row: 2; font-size: 10px; gap: 12px; }
+.dynamic-figure .dynamic-time { grid-column: 3; grid-row: 2; font-size: 10px; position: relative; display: block; height: 16px; }
+.dynamic-time > span { position: absolute; top: 3px; white-space: nowrap; line-height: 12px; }
+.dynamic-time > span::before { content: ''; position: absolute; left: var(--tick-anchor); top: -7px; height: 3px; border-left: 1px solid #555; }
 .dynamic-x-label { grid-column: 3; grid-row: 3; text-align: center; font-size: 11px; }
+.dynamic-x-label small { display: block; color: #565d66; font-size: 9px; margin-top: 3px; }
 .dynamic-figure .tile-scale { display: flex; justify-content: center; flex-wrap: wrap; gap: 5px 12px; padding: 6px 14px 0 65px; font-size: 10px; white-space: normal; }
 .tile-scale-bar { width: 130px; }
 .tile-scale-bar > img { display: block; width: 100%; height: 8px; }
