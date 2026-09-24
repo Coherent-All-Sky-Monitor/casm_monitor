@@ -23,8 +23,11 @@ the matrix, enlarged panels and detailed Matplotlib exports.
 
 Choose autos or baselines to a reference antenna, then **Real(V)**, **Imag(V)**,
 **|V|**, or **Phase**. Spectrum, dynamic spectrum (time-frequency image), and
-all-pairs matrix share that quantity selection. Clicking a tile enlarges it;
-clicking a matrix cell opens its spectrum. Cross tiles consistently show
+all-pairs matrix share that quantity selection. Cross-correlations opens in
+Dynamic spectrum; autos opens in Spectrum. Clicking any plot surface, matrix
+thumbnail, or detailed PNG opens a larger viewer with display zoom, Fit,
+drag/scroll panning and Escape to close. Zoom does not change the data or
+averaging. Cross tiles consistently show
 `V(target, reference)`, conjugating reversed stored pairs. The reference tile
 shows its auto. Detailed exports use the stored ascending packet pair instead,
 explicitly identified in the title. Diagonal phase is available, normally zero
@@ -36,34 +39,66 @@ for positive real autos; phase at exactly zero visibility is undefined.
 returns its actual date/time and sample count, and never substitutes wall time
 for stale data. Autos and crosses share this rolling 24-hour default. The
 browser polls every minute while visible. Spectra still explicitly select
-latest integration or window mean; the matrix remains a latest-integration
-summary. A 24-hour window does not silently change those estimators.
+latest integration or window mean. A 24-hour window does not silently change
+those estimators. All pairs now shows time-frequency histories, not band means.
 
 The gzip JSON contains geometry, the default selection, spectra for all four
 quantities (latest and window mean), PNG data-URI previews, the latest-band
-all-pairs matrix, and selection/provenance. Quantity/view/antenna toggles use
-already loaded data; reference, processing, window and band changes request
-a new snapshot. A four-entry in-memory cache avoids repeated array reads.
+all-pairs scalar matrix (retained for API compatibility, no longer displayed),
+and selection/provenance. Ordinary panel quantity/view/antenna toggles use
+already loaded data; matrix batches load separately. Reference, processing,
+window and band changes request a new snapshot. A four-entry in-memory cache
+avoids repeated array reads.
 At most 32 wired inputs, 24 hours and the existing 12-million-cell budget are
 admitted. Reads use only `vis_avg8`, without acquisition or native fallback.
 Layout identities and source shards enter the cache key.
+
+**All pairs** is an upper triangle ordered north to south, then west to east:
+136 cross-pairs and 17 diagonal autos for the default selection. The blank lower
+triangle is intentional. Each cell contains an actual dynamic spectrum in
+`V(row, column)` order; reversed packet pairs are conjugated. Compact/larger
+thumbnail sizes and sticky row/column labels support scrolling. Click a cell
+for a pinned, labelled enlargement and a link to the stored-pair detailed plot.
+Missing/undefined pixels are dark; loading cells are separately labelled.
+
+`GET /api/science/array/pairs` accepts `pairs=8:9,31:8` (ordered packet pairs),
+`t0`/`t1` pinned to the overview's actual integration endpoints, `quantity`
+(`amp|real|imag|phase`), `reference=raw|sun`, and `fmin`/`fmax` in MHz. Requests
+are capped at 16 distinct unordered pairs and 24 hours, with the existing
+12-million-cell read budget enforced per batch. Reads are serialized with the
+overview and never assemble an all-pairs history cube. The response contains
+`panels[{pair,stored_pair,tile,valid_fraction}]`, axes and provenance. Each tile
+includes a PNG and a colourbar PNG generated from the same Matplotlib lookup
+table. The batch cache is bounded to 24 entries and 64 MB. The browser loads
+progressively, reuses existing tiles and never labels a previous quantity's
+image as the new quantity. A newly selected matrix quantity can need a read.
 
 Spectra retain all selected cached channels. Dynamic previews reduce only
 frequency to at most 128 bins; all recorded integrations remain present and
 actual timestamp gaps remain blank. Per-panel scales are labelled: magnitude
 uses a logarithmic 2–98% display range, signed quantities a symmetric 98th
 absolute-percentile range, phase a cyclic fixed −π to π. These are display
-limits, not normalization or data clipping. The matrix is a selected-band
-summary of the newest integration, not a time average or a coherence estimate.
+limits, not normalization or data clipping. Matrix thumbnails use these same
+rules. Their amplitude/signed colour limits are per baseline, so brightness
+alone is not an absolute comparison between baselines; phase limits are shared.
 Latest-integration spectra are the UI default; window means are explicit.
+Spectrum axes are Frequency (MHz) versus the selected quantity (counts or rad).
+Dynamic-spectrum axes are Time (named time zone) and Frequency (MHz), with the
+quantity and units on the colourbar. Counts are uncalibrated correlator units,
+not Jy; a logarithmic magnitude scale is labelled as such, not as dB.
 
 Acceptance checks (run from the repository with the offline venv):
 `python -m pytest tests/test_science_array.py tests/test_science.py`,
-`PYTHONPATH=. python scripts/check_array_science.py` and
+`PYTHONPATH=. python scripts/check_array_science.py`,
+`PYTHONPATH=. python scripts/check_array_pairs.py` and
 `python scripts/check_array_browser.py`. The numerical sweep compares latest
 and mean spectra and all wired matrix pairs with independent arithmetic on
 read-only cached complex samples, then exercises all detailed renderers and
-24-hour/Sun-reference snapshots. Its local evidence is
+24-hour/Sun-reference snapshots. The pairs check compares every raster pixel
+for one reversed pair, one same-row pair and an auto across all four quantities
+in raw and Sun modes. Browser checks cover the default triangle, units,
+quantity changes, plot-click zoom, mobile scrolling and minute refresh.
+Local pair evidence is `array-pairs-audit.json` in the same directory as
 `/home/casm/scratch/casm-observation-preview/array-visibility-audit.json`.
 This validates display arithmetic, not antenna health or astrophysical origin.
 

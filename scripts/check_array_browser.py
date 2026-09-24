@@ -8,6 +8,33 @@ URL='http://127.0.0.1:8061'
 OUT=Path('/home/casm/scratch/casm-observation-preview/screenshots')
 
 
+def check_zoom_refresh(browser):
+    page=browser.new_page(viewport={'width':1400,'height':1000})
+    # Expose the real array timer callback; the main test still waits for a real minute.
+    page.add_init_script('''const original=window.setInterval;
+      window.setInterval=(fn,ms,...args)=>{if(ms===60000){window.arrayRefreshForTest=fn;return 987654;}
+      return original(fn,ms,...args);};''')
+    page.goto(URL+'/vis',wait_until='domcontentloaded')
+    page.locator('.plot-zoom-trigger').first.wait_for(timeout=90000)
+    page.wait_for_function('document.querySelector(".array-results").getAttribute("aria-busy")==="false"')
+    page.get_by_role('button',name='Phase',exact=True).click()
+    page.locator('.plot-zoom-trigger').first.click()
+    width=page.get_by_role('dialog').locator('.array-spectrum svg').bounding_box()['width']
+    page.get_by_role('button',name='Zoom in',exact=True).click()
+    assert page.get_by_role('dialog').locator('.array-spectrum svg').bounding_box()['width']>1.45*width
+    with page.expect_response(lambda r:'/api/science/array?' in r.url,timeout=90000):
+        page.evaluate('window.arrayRefreshForTest()')
+        assert page.get_by_role('dialog').count()==1
+    page.wait_for_function('document.querySelector(".array-results").getAttribute("aria-busy")==="false"')
+    assert page.get_by_role('dialog').count()==1
+    assert page.get_by_label('Display zoom').inner_text()=='150%'
+    page.get_by_role('button',name='Fit',exact=True).click()
+    page.screenshot(path=str(OUT/'array-phase-axes.png'))
+    page.keyboard.press('Escape')
+    assert page.locator('.plot-zoom-trigger').first.evaluate('(e)=>e===document.activeElement')
+    page.close()
+
+
 def main():
     OUT.mkdir(parents=True,exist_ok=True)
     errors=[]
@@ -42,7 +69,18 @@ def main():
         for q in ['Real(V)','Imag(V)','Phase','|V|']:
             page.get_by_role('button',name=q,exact=True).click()
             assert page.locator('.antenna-plot').count()==17
+            labels=page.locator('.antenna-plot').first.locator('.axis-label').all_text_contents()
+            assert labels==['Frequency (MHz)',f'{q} ({"rad" if q=="Phase" else "counts"})'+(' · log scale' if q=='|V|' else '')],labels
         assert len(requests)==before,'Quantity switch reread the data'
+        # The plot itself, not just its small expand button, opens a focus-trapped viewer.
+        page.locator('.plot-zoom-trigger').first.click()
+        width=page.get_by_role('dialog').locator('.array-spectrum svg').bounding_box()['width']
+        page.get_by_role('button',name='Zoom in',exact=True).click()
+        assert page.get_by_role('dialog').locator('.array-spectrum svg').bounding_box()['width']>1.45*width
+        assert page.get_by_label('Display zoom').inner_text()=='150%'
+        assert page.locator('.figure-zoom-viewport').evaluate('(e)=>e.scrollWidth>e.clientWidth')
+        page.get_by_role('button',name='Fit',exact=True).click()
+        page.keyboard.press('Escape')
         page.get_by_role('button',name='Dynamic spectrum',exact=True).click()
         assert page.locator('.array-dynamic img').count()==17
         assert page.locator('.array-dynamic img').first.bounding_box()['height']>=170
@@ -58,7 +96,11 @@ def main():
         page.get_by_role('button',name='Default 17',exact=True).click()
         page.get_by_role('button',name='Cross-correlations',exact=True).click()
         page.wait_for_function('document.querySelector(".array-results").getAttribute("aria-busy")==="false"',timeout=90000)
+        assert page.get_by_role('button',name='Dynamic spectrum',exact=True).get_attribute('class')=='active'
         page.get_by_role('button',name='Phase',exact=True).click()
+        assert page.locator('.dynamic-y-label').first.inner_text()=='Frequency (MHz)'
+        assert 'Time (' in page.locator('.dynamic-x-label').first.inner_text()
+        assert 'Phase (rad)' in page.locator('.tile-scale').first.inner_text()
         page.screenshot(path=str(OUT/'array-cross-phase.png'),full_page=True)
         page.get_by_role('button',name='Expand N11E2',exact=True).click()
         assert page.get_by_role('dialog').count()==1
@@ -66,8 +108,26 @@ def main():
         page.keyboard.press('Escape')
         assert page.get_by_role('dialog').count()==0
         page.get_by_role('button',name='All pairs',exact=True).click()
-        assert page.locator('.array-matrix td button').count()==17*17
+        page.wait_for_function('document.querySelectorAll(".array-matrix td button img").length===153',timeout=120000)
+        assert page.locator('.array-matrix td button').count()==153
+        assert page.locator('.array-matrix .matrix-auto').count()==17
+        assert page.locator('.array-matrix .matrix-unused').count()==136
+        assert page.get_by_label('Reference antenna').count()==0
         page.screenshot(path=str(OUT/'array-matrix.png'),full_page=True)
+        cell=page.locator('.array-matrix td button').nth(1)
+        src=cell.locator('img').get_attribute('src')
+        cell.click()
+        assert page.get_by_role('dialog').locator('.array-dynamic > img').get_attribute('src')==src
+        assert 'Phase (rad)' in page.get_by_role('dialog').inner_text()
+        page.get_by_role('button',name='Zoom in',exact=True).click()
+        page.screenshot(path=str(OUT/'array-matrix-expanded.png'))
+        page.keyboard.press('Escape')
+        # Changing quantity must never display thumbnails for the previous quantity.
+        page.get_by_role('button',name='Imag(V)',exact=True).click()
+        page.wait_for_function('document.querySelectorAll(".array-matrix td button img").length===153',timeout=120000)
+        assert all('Imag(V) (counts)' in s for s in page.locator('.array-matrix td img').evaluate_all('(els)=>els.map(e=>e.alt)'))
+        page.get_by_role('button',name='Phase',exact=True).click()
+        page.wait_for_function('document.querySelectorAll(".array-matrix td button img").length===153',timeout=120000)
         page.set_viewport_size({'width':390,'height':844})
         assert page.evaluate('document.documentElement.scrollWidth-window.innerWidth')<=1
         page.screenshot(path=str(OUT/'array-mobile.png'),full_page=True)
@@ -94,6 +154,10 @@ def main():
         assert product['provenance']['samples']==snapshot['samples']
         assert snapshot['selection']['hours']==24
         assert 'Rolling 24 h · updates every minute.' in page.locator('main').inner_text()
+        page.locator('.plot-image-trigger').first.click()
+        assert page.get_by_role('dialog').count()==1
+        page.get_by_role('button',name='Zoom in',exact=True).click()
+        page.keyboard.press('Escape')
         page.get_by_label('Geometry preset').select_option('same_row')
         for label in page.locator('.baseline small').all_text_contents():
             a,b=label.split(' × ')
@@ -106,6 +170,7 @@ def main():
         assert rolling['t1']>product['selection']['t1']
         assert abs(rolling['t1']-rolling['t0']-86400)<1
         assert not errors,errors
+        check_zoom_refresh(browser)
         browser.close()
     print(json.dumps({'result':'passed','screenshots':str(OUT),'console_errors':errors}))
 

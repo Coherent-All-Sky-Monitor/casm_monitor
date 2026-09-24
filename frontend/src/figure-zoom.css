@@ -1,0 +1,33 @@
+.figure-modal { width: min(1180px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); padding: 0; border: 1px solid #b8c0ca; border-radius: 6px; background: #fff; color: #252525; }
+.figure-modal::backdrop { background: #000b; }
+.figure-modal > section { padding: 16px; }
+.figure-zoom-toolbar, .figure-zoom-controls, .figure-zoom-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.figure-zoom-toolbar { justify-content: space-between; }
+.figure-zoom-toolbar h3 { margin: 0; color: #252525; font-size: 17px; }
+.figure-modal button { font: inherit; font-size: 12px; min-height: 30px; padding: 5px 10px; color: #175783; border: 1px solid #bec7d0; border-radius: 3px; background: #f4f6f8; cursor: pointer; }
+.figure-modal button:hover { background: #e6edf3; }
+.figure-modal button:disabled { opacity: .45; cursor: default; }
+.figure-zoom-controls { margin: 12px 0; color: #454b52; font-size: 12px; }
+.figure-zoom-controls output { min-width: 40px; text-align: center; }
+.figure-zoom-controls span { margin-left: auto; }
+.figure-zoom-viewport { overflow: auto; max-height: calc(100dvh - 245px); background: white; overscroll-behavior: contain; }
+.figure-zoom-viewport.zoomed { cursor: grab; touch-action: none; user-select: none; }
+.figure-zoom-viewport.zoomed:active { cursor: grabbing; }
+.figure-zoom-content { min-width: 100%; }
+.figure-zoom-content > img { display: block; width: 100%; height: auto; }
+.figure-zoom-content .array-spectrum { max-width: none; }
+.figure-zoom-content .array-dynamic { grid-template-rows: calc(360px * var(--figure-zoom)) auto auto; }
+.figure-zoom-content .array-dynamic > img { height: calc(360px * var(--figure-zoom)); }
+.figure-zoom-actions { padding-top: 12px; font-size: 12px; }
+.figure-zoom-actions p { margin: 0; color: #565d66; }
+.plot-zoom-trigger { display: block; cursor: zoom-in; outline-offset: -2px; }
+.plot-image-trigger { display: block; width: 100%; padding: 0; border: 0; border-radius: 0; background: white; cursor: zoom-in; }
+.plot-image-trigger img { display: block; width: 100%; height: auto; }
+@media (max-width: 650px) {
+  .figure-modal { width: calc(100vw - 12px); max-height: calc(100dvh - 12px); }
+  .figure-modal > section { padding: 8px; }
+  .figure-zoom-controls { gap: 6px; }
+  .figure-zoom-controls span { width: 100%; font-size: 10px; }
+  .figure-zoom-content .array-dynamic { grid-template-rows: calc(240px * var(--figure-zoom)) auto auto; }
+  .figure-zoom-content .array-dynamic > img { height: calc(240px * var(--figure-zoom)); }
+}

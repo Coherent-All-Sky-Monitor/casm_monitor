@@ -120,3 +120,53 @@ def test_snapshot_payload_and_cache(monkeypatch,settings):
     monkeypatch.setattr(science,'load_selection',lambda *a:pytest.fail('cached snapshot reread data'))
     assert array.snapshot(settings,reader)==encoded
     array._CACHE.clear()
+
+
+@pytest.mark.parametrize('change', [dict(pairs=[]), dict(pairs=[(1, 2)]*17),
+    dict(pairs=[(1, 2), (2, 1)]), dict(pairs=[(1,)]), dict(t1=86401),
+    dict(quantity='coh'), dict(reference='cal'), dict(t0=float('nan')),
+    dict(fmin=500, fmax=400)])
+def test_pair_batch_rejects_unbounded_or_ambiguous_reads(change):
+    args=dict(pairs=[(8, 18)], t0=0, t1=1000)
+    args.update(change)
+    with pytest.raises(HTTPException) as exc:
+        array.pair_snapshot(None, None, **args)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize('quantity', ['amp', 'real', 'imag', 'phase'])
+def test_pair_batch_is_pinned_bounded_cached_and_conjugated(monkeypatch, settings, quantity):
+    import gzip, json
+    from casm_monitor.web import science
+    inputs=[dict(packet_idx=8, position_enu_m=[0, 0, 0]),
+            dict(packet_idx=18, position_enu_m=[1, 1, 0])]
+    t=np.array([1000, 1000+array.DT_S, 1000+3*array.DT_S])
+    f=np.array([430, 420, 410])
+    z=np.array([[[1+2j, -2+3j, 0j]], [[4-1j, 3+2j, 1j]], [[2+3j, 4+2j, 1+0j]]])
+    monkeypatch.setattr(science, 'select_layout', lambda *a: dict(id='fixture', path='unused'))
+    monkeypatch.setattr(science, 'geometry', lambda *a: (inputs, []))
+    def bounds(vstore, stream, t0, t1, pairs):
+        assert pairs == [(8, 18)] and (t0, t1) == (t[0], t[-1])
+        return [dict(id=1, t1=t[-1])]
+    monkeypatch.setattr(science, 'bounded_rows', bounds)
+    def load(vstore, req, t0, t1, layout):
+        assert req.pairs == [(8, 18)] and req.resolution == 'avg8'
+        return z, t, f, [], 0
+    monkeypatch.setattr(science, 'load_selection', load)
+    monkeypatch.setattr(array, 'VisStore', lambda *a: None)
+    array._PAIR_CACHE.clear()
+    args=dict(pairs=[(18, 8)], t0=t[0], t1=t[-1], quantity=quantity)
+    body=array.pair_snapshot(settings, None, **args)
+    result=json.loads(gzip.decompress(body))
+    panel=result['panels'][0]
+    expected=array.preview_values(z.conj())[quantity][:, 0]
+    assert panel['tile'] == array.image_tile(expected, t, quantity)
+    assert panel['pair'] == [18, 8] and panel['stored_pair'] == [8, 18]
+    assert panel['tile']['width'] == 4 and result['samples'] == 3
+    assert (result['t0'], result['t1']) == (t[0], t[-1])
+    monkeypatch.setattr(science, 'load_selection', lambda *a: pytest.fail('reread cached batch'))
+    assert array.pair_snapshot(settings, None, **args) == body
+    with pytest.raises(HTTPException) as exc:
+        array.pair_snapshot(settings, None, **{**args, 'pairs': [(8, 99)]})
+    assert exc.value.status_code == 400
+    array._PAIR_CACHE.clear()

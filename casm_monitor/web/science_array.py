@@ -24,6 +24,8 @@ from .vis import VisStore
 INSPECTION_ANTENNAS = (9, 10, 15, 18, 19, 22, 23, 24, 26, 30, 32, 36, 38, 40, 42, 44, 45)
 _CACHE: OrderedDict[tuple, bytes] = OrderedDict()
 _LOCK = threading.Lock()
+_PAIR_CACHE: OrderedDict[tuple, bytes] = OrderedDict()
+PAIR_BATCH_SIZE = 16
 
 
 def phase(values):
@@ -82,7 +84,10 @@ def image_tile(values, stamps, quantity):
     image = Image.fromarray(np.swapaxes(pixels, 0, 1))
     buf = io.BytesIO()
     image.save(buf, format='PNG')
+    scale = io.BytesIO()
+    Image.fromarray(colormaps[cmap](np.linspace(0, 1, 256), bytes=True)[None, :, :3]).save(scale, format='PNG')
     return dict(src='data:image/png;base64,'+base64.b64encode(buf.getvalue()).decode(),
+                scale='data:image/png;base64,'+base64.b64encode(scale.getvalue()).decode(),
                 min=float(lo), max=float(hi), log=logarithmic,
                 width=image.width, height=image.height)
 
@@ -187,7 +192,74 @@ def snapshot(settings, reader, *, hours=24., reference_input=8, mode='auto', ref
         return body
 
 
+def pair_snapshot(settings, reader, *, pairs, t0, t1, quantity='amp', reference='raw',
+                  fmin=390.625, fmax=484.375):
+    """One bounded batch of dynamic spectra, in caller's V(row, column) order.
+
+    Pin all batches to the overview's actual integration endpoints. Keep the
+    existing cell budget and serialize reads with the overview, so loading a
+    triangle does not materialize an unbounded all-baseline history cube.
+    """
+    from .science import geometry, select_layout, bounded_rows, load_selection
+    if (quantity not in ('amp', 'real', 'imag', 'phase') or reference not in ('raw', 'sun')
+            or not np.isfinite([t0, t1, fmin, fmax]).all()
+            or not 0 < t1-t0 <= 86400 or not 0 < fmin < fmax < 1000):
+        raise HTTPException(400, 'Choose a supported quantity/reference, at most 24 hours and increasing MHz bounds')
+    if (not 1 <= len(pairs) <= PAIR_BATCH_SIZE or any(len(p) != 2 for p in pairs)
+            or len({tuple(sorted(p)) for p in pairs}) != len(pairs)):
+        raise HTTPException(400, 'Choose 1–16 distinct baseline pairs per batch')
+    layout = select_layout(t0, t1)
+    inputs, _ = geometry(layout['path'])
+    wired = {i['packet_idx'] for i in inputs if i['position_enu_m'] is not None}
+    if any(i not in wired for p in pairs for i in p):
+        raise HTTPException(400, 'Each packet must be wired in the selected dated layout')
+    stored = [tuple(sorted(p)) for p in pairs]
+    vstore = VisStore(settings, reader)
+    rows = bounded_rows(vstore, STREAM_AVG8, t0, t1, stored)
+    identity = tuple((i['packet_idx'], *i['position_enu_m']) for i in inputs if i['position_enu_m'] is not None)
+    key = (str(settings.store_root), layout['id'], identity, tuple(map(tuple, pairs)), t0, t1,
+           quantity, reference, fmin, fmax, tuple((r['id'], r['t1']) for r in rows))
+    with _LOCK:
+        if key in _PAIR_CACHE:
+            _PAIR_CACHE.move_to_end(key)
+            return _PAIR_CACHE[key]
+        req = SimpleNamespace(pairs=stored, reference=reference, resolution='avg8', fmin=fmin, fmax=fmax)
+        z, t, f, evidence, _ = load_selection(vstore, req, t0, t1, layout)
+        if not np.allclose([t[0], t[-1]], [t0, t1], rtol=0, atol=.001):
+            raise HTTPException(409, 'Snapshot endpoints unavailable; refresh the array')
+        previews = preview_values(z)[quantity]
+        panels = []
+        for k, (i, j) in enumerate(pairs):
+            values = -previews[:, k] if i > j and quantity in ('imag', 'phase') else previews[:, k]
+            panels.append(dict(pair=[i, j], stored_pair=list(stored[k]),
+                               tile=image_tile(values, t, quantity),
+                               valid_fraction=float(np.mean(np.isfinite(z[:, k])))))
+        result = dict(panels=panels, quantity=quantity, reference=reference,
+                      t0=float(t[0]), t1=float(t[-1]), freq_mhz=f.tolist(), samples=len(t),
+                      provenance=dict(layout=layout, stream=STREAM_AVG8, source_shards=evidence,
+                                      baseline_convention='V(row, column); reversed stored pairs are conjugated',
+                                      previews='Frequency-only reduction to at most 128 channels; every integration retained'))
+        body = gzip.compress(json.dumps(result, allow_nan=False, separators=(',', ':')).encode(), compresslevel=3)
+        _PAIR_CACHE[key] = body
+        while len(_PAIR_CACHE) > 24 or sum(map(len, _PAIR_CACHE.values())) > 64_000_000:
+            _PAIR_CACHE.popitem(last=False)
+        return body
+
+
 def register_routes(router,settings,reader):
+    @router.get('/array/pairs')
+    def array_pairs(pairs: str, t0: float, t1: float, quantity: str = 'amp', reference: str = 'raw',
+                    fmin: float = 390.625, fmax: float = 484.375):
+        try:
+            if len(pairs) > 256:
+                raise ValueError()
+            parsed = [tuple(map(int, p.split(':'))) for p in pairs.split(',')]
+        except ValueError:
+            raise HTTPException(400, 'Use comma-separated row:column packet pairs')
+        body = pair_snapshot(settings, reader, pairs=parsed, t0=t0, t1=t1, quantity=quantity,
+                             reference=reference, fmin=fmin, fmax=fmax)
+        return Response(body, media_type='application/json', headers={'Content-Encoding': 'gzip', 'Cache-Control': 'no-cache'})
+
     @router.get('/array')
     def array(hours:float=24, reference_input:int=8, mode:str='auto', reference:str='raw',
               fmin:float=390.625, fmax:float=484.375):
