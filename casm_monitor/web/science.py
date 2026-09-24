@@ -207,8 +207,6 @@ def load_selection(vstore, req, t0, t1, layout):
     if req.resolution == 'recorded':
         from .science_recorded import read_recorded
         z, stamps, freq, evidence, omitted = read_recorded(vstore.settings, req, t0, t1)
-        rows = []
-        bad_times = set()
     else:
         stream = STREAM_FULL if req.resolution == 'full' else STREAM_AVG8
         rows = bounded_rows(vstore, stream, t0, t1, req.pairs)
@@ -217,19 +215,11 @@ def load_selection(vstore, req, t0, t1, layout):
         omitted = 0
     if not len(stamps):
         raise HTTPException(404, 'No integrations in selected interval')
-    # Known first-of-file junk is omitted from the analysis, not normalized away.
-    bad_times = set()
-    for row in rows:
-        meta = row.get('meta') or {}
-        ts = _shard_meta_times(row)
-        flags = (meta.get('flags') or {}).get('first_of_file', False)
-        flags = flags if isinstance(flags, list) else [flags] * len(ts)
-        bad_times.update(t for t, bad in zip(ts, flags) if bad)
-    keep = np.array([t not in bad_times for t in stamps])
-    z, stamps = z[keep], stamps[keep]
+    # File position is not a quality flag. Retain first-of-file samples;
+    # actual missing timestamps/nonfinite values remain gaps in the plots.
     mask = (freq >= req.fmin) & (freq <= req.fmax)
     if mask.sum() < 2 or len(stamps) < 2:
-        raise HTTPException(404, 'Need at least two unflagged integrations and two cached channels')
+        raise HTTPException(404, 'Need at least two integrations and two cached channels')
     freq, z = freq[mask], z[:, :, mask]
     if not np.isfinite(z).any():
         raise HTTPException(404, 'Selected baselines are absent or wholly invalid in this cache')
@@ -242,7 +232,7 @@ def load_selection(vstore, req, t0, t1, layout):
             raise HTTPException(400, 'Selected packet has no position in the matching layout')
         ranks = {p: k for k, p in enumerate(inputs)}
         z = vis_ops.fringe_stop_sun(z, freq, np.asarray([pos[i] for i in inputs]), [(ranks[i], ranks[j]) for i, j in req.pairs], stamps)
-    return z, stamps, freq, evidence, len(bad_times) + omitted
+    return z, stamps, freq, evidence, omitted
 
 
 def _gap_phase(cube, stamps):

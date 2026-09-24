@@ -84,17 +84,39 @@ def test_canonical_spectrum_shape_and_mean(kind):
     for fig in figs: plt.close(fig)
 
 
-def test_load_uses_selected_rows_and_omits_known_junk(monkeypatch):
-    rows = [dict(id='one', t0=0, t1=400, meta=dict(t=[0, 137, 274, 400], nchan=3, freq_top_mhz=430,
-                                                    flags=dict(first_of_file=[True, False, False, False])))]
+@pytest.mark.parametrize('resolution', ['avg8', 'full'])
+@pytest.mark.parametrize('flag', [True, [True, False, False, False]])
+def test_load_retains_first_of_file_samples(monkeypatch, resolution, flag):
+    stamps = np.arange(4) * science.DT_S
+    values = np.exp(1j * np.arange(12).reshape(4,1,3) / 7)
+    rows = [dict(id='one', t0=stamps[0], t1=stamps[-1], meta=dict(t=stamps.tolist(), nchan=3, freq_top_mhz=430,
+                                                    flags=dict(first_of_file=flag)))]
     def series(*args, **kwargs):
         assert kwargs == {'allow_full_fallback': False}
-        return np.ones((4,1,3), complex), np.array([0,137,274,400]), np.array([430,420,410]), [8,18]
+        assert args[0] == ('vis_full' if resolution == 'full' else 'vis_avg8')
+        return values, stamps, np.array([430,420,410]), [8,18]
     vs = SimpleNamespace(shards=SimpleNamespace(list=lambda *a, **k: rows), series=series)
-    out = science.load_selection(vs, request(reference='raw'), 0, 400, {'path': 'unused'})
-    assert out[0].shape == (3,1,3)
-    assert out[-1] == 1
-    assert out[1][0] == 137
+    out = science.load_selection(vs, request(reference='raw', resolution=resolution), 0, stamps[-1], {'path': 'unused'})
+    np.testing.assert_array_equal(out[0], values)
+    np.testing.assert_array_equal(out[1], stamps)
+    assert out[-1] == 0
+
+
+@pytest.mark.parametrize('missing', [False, True])
+def test_phase_waterfall_only_masks_actual_missing_samples(missing):
+    import matplotlib.pyplot as plt
+    stamps = 1789315200 + np.arange(4) * science.DT_S
+    values = np.exp(1j * np.arange(12).reshape(4,1,3) / 7)
+    if missing:
+        stamps, values = stamps[[0,2,3]], values[[0,2,3]]
+    figs = science.draw_views(request(kind='phase_waterfall', reference='raw'),
+                             values, stamps, np.array([430,420,410]), ['baseline'])
+    plotted = figs[0].axes[0].collections[0].get_array().reshape(3,4)
+    expected_mask = np.zeros((3,4), dtype=bool)
+    expected_mask[:,1] = missing
+    np.testing.assert_array_equal(np.ma.getmaskarray(plotted), expected_mask)
+    assert figs[0].axes[0].get_title(loc='left').endswith('Raw')
+    plt.close(figs[0])
 
 
 @pytest.mark.parametrize('kind', ['phase_waterfall', 'phase_spectrum', 'amplitude_waterfall', 'amplitude_spectrum', 'autos'])

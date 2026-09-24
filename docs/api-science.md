@@ -53,8 +53,8 @@ The requested end must be at least two integrations behind now to avoid reading
 an accumulating write. The existing `casm_io.read_visibilities` reads only the triangle among the
 requested inputs, with frequency selection, one worker and the configured
 visibility directory. It never recursively scans `/mnt` or reads the full
-correlator triangle. Native first-of-file samples and wholly zero-filled missing
-records are omitted. Reader failures, including known part-boundary problems,
+correlator triangle. First-of-file samples are retained; wholly zero-filled
+missing records are omitted. Reader failures, including known part-boundary problems,
 return an error rather than substituting another dataset. Per-part file size
 and modification time enter artifact identity. This mode supports calibration
 days whose native cache has expired but whose local recording remains.
@@ -73,8 +73,16 @@ Phase spectra use the angle of a complex time mean, never a mean of wrapped
 phase angles. Solar waterfalls reuse `plot_dynamic_spectrum`, plotting
 `|cached V|` normalized by each channel's own selected-window mean. Amplitude
 spectra use a time mean of magnitude, in linear counts; autos are already power
-and are not squared again. Missing values remain missing; known first-of-file
-junk integrations are omitted and counted. Gaps in phase waterfalls are masked.
+and are not squared again. First-of-file integrations are retained in cached
+and recorded views, for both Raw and Sun fringe-stopped processing. File position
+alone does not establish bad data. Missing values remain missing, and actual
+timestamp gaps in phase waterfalls are masked. Raw keeps its existing label
+and eight-channel averaging when `resolution=avg8` is selected.
+
+Before 2026-09-24, the workspace unconditionally omitted the first integration
+of each file, introducing regular white stripes into continuous recordings.
+Re-rendering produces corrected artifacts with a new code-derived cache ID;
+previously saved products remain immutable.
 
 The singleton Sun-delay adapter preserves `(time, baseline)` axes explicitly.
 An older `atleast_2d` conversion produced `(1, time)` for one baseline and

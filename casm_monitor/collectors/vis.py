@@ -25,9 +25,9 @@ format and ``freq_order="descending"`` made explicit. Only the file GEOMETRY
 known here, and only to decide which integrations exist -- the plan's
 "exact-byte live-file reads with guard band and watermark".
 
-The first integration of every FILE is junk (casm_io memory note), so it is
-flagged (``flags.first_of_file``, event ``vis_first_integration_flagged``) and
-kept, never silently dropped.
+The first integration of every FILE is marked (``flags.first_of_file``, event
+``vis_first_integration_flagged``) and kept. This records file position, not
+data quality; continuous observations can have valid file-boundary samples.
 """
 
 from __future__ import annotations
@@ -721,7 +721,7 @@ class VisCollector(Collector):
                     "file_idx": item.file_idx,
                     "int_idx": item.int_idx,
                     "ts": ts,
-                    "note": "first integration of a file is junk (casm_io); kept and flagged",
+                    "note": "first integration of a file; kept and marked for provenance, not a quality rejection",
                 },
                 ts=ts,
             )

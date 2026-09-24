@@ -47,7 +47,7 @@ def recorded_plan(settings,req,t0,t1):
 def read_recorded(settings,req,t0,t1):
     from casm_io.correlator import read_visibilities
     from casm_io.correlator.baselines import triu_flat_index
-    matches,evidence=recorded_plan(settings,req,t0,t1)
+    _,evidence=recorded_plan(settings,req,t0,t1)
     inputs=sorted({i for p in req.pairs for i in p})
     try:
         result=read_visibilities(datetime.fromtimestamp(t0,timezone.utc),datetime.fromtimestamp(t1,timezone.utc),
@@ -63,13 +63,9 @@ def read_recorded(settings,req,t0,t1):
     z=np.swapaxes(np.asarray(result.vis)[:,:,flat],1,2)
     stamps=np.asarray(result.time_unix)
     keep=(stamps>=t0)&(stamps<=t1)
-    bad=np.zeros(len(stamps),bool)
-    for o in matches:
-        relative=(stamps-o['time_start'])/o['fmt'].dt_raw_s
-        rounded=np.rint(relative)
-        bad|=(stamps>=o['time_start'])&(stamps<o['time_end'])&np.isclose(relative,rounded,atol=1e-4,rtol=0)&(rounded.astype(np.int64)%o['fmt'].ntime_per_file==0)
+    # Retain recorded integrations at file boundaries as well.
     # casm_io represents wholly missing files with zeros. Preserve as absent.
-    bad|=np.all(z==0,axis=(1,2))
+    bad=np.all(z==0,axis=(1,2))
     omitted=int(np.count_nonzero(keep&bad))
     keep&=~bad
     return z[keep],stamps[keep],np.asarray(result.freq_mhz),evidence,omitted

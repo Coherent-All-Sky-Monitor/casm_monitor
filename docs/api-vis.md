@@ -45,8 +45,8 @@ the doc is now the served behaviour:
    `ref_meta` block (for `ref=cal`: `cal_file`, `cal_path`, `cal_source`,
    `cal_ref_ant_id`, `inputs_without_cal`; for `ref=sun`: `sign`,
    `sun_alt_deg`, `sun_below_horizon`), plus `transform_s`. `flags` carries the
-   integration's own `first_of_file` (the first integration of every file is
-   junk per the casm_io memory note: it is flagged, never dropped) together with
+   integration's own `first_of_file` (a file-position marker, not a quality
+   rejection; the sample is retained) together with
    `sun_below_horizon` / `cal_file` when those references were used.
 
 ## `GET /api/vis/inputs`

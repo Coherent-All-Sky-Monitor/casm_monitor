@@ -34,7 +34,8 @@ def test_recorded_refuses_current_accumulating_interval(monkeypatch,settings):
     assert 'accumulating' in caught.value.detail
 
 
-def test_recorded_native_mapping_and_flags(monkeypatch,tmp_path,settings):
+@pytest.mark.parametrize('missing', [False, True])
+def test_recorded_retains_file_boundaries_and_omits_missing(monkeypatch,tmp_path,settings,missing):
     import casm_io.correlator
     fmt=fixture(monkeypatch,tmp_path)
     req=ScienceRequest(pairs=[(8,18)],t0=0,t1=500,resolution='recorded')
@@ -44,8 +45,11 @@ def test_recorded_native_mapping_and_flags(monkeypatch,tmp_path,settings):
         assert 'data_root' not in kw
         z=np.ones((4,3,3),np.complex64)
         z[:,:,1]=2+3j
+        if missing:
+            z[2]=0
         return SimpleNamespace(vis=z,time_unix=np.arange(4)*fmt.dt_raw_s,freq_mhz=np.array([430,420,410]),metadata={})
     monkeypatch.setattr(casm_io.correlator,'read_visibilities',read)
     z,t,f,ev,omitted=read_recorded(settings,req,0,500)
-    assert z.shape==(3,1,3) and np.all(z==2+3j)
-    assert omitted==1 and ev[0]['size']==7
+    assert z.shape==(4-int(missing),1,3) and np.all(z==2+3j)
+    np.testing.assert_array_equal(t, np.arange(4)[[0,1,3] if missing else [0,1,2,3]] * fmt.dt_raw_s)
+    assert omitted==int(missing) and ev[0]['size']==7
