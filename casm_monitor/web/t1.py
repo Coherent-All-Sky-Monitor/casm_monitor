@@ -58,7 +58,7 @@ CAP_COLOR = "#c53030"
 FG = "#30343b"
 SPINE = "#68717c"
 TITLE = "#20252b"
-HIST_COLOR = "#287d8e"
+HIST_COLOR = "#456a9a"
 
 _PLOT_LOCK = threading.Lock()
 
@@ -255,7 +255,7 @@ def render_t1(data):
     bin_seconds = data.get("time_bin_seconds", 180.0)
     interval = f"{bin_seconds / 60:g} min" if bin_seconds >= 60 else f"{bin_seconds:g} s"
     count_colors = LinearSegmentedColormap.from_list(
-        "candidate_counts", ["#527bc5", "#3dbab0", "#e6dc8c"])
+        "candidate_counts", ["#ded3ee", "#b39bce", "#8a65ad", "#60378a", "#39135f"])
     with _PLOT_LOCK, rc_context({"font.family": "DejaVu Sans", "font.size": 9,
                                 "axes.titlesize": 11, "axes.labelsize": 10,
                                 "text.color": FG, "axes.labelcolor": FG,

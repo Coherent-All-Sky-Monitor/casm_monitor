@@ -127,7 +127,8 @@ interval. A missing table is `unavailable` and still returns `streams`.
 candidates per stream, beam occupancy, DM over time (DM 10-3000 pc cm^-3)
 and the width and DM histograms. Liveness lives in the page's HTML stream strip.
 Stream and DM heatmaps show candidate counts per time bin on logarithmic colour
-scales, from muted blue through teal to pale yellow. All three time panels share
+scales, from pale lavender for low counts to deep purple for high counts.
+Lightness decreases throughout the ramp. All three time panels share
 the same palette and limits: 1 to the largest displayed count in any panel
 (2 when all counts are zero or one). Ticks show decades and the exact maximum,
 formatted as integers; nearby decade labels are omitted to avoid crowding the
@@ -154,7 +155,7 @@ immutable evidence URL for saving. These routes use no Plotly. Width index is
 not labelled as FWHM.
 
 The figure matches the Visibilities white scientific style: dark labels and
-spines, subtle time/histogram grids, teal histogram bars, explicit time zones
+spines, subtle time/histogram grids, muted-blue histogram bars, explicit time zones
 and units, beam-index ticks at stream boundaries, and readable 10–3000 DM
 ticks on both log axes. All three time panels retain their shared logarithmic
 count palette and limits. The PNG is 1950×1875 pixels; click it to open the

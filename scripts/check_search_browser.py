@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
@@ -41,6 +42,11 @@ def main():
         raster=Image.open(io.BytesIO(png)).convert('RGB')
         assert raster.getpixel((0,0))==(255,255,255)
         assert raster.width==1950 and raster.height==1875
+        pixels=np.asarray(raster)
+        assert np.any(np.all(pixels==(69,106,154),axis=-1))  # Muted-blue histogram bars.
+        assert np.any(np.all(pixels==(57,19,95),axis=-1))  # Deep-purple maximum count.
+        page.locator('.plot-surface img').screenshot(path=str(OUT/'search-purple-figure.png'))
+        page.screenshot(path=str(OUT/'search-purple-desktop.png'),full_page=True)
         page.screenshot(path=str(OUT/'search-white-desktop.png'),full_page=True)
         requests=len(reads)
         trigger.focus()

@@ -208,6 +208,16 @@ def test_white_figure_axes_counts_and_style_isolation(payload, monkeypatch):
     assert Image.open(io.BytesIO(content)).convert('RGB').getpixel((0,0))==(255,255,255)
     axes=fig.axes
     assert axes[6].get_facecolor()==axes[7].get_facecolor()==to_rgba('white')
+    # Ordered counts get darker on white; caps and missing/zero retain their colours.
+    import numpy as np
+    cmap=axes[0].collections[1].cmap
+    assert cmap(0.)==to_rgba('#ded3ee')
+    assert cmap(1.)==to_rgba('#39135f')
+    rgb=cmap(np.linspace(0,1,256))[:,:3]
+    linear=np.where(rgb<=.04045,rgb/12.92,((rgb+.055)/1.055)**2.4)
+    assert np.all(np.diff(linear @ [0.2126,0.7152,0.0722])<0)
+    assert all(p.get_facecolor()==to_rgba('#456a9a') for ax in axes[6:8] for p in ax.patches)
+    assert axes[0].collections[2].cmap(0.)==to_rgba('#c53030')
     assert list(axes[2].get_yticks())==list(range(0,513,64))
     assert list(axes[4].get_yticks())==[10,30,100,300,1000,3000]
     assert list(axes[7].get_xticks())==[10,30,100,300,1000,3000]
