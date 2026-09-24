@@ -122,7 +122,7 @@ def matrix_values(z, pairs, inputs):
     return result
 
 
-def snapshot(settings, reader, *, hours=2., reference_input=8, mode='auto', reference='raw',
+def snapshot(settings, reader, *, hours=24., reference_input=8, mode='auto', reference='raw',
              fmin=390.625, fmax=484.375):
     from .science import geometry, select_layout, bounded_rows, load_selection
     if mode not in ('auto','cross') or reference not in ('raw','sun'):
@@ -189,7 +189,7 @@ def snapshot(settings, reader, *, hours=2., reference_input=8, mode='auto', refe
 
 def register_routes(router,settings,reader):
     @router.get('/array')
-    def array(hours:float=2, reference_input:int=8, mode:str='auto', reference:str='raw',
+    def array(hours:float=24, reference_input:int=8, mode:str='auto', reference:str='raw',
               fmin:float=390.625, fmax:float=484.375):
         body=snapshot(settings,reader,hours=hours,reference_input=reference_input,mode=mode,
                       reference=reference,fmin=fmin,fmax=fmax)

@@ -135,6 +135,9 @@ def test_canonical_render_and_artifact_cache(kind, settings, store, tmp_path, mo
     result = science.render_product(settings, store, req)
     dest = science.cache_dir(settings) / 'science' / result['id']
     assert (dest / 'plot-0.png').stat().st_size > 1000
+    from PIL import Image
+    with Image.open(dest / 'plot-0.png') as image:
+        assert image.convert('RGB').getpixel((0,0)) == (255,255,255)
     if kind == 'phase_waterfall':
         from PIL import Image
         with Image.open(dest / 'plot-0.png') as image:

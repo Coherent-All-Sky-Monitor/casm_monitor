@@ -7,12 +7,19 @@ generation or deployment occur through these endpoints.
 
 ## Array snapshot
 
-`/vis` opens **Visibilities**: spectra in station-row/E-column positions,
-north up and east right, beside a clickable layout map. All 17 inspection
+`/vis` opens **Visibilities**: large white figures grouped by station row,
+north to south and west to east, beside a clickable layout map. All 17 inspection
 antennas start selected. This saved operator preset is independent of deployed
 beam membership or health: antennas 9, 10, 15, 18, 19, 22, 23, 24, 26, 30, 32,
 36, 38, 40, 42, 44, 45. All wired inputs remain individually selectable.
-Station-row spacing is compressed, not a physical distance scale.
+**Compact panels** packs occupied panels into up to three readable columns,
+including sparse rows side by side. Each row's six-position key distinguishes
+selected antennas, hidden antennas (`off`), and slots without a wired antenna
+(`×`). Empty slots consume no full-size plot area. **Station grid** restores
+aligned E columns; the map always retains physical station positions. Layout
+compression never removes a temporal gap in the data. Phones stack the compact
+plots vertically. White figure surfaces apply to spectra, dynamic spectra,
+the matrix, enlarged panels and detailed Matplotlib exports.
 
 Choose autos or baselines to a reference antenna, then **Real(V)**, **Imag(V)**,
 **|V|**, or **Phase**. Spectrum, dynamic spectrum (time-frequency image), and
@@ -24,10 +31,13 @@ explicitly identified in the title. Diagonal phase is available, normally zero
 for positive real autos; phase at exactly zero visibility is undefined.
 
 `GET /api/science/array` accepts `mode=auto|cross`, `reference=raw|sun`,
-`reference_input` (packet index, default 8), `hours` (0.1–24, default 2),
+`reference_input` (packet index, default 8), `hours` (0.1–24, default 24),
 `fmin`/`fmax` in MHz (390.625/484.375). It anchors to the newest cached sample,
 returns its actual date/time and sample count, and never substitutes wall time
-for stale data. The browser polls every minute while visible.
+for stale data. Autos and crosses share this rolling 24-hour default. The
+browser polls every minute while visible. Spectra still explicitly select
+latest integration or window mean; the matrix remains a latest-integration
+summary. A 24-hour window does not silently change those estimators.
 
 The gzip JSON contains geometry, the default selection, spectra for all four
 quantities (latest and window mean), PNG data-URI previews, the latest-band
@@ -62,8 +72,11 @@ This validates display arithmetic, not antenna health or astrophysical origin.
 The opening page automatically renders rolling-24-hour cached raw phase and
 amplitude views on one geometry-selected long N-S baseline, alongside T1 plots.
 The detailed baseline inspector (`/vis?view=detail`) automatically renders its cached selection on entry and
-after changes. Rolling windows refresh every two minutes while visible (the T1 stream page
-every five minutes); choosing a historical day/range pauses rolling. Native reads and calibration comparisons
+after changes. It defaults to rolling 24 hours and refreshes every minute while
+visible; drill-down from an array tile carries its window via `rolling_hours`
+and continues rolling. Historical date/range selection pauses rolling. The
+opening observation overview refreshes every two minutes and T1 every five.
+Native reads and calibration comparisons
 still require an explicit Render action. No worker or raw fallback was enabled.
 Cached request budgets and evidence limitations are unchanged.
 

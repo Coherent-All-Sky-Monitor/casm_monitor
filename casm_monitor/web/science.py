@@ -286,7 +286,7 @@ def draw_views(req, z, stamps, freq, labels, comparison=None):
             ax.tick_params(labelsize=9)
             cb = fig.colorbar(ax.collections[0],ax=ax,label='Phase (rad)',pad=.02,fraction=.025)
             cb.set_ticks([-np.pi,0,np.pi],labels=['−π','0','π'])
-            fig.text(.075,.985,format_time_range(stamps,req.time_tz),ha='left',va='top',fontsize=9,color='#b6c2ce')
+            fig.text(.075,.985,format_time_range(stamps,req.time_tz),ha='left',va='top',fontsize=9,color=plt.rcParams['text.color'])
             fig.subplots_adjust(left=.075,right=.94,bottom=.18,top=.81)
             figs.append(fig)
     elif req.kind == 'phase_spectrum':
@@ -303,8 +303,8 @@ def draw_views(req, z, stamps, freq, labels, comparison=None):
                 from casm_vis_analysis.plotting import format_time_range
                 for text in list(fig.texts):
                     text.remove()
-                fig.text(.075,.995,'Selected: '+format_time_range(stamps,req.time_tz),ha='left',va='top',fontsize=8,color='#b6c2ce')
-                fig.text(.075,.94,('Calibration day: ' if req.calibration_reference_id else 'Comparison: ')+format_time_range(comparison[1],req.time_tz),ha='left',va='top',fontsize=8,color='#b6c2ce')
+                fig.text(.075,.995,'Selected: '+format_time_range(stamps,req.time_tz),ha='left',va='top',fontsize=8,color=plt.rcParams['text.color'])
+                fig.text(.075,.94,('Calibration day: ' if req.calibration_reference_id else 'Comparison: ')+format_time_range(comparison[1],req.time_tz),ha='left',va='top',fontsize=8,color=plt.rcParams['text.color'])
             for n,ax in enumerate(fig.axes):
                 row = n//len(panels)
                 ax.set_title('')
@@ -327,7 +327,7 @@ def draw_views(req, z, stamps, freq, labels, comparison=None):
     for fig in figs:
         for text in fig.texts:
             if text.get_color() in ('0.3','0.35'):
-                text.set_color('#b6c2ce')
+                text.set_color(plt.rcParams['text.color'])
     return figs
 
 
@@ -407,12 +407,12 @@ def render_product(settings, reader, req):
             compare = cz, ct, cf
         dest.mkdir(parents=True, exist_ok=True)
         import matplotlib.pyplot as plt
-        with plt.style.context('dark_background'):
+        with plt.style.context('default'):
             figs = draw_views(req, z, stamps, freq, labels, compare)
             images = []
             for n, fig in enumerate(figs):
                 name = f'plot-{n}.png'
-                fig.savefig(dest / name, dpi=130, bbox_inches='tight', facecolor='#000000')
+                fig.savefig(dest / name, dpi=130, bbox_inches='tight', facecolor='#ffffff')
                 plt.close(fig)
                 images.append({'url': f'/api/science/products/{pid}/{name}', 'label': labels[n] if len(figs) == len(labels) else req.kind})
         arrays = dict(vis=z, time_unix=stamps, freq_mhz=freq, pairs=np.asarray(req.pairs))

@@ -53,7 +53,7 @@ def draw_visibility_views(req, z, stamps, freq, labels):
             ax.tick_params(labelsize=9)
             cb=fig.colorbar(mesh,ax=ax,label=f'{names[quantity]} ({unit})',pad=.02,fraction=.025)
             if quantity=='phase': cb.set_ticks([-np.pi,0,np.pi],labels=['−π','0','π'])
-            fig.text(.075,.985,format_time_range(stamps,req.time_tz),ha='left',va='top',fontsize=9,color='#b6c2ce')
+            fig.text(.075,.985,format_time_range(stamps,req.time_tz),ha='left',va='top',fontsize=9,color=plt.rcParams['text.color'])
             fig.subplots_adjust(left=.075,right=.94,bottom=.18,top=.81)
             figs.append(fig)
     else:

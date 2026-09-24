@@ -115,6 +115,7 @@ def test_snapshot_payload_and_cache(monkeypatch,settings):
     encoded=array.snapshot(settings,reader)
     body=json.loads(gzip.decompress(encoded))
     assert body['default_inputs']==[8,18] and body['samples']==2
+    assert body['selection']['hours']==24
     assert len(body['panels'])==2
     monkeypatch.setattr(science,'load_selection',lambda *a:pytest.fail('cached snapshot reread data'))
     assert array.snapshot(settings,reader)==encoded
