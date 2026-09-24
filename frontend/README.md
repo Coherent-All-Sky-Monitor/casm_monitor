@@ -32,7 +32,7 @@ new workspace requests to production. `npm run preview` alone has no backend.
 
 Three primary tabs group the operator workflow:
 
-- Observation: rolling 24-hour injection recovery, T1/RFI, baseline phase,
+- Observation: rolling 24-hour injection recovery, Search (T1), baseline phase,
   source history and candidates. Imaging is withdrawn from this preview UI.
 - Readiness: infrastructure, investigation queue, calibration-day comparison,
   independent Cyg A transit, manually confirmed build/review and events.
@@ -41,7 +41,10 @@ Three primary tabs group the operator workflow:
 `/observation` opens automatic rolling monitoring. `/vis` uses the baseline
 explorer with raw phase by default; `/antennas` and `/snaps` open stored full-board
 spectra in the same black scientific style, with selected history available.
-`/search` uses T1 scientific plots. `/cal/compare`, `/cal/transit`,
+`/search` is **Search (T1)**, with white Matplotlib figures, labelled count
+scales and the shared click-to-zoom viewer. Zoom pins the image and interval;
+it does not query or rebin data. Stream cards wrap on smaller screens.
+`/cal/compare`, `/cal/transit`,
 `/cal` and `/sources` expose their respective scientific workflows. Existing
 candidate/event routes remain available; no other service is retired. The old
 `/imaging` frontend route is removed; scientific code and backend artifacts remain untouched.
@@ -60,7 +63,10 @@ There is no agent executor or Slack integration.
 The interface uses a black background. Readiness leads with non-OK checks, then
 disk capacity and observation/data-flow checks; detailed measurements are collapsed.
 OVRO local (PDT/PST) is the default selection/plot clock; UTC is optional.
-Hella DM plots are limited to 0–1000 without changing counts or search configuration.
+Hella DM plots span 10–3000 pc cm^-3 on log axes without changing recorded
+counts or search configuration. White figure surfaces match Visibilities;
+the surrounding application stays dark. Search retains rolling 24-hour
+coverage with five-minute refresh and separate zero/missing-coverage colours.
 
 T1 emitted candidate distributions and raw-peak cap warnings have different
 evidence. The fork's clustered output count cannot measure its pre-clustering

@@ -74,7 +74,7 @@ there is no fallback to the production store when the root is unset.
 
 ## T1 stream monitoring
 
-The T1 page answers one question first: are all eight Hella streams alive.
+The **Search (T1)** page at `/search` answers one question first: are all eight Hella streams alive.
 Streams 0-3 run on corr1, 4-7 on corr2, 64 beams each.
 
 `GET /api/t1?t0=<ISO-or-unix>&t1=<ISO-or-unix>&time_tz=America/Los_Angeles|UTC`
@@ -123,16 +123,52 @@ Payload:
 budget, after which `status` is `partial` and the operator narrows the
 interval. A missing table is `unavailable` and still returns `streams`.
 
-`plot_url` points at a content-hashed dark Matplotlib PNG with four panels:
-gulp activity per stream, beam occupancy, DM over time (column-normalised, DM
-10-3000 pc cm^-3) and the width and DM histograms. Liveness lives in the page's
-HTML stream strip, not in the figure. Activity cells are coloured by
-`gulps_with_cands / gulps`, slate at 0 (healthy) to cyan at 1, with no-gulp
-bins transparent and cap hits overlaid in orange; a per-bin "any candidate"
-flag saturates at 21 gulps per bin and 90% empty gulps.
+`plot_url` points at a content-hashed white-background Matplotlib PNG with five panels:
+candidates per stream, beam occupancy, DM over time (DM 10-3000 pc cm^-3)
+and the width and DM histograms. Liveness lives in the page's HTML stream strip.
+Stream and DM heatmaps show candidate counts per time bin on logarithmic colour
+scales, from muted blue through teal to pale yellow. All three time panels share
+the same palette and limits: 1 to the largest displayed count in any panel
+(2 when all counts are zero or one). Ticks show decades and the exact maximum,
+formatted as integers; nearby decade labels are omitted to avoid crowding the
+maximum label. Minor ticks are hidden. The default 24-hour window uses
+3-minute bins; all three time-panel colourbar labels follow the selected bin
+duration. DM counts combine all streams and are counts per DM bucket, not a
+density or fraction. The stream title includes the approximate 8.59-second gulp.
+All three time panels use off-white for zero recorded candidates when a gulp
+is recorded and grey for no recorded gulp or candidates. Beam cells use
+their parent stream's gulp evidence; DM cells use evidence from any stream.
+These colours do not establish individual beam processing or full coverage.
+Positive candidate counts remain visible even without matching gulp evidence.
+Narrow red strips mark logged cap hits without
+hiding candidate counts. The top y-axis is stream ID (0–7), not beam
+ID: each row combines 64 beams. Red occupies the upper edge of the affected
+stream row and flags at least one capped gulp in the time bin; its vertical
+position does not identify skipped beams. Counts reflect emitted candidates
+from the beams actually processed, without correcting for skipped beams.
+Colourbar labels use two lines to fit within their panels. The same zero/missing
+colours also appear for intervals without any candidates. The DM < 10 bucket remains in the evidence
+but is omitted from both DM displays.
 `/api/t1/plot.png` renders the same figure dynamically and is not a valid
 immutable evidence URL for saving. These routes use no Plotly. Width index is
 not labelled as FWHM.
+
+The figure matches the Visibilities white scientific style: dark labels and
+spines, subtle time/histogram grids, teal histogram bars, explicit time zones
+and units, beam-index ticks at stream boundaries, and readable 10–3000 DM
+ticks on both log axes. All three time panels retain their shared logarithmic
+count palette and limits. The PNG is 1950×1875 pixels; click it to open the
+shared display-zoom viewer with Fit, +/− and pan. Zoom pins the selected PNG
+and interval, without new queries, rebinning or count normalization. Downloads,
+immutable investigation snapshots and the same-interval visibility link remain.
+The page retains rolling 24 hours with five-minute refresh; stream cards wrap
+to four or two columns on narrow screens. Search settings, candidate counts,
+the gulp ledger and production services are unchanged by this presentation update.
+
+`tests/test_t1.py` checks counts, cap overlays, zero/missing states, units,
+tick/label bounds, white PNG backgrounds and temporary style isolation.
+`scripts/check_search_browser.py` checks the name, immutable-image zoom,
+keyboard/focus behaviour, UTC/history controls, downloads and mobile overflow.
 
 ## Documentation impact and validation
 

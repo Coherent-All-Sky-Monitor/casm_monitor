@@ -105,7 +105,6 @@ def test_ledger_block_and_activity_states(payload):
     # The last bin holds both candidate gulps on stream 0.
     last = t1.TIME_BINS - 1
     assert cands[last][0] == 200 and gulps[last][0] > 0
-    # Two of that bin's gulps emitted; the colour is that fraction, not a flag.
     assert emitting[last][0] == 2 and sum(sum(bin_) for bin_ in emitting) == 2
     assert emitting[last][0] < gulps[last][0]
     assert payload["quiet_bins"][last] is False
@@ -143,10 +142,100 @@ def test_render_full_payload(payload, monkeypatch):
         assert t1.render_t1({**payload, "time_tz": zone}).startswith(b"\x89PNG")
         axes = captured[-1].axes
         # activity, activity cbar, beam, beam cbar, DM, DM cbar, width, DM hist
-        assert axes[0].get_xlabel() == ("UTC" if zone == "UTC" else "OVRO local (PDT/PST)")
-        assert axes[0].get_ylabel() == "Stream"
+        assert axes[0].get_xlabel() == ("Time (UTC)" if zone == "UTC" else "Time (OVRO local · PDT/PST)")
+        assert axes[0].get_ylabel() == "Stream ID"
         assert axes[2].get_ylabel() == "Beam index"
         assert axes[4].get_yscale() == "log" and axes[7].get_xscale() == "log"
+        assert "1 gulp ≈ 8.59 s" in axes[0].get_title()
+        assert axes[1].get_ylabel() == "candidates per stream\nper 3 min (log scale)"
+        assert axes[5].get_ylabel() == "candidates per DM bin\nper 3 min (log scale)"
+        assert axes[0].collections[1].get_array().compressed().sum() == 200
+        assert axes[4].collections[1].get_array().compressed().sum() == 200
+        from matplotlib.colors import to_rgba
+
+        for index in (0, 2, 4):
+            assert axes[index].get_facecolor() == to_rgba(t1.MISSING_COLOR)
+            assert axes[index].collections[0].cmap(0) == to_rgba(t1.EMPTY_COLOR)
+            assert axes[index].collections[1].norm is axes[0].collections[1].norm
+            assert axes[index].collections[1].cmap is axes[0].collections[1].cmap
+            assert axes[index].collections[1].norm.vmax == 200
+            assert list(axes[index + 1].get_yticks()) == [1, 10, 100, 200]
+        assert all("healthy" not in text.get_text() for text in axes[0].get_legend().get_texts())
+
+    assert t1.render_t1({**payload, "time_bin_seconds": 7.5}).startswith(b"\x89PNG")
+    axes = captured[-1].axes
+    assert axes[1].get_ylabel() == "candidates per stream\nper 7.5 s (log scale)"
+    assert axes[3].get_ylabel() == "candidates per beam\nper 7.5 s (log scale)"
+    assert axes[5].get_ylabel() == "candidates per DM bin\nper 7.5 s (log scale)"
+
+    from copy import deepcopy
+
+    near_decade = deepcopy(payload)
+    near_decade["activity"]["cands"][-1][0] = 10001
+    assert t1.render_t1(near_decade).startswith(b"\x89PNG")
+    figure = captured[-1]
+    for index in (1, 3, 5):
+        axis = figure.axes[index]
+        assert list(axis.get_yticks()) == [1, 10, 100, 1000, 10001]
+        assert axis.get_yticklabels()[-1].get_text() == "10,001"
+        boxes = [label.get_window_extent(figure.canvas.get_renderer())
+                 for label in axis.get_yticklabels()]
+        assert all(lower.y1 + 4 < upper.y0 for lower, upper in zip(boxes, boxes[1:]))
+
+
+def test_white_figure_axes_counts_and_style_isolation(payload, monkeypatch):
+    import io
+    from copy import deepcopy
+    from PIL import Image
+    from matplotlib import rc_context, rcParams
+    from matplotlib.colors import to_rgba
+    from matplotlib.figure import Figure
+
+    before = deepcopy(payload)
+    captured = []
+    save = Figure.savefig
+    def inspect(fig,*args,**kwargs):
+        captured.append(fig)
+        return save(fig,*args,**kwargs)
+    monkeypatch.setattr(Figure,'savefig',inspect)
+    with rc_context({'text.color':'white','axes.labelcolor':'white','font.size':18}):
+        content=t1.render_t1(payload)
+        assert rcParams['text.color']=='white' and rcParams['font.size']==18
+    assert payload==before
+    fig=captured[-1]
+    assert fig.get_facecolor()==to_rgba('white')
+    assert fig._suptitle.get_text().startswith('Search (T1) · Hella')
+    assert Image.open(io.BytesIO(content)).convert('RGB').getpixel((0,0))==(255,255,255)
+    axes=fig.axes
+    assert axes[6].get_facecolor()==axes[7].get_facecolor()==to_rgba('white')
+    assert list(axes[2].get_yticks())==list(range(0,513,64))
+    assert list(axes[4].get_yticks())==[10,30,100,300,1000,3000]
+    assert list(axes[7].get_xticks())==[10,30,100,300,1000,3000]
+    assert axes[6].get_ylabel()==axes[7].get_ylabel()=='Candidates'
+    assert axes[6].get_xlabel()=='Hella width index (not FWHM)'
+    assert axes[7].get_xlabel()=='DM (pc cm⁻³)'
+    for index in (0,2,4):
+        assert axes[index].collections[1].get_array().compressed().sum()==200
+        assert axes[index].get_xlim()==axes[0].get_xlim()
+    assert sum(p.get_height() for p in axes[6].patches)==200
+    assert axes[7].patches[0].get_data().values.sum()==200
+    assert sum(mesh.get_array().compressed().sum() for mesh in axes[0].collections[2:])==1
+    # savefig temporarily uses 150 dpi; redraw at the restored figure dpi
+    # before comparing artist bounds with the current canvas dimensions.
+    fig.canvas.draw()
+    renderer=fig.canvas.get_renderer()
+    for ax in axes:
+        for labels,direction in ((ax.get_xticklabels(),'x'),(ax.get_yticklabels(),'y')):
+            boxes=[label.get_window_extent(renderer) for label in labels if label.get_visible() and label.get_text()]
+            boxes.sort(key=lambda b:getattr(b,direction+'0'))
+            assert all(getattr(a,direction+'1')+2<getattr(b,direction+'0') for a,b in zip(boxes,boxes[1:]))
+    for ax in axes:
+        if not ax.axison:
+            continue
+        for label in [ax.title,ax.xaxis.label,ax.yaxis.label]:
+            if label.get_text():
+                box=label.get_window_extent(renderer)
+                assert box.x0>=0 and box.y0>=0 and box.x1<=fig.bbox.width and box.y1<=fig.bbox.height
 
 
 def test_empty_ledger_and_empty_cand_bins(tmp_path):

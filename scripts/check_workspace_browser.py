@@ -44,7 +44,7 @@ def main():
         with page.expect_response(lambda r:'/api/t1?' in r.url and 'time_tz=UTC' in r.url) as changed:
             page.get_by_role('combobox',name='Time zone').select_option('UTC')
         payload=changed.value.json()
-        assert payload['display_dm_max']==1000 and payload['time_tz']=='UTC'
+        assert payload['dm_edges'][1]==10 and payload['dm_edges'][-1]==3000 and payload['time_tz']=='UTC'
         with page.expect_response(lambda r:'/api/t1?' in r.url and '2026-09-12T00' in r.url) as historical:
             page.get_by_label('Observation day').fill('2026-09-12')
         assert historical.value.json()['t0'].startswith('2026-09-12T00:00')

@@ -1,0 +1,8 @@
+.search-t1-page .plot-image-trigger { padding: 0; border: 0; border-radius: 2px; background: white; }
+.search-t1-page .plot-image-trigger:hover { background: white; }
+@media (max-width: 950px) {
+  .search-t1-page .stream-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 500px) {
+  .search-t1-page .stream-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

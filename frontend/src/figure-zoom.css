@@ -20,6 +20,7 @@
 .figure-zoom-content .array-dynamic > img { height: calc(360px * var(--figure-zoom)); }
 .figure-zoom-actions { padding-top: 12px; font-size: 12px; }
 .figure-zoom-actions p { margin: 0; color: #565d66; }
+.figure-zoom-actions a { color: #175783; }
 .plot-zoom-trigger { display: block; cursor: zoom-in; outline-offset: -2px; }
 .plot-image-trigger { display: block; width: 100%; padding: 0; border: 0; border-radius: 0; background: white; cursor: zoom-in; }
 .plot-image-trigger img { display: block; width: 100%; height: auto; }

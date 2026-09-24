@@ -52,14 +52,13 @@ CACHE_TTL_S = 120
 OK_AGE_S = 60.0
 LATE_AGE_S = 600.0
 
-# Healthy slate at 0 (no gulp emitted anything) to cyan at 1.
-EMPTY_COLOR = "#2f4858"
-BUSY_COLOR = "#4cc9f0"
-CAP_COLOR = "#ff6b35"
-QUIET_COLOR = EMPTY_COLOR
-FG = "#d0d7de"
-SPINE = "#53616d"
-TITLE = "#f0f6fc"
+EMPTY_COLOR = "#f5f7f9"
+MISSING_COLOR = "#cbd2da"
+CAP_COLOR = "#c53030"
+FG = "#30343b"
+SPINE = "#68717c"
+TITLE = "#20252b"
+HIST_COLOR = "#287d8e"
 
 _PLOT_LOCK = threading.Lock()
 
@@ -219,19 +218,22 @@ def build_t1(reader, *, t0=None, t1=None, ledger_db=None):
 
 
 def _style(ax) -> None:
-    ax.set_facecolor("#000000")
-    ax.tick_params(colors=FG, labelsize=8)
+    ax.set_facecolor("white")
+    ax.tick_params(colors=FG, labelsize=9, width=.6, length=3)
     ax.xaxis.label.set_color(FG)
     ax.yaxis.label.set_color(FG)
     ax.title.set_color(TITLE)
     for spine in ax.spines.values():
         spine.set_color(SPINE)
+        spine.set_linewidth(.6)
 
 
 def _time_axis(ax, data, mdates, zone) -> None:
     ax.xaxis_date()
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(tz=zone, minticks=7, maxticks=11))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d\n%H:%M", tz=zone))
-    ax.set_xlabel("UTC" if data.get("time_tz") == "UTC" else "OVRO local (PDT/PST)")
+    ax.set_xlabel("Time (UTC)" if data.get("time_tz") == "UTC" else "Time (OVRO local · PDT/PST)")
+    ax.grid(axis="x", color="#6b7682", linewidth=.35, alpha=.25)
 
 
 def _blank(ax, message: str) -> None:
@@ -241,15 +243,24 @@ def _blank(ax, message: str) -> None:
 
 
 def render_t1(data):
+    from matplotlib import rc_context
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.colors import LinearSegmentedColormap, ListedColormap, LogNorm
     from matplotlib.patches import Patch
+    from matplotlib.ticker import MaxNLocator, StrMethodFormatter
     import matplotlib.dates as mdates
 
     zone = ZoneInfo(data.get("time_tz", "America/Los_Angeles"))
-    with _PLOT_LOCK:
-        fig = Figure(figsize=(13, 12.5), layout="constrained", facecolor="#000000")
+    bin_seconds = data.get("time_bin_seconds", 180.0)
+    interval = f"{bin_seconds / 60:g} min" if bin_seconds >= 60 else f"{bin_seconds:g} s"
+    count_colors = LinearSegmentedColormap.from_list(
+        "candidate_counts", ["#527bc5", "#3dbab0", "#e6dc8c"])
+    with _PLOT_LOCK, rc_context({"font.family": "DejaVu Sans", "font.size": 9,
+                                "axes.titlesize": 11, "axes.labelsize": 10,
+                                "text.color": FG, "axes.labelcolor": FG,
+                                "xtick.color": FG, "ytick.color": FG}):
+        fig = Figure(figsize=(13, 12.5), layout="constrained", facecolor="white")
         FigureCanvasAgg(fig)
         grid = fig.add_gridspec(4, 2, height_ratios=[1.6, 2.4, 2.0, 1.4],
                                 width_ratios=[1, .05])
@@ -272,86 +283,104 @@ def render_t1(data):
                                   for t in data["time_edges_unix"]]) if has_time else None)
         streams = data.get("streams") or []
         ledger_live = any(row["last_gulp_unix"] is not None for row in streams)
+        gulps = np.asarray(data["activity"]["gulps"], dtype=float) if has_time else None
+        if has_time:
+            counts = np.asarray(data["activity"]["cands"], dtype=float)
+            beams = np.asarray(data["beam_time_counts"], dtype=float).T
+            values = np.asarray(data["dm_time_counts"], dtype=float)
+            count_max = max(2, counts.max(), beams.max(), values[:, 1:].max())
+            count_ticks = [1.0]
+            for tick in 10.0 ** np.arange(1, math.floor(math.log10(count_max)) + 1):
+                if (math.log10(count_max / tick) / math.log10(count_max) >= .12
+                        and math.log10(tick / count_ticks[-1]) / math.log10(count_max) >= .12):
+                    count_ticks.append(tick)
+            count_ticks.append(count_max)
+            count_norm = LogNorm(vmin=1, vmax=count_max)
+        for ax in (act_ax, beam_ax, dm_ax):
+            ax.set_facecolor(MISSING_COLOR)
 
         # -- 1: gulp activity --------------------------------------------
-        if not ledger_live or not has_time:
+        if not has_time:
             _blank(act_ax, "No Hella log ledger yet" if not ledger_live
                    else "Search evidence unavailable")
         else:
             activity = data["activity"]
-            gulps = np.asarray(activity["gulps"], dtype=float)
-            emitting = np.asarray(activity["gulps_with_cands"], dtype=float)
             caps = np.asarray(activity["cap_hits"], dtype=np.int64)
-            # Fraction of the bin's gulps that emitted anything. Most gulps are
-            # empty, so a per-bin "any candidate" flag would saturate.
-            share = np.zeros_like(gulps)
-            np.divide(emitting, gulps, out=share, where=gulps > 0)
-            colors = LinearSegmentedColormap.from_list("empty_to_busy", [EMPTY_COLOR, BUSY_COLOR])
             edges_y = np.arange(N_STREAMS + 1)
-            image = act_ax.pcolormesh(times, edges_y, np.ma.masked_where(gulps.T <= 0, share.T),
-                                      cmap=colors, vmin=0, vmax=1)
-            # Cap hits sit on top: rare, and never to be averaged away.
-            act_ax.pcolormesh(times, edges_y, np.ma.masked_where(caps.T <= 0, caps.T),
-                              cmap=ListedColormap([CAP_COLOR]))
-            act_ax.axhline(4, color="#e6edf3", linewidth=.9)
+            act_ax.pcolormesh(times, edges_y,
+                              np.ma.masked_where((gulps.T <= 0) | (counts.T > 0), gulps.T),
+                              cmap=ListedColormap([EMPTY_COLOR]))
+            image = act_ax.pcolormesh(times, edges_y, np.ma.masked_less_equal(counts.T, 0),
+                                      cmap=count_colors, norm=count_norm)
+            for stream in range(N_STREAMS):
+                act_ax.pcolormesh(times, [stream + .82, stream + 1],
+                                  np.ma.masked_less_equal(caps[:, stream][None, :], 0),
+                                  cmap=ListedColormap([CAP_COLOR]))
+            act_ax.axhline(4, color=SPINE, linewidth=.9)
             act_ax.set_yticks(np.arange(N_STREAMS) + .5)
             act_ax.set_yticklabels([str(k) for k in range(N_STREAMS)])
-            act_ax.set_ylabel("Stream")
+            act_ax.set_ylabel("Stream ID")
             # Pad clears the legend strip drawn just above the axes.
-            act_ax.set_title("Gulp activity per stream", pad=20)
+            act_ax.set_title(f"Candidates per stream · 1 gulp ≈ {hella_log.GULP_S:g} s", pad=42)
             _time_axis(act_ax, data, mdates, zone)
-            bar = fig.colorbar(image, cax=act_cax, label="fraction of gulps with candidates")
+            bar = fig.colorbar(image, cax=act_cax, ticks=count_ticks,
+                               format=StrMethodFormatter("{x:,.0f}"),
+                               label=f"candidates per stream\nper {interval} (log scale)")
             act_cax.set_axis_on()
             bar.ax.yaxis.label.set_color(FG)
             bar.ax.tick_params(colors=FG, labelsize=8)
             bar.outline.set_edgecolor(SPINE)
-            act_ax.legend(handles=[Patch(facecolor="#000000", edgecolor=SPINE, label="no gulp recorded"),
+            act_ax.legend(handles=[Patch(facecolor=MISSING_COLOR, edgecolor=SPINE, label="no gulp recorded"),
                                    Patch(facecolor=EMPTY_COLOR, edgecolor=SPINE,
-                                         label="0% of gulps had candidates (healthy)"),
-                                   Patch(facecolor=BUSY_COLOR, edgecolor=SPINE, label="100%"),
-                                   Patch(facecolor=CAP_COLOR, edgecolor=SPINE, label="cap hit")],
+                                         label="zero candidates; gulp recorded"),
+                                   Patch(facecolor=CAP_COLOR, edgecolor=SPINE, label="cap hit (red strip)")],
                           loc="lower left", bbox_to_anchor=(0, 1.02), ncol=4, fontsize=7.5,
                           frameon=False, labelcolor=FG)
 
         # -- 3/4/5: candidates -------------------------------------------
-        if not data.get("n_bin_rows"):
+        if not has_time:
             _blank(beam_ax, "No candidates recorded in this interval\n"
                             "streams may still be alive, see the panels above")
             for ax in (dm_ax, width_ax, dmhist_ax):
                 _blank(ax, "No candidates recorded in this interval")
         else:
-            beams = np.asarray(data["beam_time_counts"], dtype=float).T
+            beam_gulps = np.repeat(gulps.T, hella_log.BEAMS_PER_STREAM, axis=0)
+            beam_ax.pcolormesh(times, np.arange(513),
+                               np.ma.masked_where((beam_gulps <= 0) | (beams > 0), beam_gulps),
+                               cmap=ListedColormap([EMPTY_COLOR]))
             image = beam_ax.pcolormesh(times, np.arange(513), np.ma.masked_less_equal(beams, 0),
-                                       cmap="viridis", norm=LogNorm(vmin=1, vmax=max(2, beams.max())))
-            bar = fig.colorbar(image, cax=beam_cax, label="candidates per beam per 3 min")
+                                       cmap=count_colors, norm=count_norm)
+            bar = fig.colorbar(image, cax=beam_cax, ticks=count_ticks,
+                               format=StrMethodFormatter("{x:,.0f}"),
+                               label=f"candidates per beam\nper {interval} (log scale)")
             beam_cax.set_axis_on()
             bar.ax.yaxis.label.set_color(FG)
             bar.ax.tick_params(colors=FG, labelsize=8)
             bar.outline.set_edgecolor(SPINE)
             for k in range(1, N_STREAMS):
-                beam_ax.axhline(64 * k, color="#8b949e", linewidth=.5)
-                beam_ax.text(times[-1], 64 * k - 32, f"stream {k - 1} ", color="#8b949e",
-                             ha="right", va="center", fontsize=7)
+                beam_ax.axhline(64 * k, color=SPINE, linewidth=.5)
+                beam_ax.text(times[-1], 64 * k - 32, f"stream {k - 1} ", color=FG,
+                             ha="right", va="center", fontsize=7,
+                             bbox=dict(facecolor="white", alpha=.85, edgecolor="none", pad=1))
             beam_ax.text(times[-1], 64 * N_STREAMS - 32, f"stream {N_STREAMS - 1} ",
-                         color="#8b949e", ha="right", va="center", fontsize=7)
+                         color=FG, ha="right", va="center", fontsize=7,
+                         bbox=dict(facecolor="white", alpha=.85, edgecolor="none", pad=1))
             beam_ax.set(title="Beam occupancy", ylabel="Beam index", ylim=(0, 512))
+            beam_ax.set_yticks(np.arange(0,513,64))
             _time_axis(beam_ax, data, mdates, zone)
 
             edges_dm = np.asarray(data["dm_edges"], dtype=float)
-            # Drop the DM < 10 floor bucket from the display; normalise each
-            # time column by all of its candidates so colour is a fraction.
-            values = np.asarray(data["dm_time_counts"], dtype=float)
-            column = values.sum(axis=1)
-            fraction = np.zeros_like(values)
-            np.divide(values, column[:, None], out=fraction, where=column[:, None] > 0)
+            dm_gulps = np.broadcast_to(gulps.sum(axis=1), values[:, 1:].T.shape)
+            dm_ax.pcolormesh(times, edges_dm[1:],
+                             np.ma.masked_where((dm_gulps <= 0) | (values[:, 1:].T > 0), dm_gulps),
+                             cmap=ListedColormap([EMPTY_COLOR]))
             image = dm_ax.pcolormesh(times, edges_dm[1:],
-                                     np.ma.masked_less_equal(fraction[:, 1:].T, 0),
-                                     cmap="magma", vmin=0, vmax=1)
-            for index, is_quiet in enumerate(data.get("quiet_bins") or []):
-                if is_quiet:
-                    dm_ax.axvspan(times[index], times[index + 1], facecolor=QUIET_COLOR,
-                                  edgecolor="none", zorder=0)
-            bar = fig.colorbar(image, cax=dm_cax, label="fraction of candidates in bin")
+                                     np.ma.masked_less_equal(values[:, 1:].T, 0),
+                                     cmap=count_colors,
+                                     norm=count_norm)
+            bar = fig.colorbar(image, cax=dm_cax, ticks=count_ticks,
+                               format=StrMethodFormatter("{x:,.0f}"),
+                               label=f"candidates per DM bin\nper {interval} (log scale)")
             dm_cax.set_axis_on()
             bar.ax.yaxis.label.set_color(FG)
             bar.ax.tick_params(colors=FG, labelsize=8)
@@ -362,24 +391,38 @@ def render_t1(data):
             _time_axis(dm_ax, data, mdates, zone)
 
             width_counts = np.asarray(data["width_counts"], dtype=float)
-            width_ax.bar(np.arange(len(width_counts)), width_counts, color="#4cc9f0")
+            width_ax.bar(np.arange(len(width_counts)), width_counts, color=HIST_COLOR, width=.82)
             width_ax.set(title="Width distribution", xlabel="Hella width index (not FWHM)",
-                         ylabel="candidates")
+                         ylabel="Candidates")
+            width_ax.xaxis.set_major_locator(MaxNLocator(nbins=9, integer=True))
             dm_counts = np.asarray(data["dm_counts"], dtype=float)
-            dmhist_ax.stairs(dm_counts[1:], edges_dm[1:], fill=True, color="#4cc9f0")
+            dmhist_ax.stairs(dm_counts[1:], edges_dm[1:], fill=True, color=HIST_COLOR)
             dmhist_ax.set_xscale("log")
-            dmhist_ax.set(title="DM distribution", xlabel="DM (pc cm⁻³)", ylabel="candidates")
+            dmhist_ax.set(title="DM distribution", xlabel="DM (pc cm⁻³)", ylabel="Candidates",
+                          xlim=(edges_dm[1], edges_dm[-1]))
+            dm_ticks = [10,30,100,300,1000,3000]
+            dm_ax.set_yticks(dm_ticks)
+            dm_ax.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
+            dmhist_ax.set_xticks(dm_ticks)
+            dmhist_ax.xaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
+            for ax in (width_ax,dmhist_ax):
+                ax.set_axisbelow(True)
+                ax.grid(axis="y", color="#d7dce2", linewidth=.5, linestyle="--")
+                ax.yaxis.set_major_locator(MaxNLocator(nbins=5, integer=True))
+                ax.ticklabel_format(axis="y", style="sci", scilimits=(-3,4), useMathText=True)
 
         if has_time:
+            for cax in (act_cax, beam_cax, dm_cax):
+                cax.minorticks_off()
             for ax in (act_ax, beam_ax, dm_ax):
                 ax.set_xlim(times[0], times[-1])
         bounds = [datetime.fromisoformat(data[k].replace("Z", "+00:00")).astimezone(zone)
                   .strftime("%Y-%m-%d %H:%M") for k in ("t0", "t1")]
         label = "UTC" if data.get("time_tz") == "UTC" else "OVRO local"
-        fig.suptitle(f"T1 · Hella streams · {bounds[0]} to {bounds[1]} {label}",
+        fig.suptitle(f"Search (T1) · Hella · {bounds[0]} to {bounds[1]} {label}",
                      color=TITLE, fontsize=13)
         output = io.BytesIO()
-        fig.savefig(output, format="png", dpi=130, facecolor=fig.get_facecolor())
+        fig.savefig(output, format="png", dpi=150, facecolor=fig.get_facecolor())
         return output.getvalue()
 
 
