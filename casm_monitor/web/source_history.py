@@ -5,7 +5,7 @@ import hashlib
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
 WIKI = Path('/home/casm/software/dev/casm-wiki')
@@ -194,8 +194,17 @@ def build_router(wiki: Path = WIKI) -> APIRouter:
     router = APIRouter()
 
     @router.get('/api/sources')
-    def sources(q: str = Query('B0329', max_length=80)):
+    def sources(request: Request, q: str = Query('B0329', max_length=80)):
+        from . import source_transits
+        name = source_transits.source_key(q)
+        if name:
+            return source_transits.catalog(request.app.state.settings, request.app.state.reader, name)
         return source_history(q, wiki)
+
+    @router.get('/api/sources/transits/{source}/{day}')
+    def transit(request: Request, source: str, day: str, calibration_id: str = Query(..., pattern=r'^[0-9a-f]{32}$')):
+        from .source_transits import snapshot
+        return snapshot(request.app.state.settings, request.app.state.reader, source, day, calibration_id)
 
     @router.get('/api/sources/B0329/attempts/{attempt_id}/artifacts/{artifact_id}')
     def artifact(attempt_id: str, artifact_id: str):

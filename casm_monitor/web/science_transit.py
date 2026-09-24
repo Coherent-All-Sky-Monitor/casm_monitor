@@ -48,7 +48,7 @@ def calibration_catalog(settings):
         return []
 
 
-def native_inputs(reader, mapping, ant_ids, t0, t1, settings):
+def native_inputs(reader, mapping, ant_ids, t0, t1, settings, *, preserve_missing=False):
     """Reindex a selected triangle and mapping together, without a padded 128² cube."""
     from casm_io.correlator.mapping import AntennaMapping
     vs = VisStore(settings, reader)
@@ -66,15 +66,12 @@ def native_inputs(reader, mapping, ant_ids, t0, t1, settings):
     if read_bytes > 500 * 1024**2:
         raise HTTPException(400, 'Native selected-matrix read exceeds 500 MiB; shorten the interval')
     z, stamps, freq, _ = vs.series(STREAM_FULL, t0, t1, pairs, allow_full_fallback=False)
-    bad = set()
-    for row in rows:
-        meta = row.get('meta') or {}
-        if (meta.get('flags') or {}).get('first_of_file'):
-            bad.update(_shard_meta_times(row))
-    keep = np.array([t not in bad for t in stamps]) & np.isfinite(z).all(axis=(1,2))
+    # File position is not a quality flag. History preserves partial/absent
+    # samples as NaNs, so a changing baseline set never changes the beam sum.
+    keep = np.ones(len(stamps), dtype=bool) if preserve_missing else np.isfinite(z).all(axis=(1,2))
     z, stamps = z[keep], stamps[keep]
     if len(stamps) < 3 or np.any(np.diff(stamps) <= 0):
-        raise HTTPException(404, 'Need three finite, distinct native integrations containing every selected antenna')
+        raise HTTPException(404, 'Need three ordered native integrations for the selected antennas')
     df = mapping.dataframe.copy()
     df = df[df['antenna_id'].isin(ant_ids)].copy()
     ranks = {p:n for n,p in enumerate(inputs)}

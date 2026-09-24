@@ -82,10 +82,6 @@ disputed attempts and withdrawals. Grouping combines same-calendar-date rows
 without dropping their notes. A date with no accessible image stays visible.
 The September 24 check found 13 detection dates and 19 observation dates.
 
-Sun/Cyg A visibility-transit history is not implemented in this change. The
-choice between a selected-baseline dynamic spectrum and a source-directed
-visibility beam remains open. Neither is a PDMP/filterbank fold.
-
 `GET /api/sources?q=B0329` returns `sources[0].attempts` with every B0329 row from
 the canonical `casm-wiki/detections.md` ledger, newest first. Rows preserve date,
 configuration and complete outcome text, including non-detections, nulls and
@@ -136,6 +132,76 @@ admits the exact preferred PNG basename when it lacks `pdmp` or `fold`.
 attempt. A directory-associated plot is not automatically a valid detection;
 read the corresponding ledger qualifications. Unknown source queries return
 `state: no_match`; a missing ledger is `unavailable`.
+
+## Sun and Cyg A visibility history
+
+Search **Sun**, **Cyg A**, **cyg-a** or **Cygnus A**, or use the source shortcuts.
+Each date opens a source-tracking beam dynamic spectrum, with a transit marker,
+white frequency/time axes and click-to-zoom. Dates and times on the page use
+OVRO local time. These are visibility-derived beams, separate from B0329 PDMP
+folds and from the stationary-beam calibration test.
+
+`GET /api/sources?q=sun` (or `cyg-a`) returns `kind: visibility_beam`, the current
+ledger calibration identity, native-cache coverage and available `transits`.
+Catalog dates are UTC, newest first, at most seven dates, and require at least
+three cached native integrations within ±1 hour of the source's meridian
+transit. Normally only three days survive native-cache retention. The catalog
+does not list future transit centers or treat a date as a detection.
+
+`GET /api/sources/transits/{source}/{day}?calibration_id=<id>` accepts canonical
+`source` values `sun` and `cyg_a`, a `YYYY-MM-DD` UTC date and the catalog's
+32-hex calibration ID. A changed/unavailable calibration returns 409: refresh
+history rather than silently using a different solution. No arbitrary product
+paths, old averaged-cache fallback or raw archive scan are accepted.
+
+The default is the latest deployment-ledger calibration, applied to **every**
+displayed date, not a claim that it was deployed on that historical date or
+that every beam in a mixed-calibration weights product uses it. The page names
+the file; Plot details records the policy, dated layout, antenna IDs, shard IDs
+and read budget. All 2–32 distinct calibration antennas must be wired in that
+dated layout, without a silent subset or substitution. The current calibration
+can therefore use a different antenna set from the Visibilities inspection preset.
+
+The maintained `casm_vis_analysis.beam_power.beam_power_vs_time` API tracks the
+named source with geometric sign −1 and applies `c_i conj(c_j)` once, at the
+3072 native frequency channels. Calibration flags and nonfinite weights mask
+channels. Stored-pair orientation and compact selected-triangle mapping retain
+physical antenna identity. Output is signed cross-only power,
+`2 Re(sum_{i<j} w_i conj(w_j) V_ij)`, **not** total tied-array power or `|V|`.
+Autos are excluded; no static/off-source subtraction or flux calibration is
+performed. Negative values remain valid and the units are calibration-weighted
+correlator counts, not Jy. A bright tracking beam alone does not establish a
+source detection or calibration quality.
+
+The native read is limited to 55 integrations and 500 MiB of selected complex
+samples; calibration metadata is limited to 32 MiB. Calibration and beamforming
+precede frequency-only averaging to 128 display bins. Missing cross baselines
+propagate to missing beam samples; flagged/missing channels remain in place
+until display averaging, which averages available values within each bin.
+First-of-file position never excludes a sample. Actual time gaps stay blank.
+Each plot uses its own labelled symmetric linear colour limits; no channel
+normalization is applied. Edge-truncated windows are labelled partial.
+
+The response includes `tile` (PNG and colour scale), native `freq_mhz`, actual
+`t0`/`t1`, `integration_s`, `samples`, `antenna_ids`, calibration and `details`.
+`preview` contains `time_unix` (T), averaged `freq_mhz` (F≤128) and signed
+`cross_power` (T×F), with nonfinite values represented by null. Its in-memory
+LRU holds at most 12 results, keyed by source/date, calibration, layout and
+shard identities; large reads share the array-overview lock. GET requests do
+not write visibility, calibration or plot files, or start acquisition.
+
+`tests/test_source_transits.py` covers aliases, dates, channel order, calibration
+amplitude/phase, reversed packet pairs, signed values, excluded autos, missing
+samples, native-only reads, cache invalidation and JSON output. Browser checks
+are in `scripts/check_source_transits_browser.py`; the bounded live independent
+Hermitian-matrix check is `scripts/check_source_transits_science.py`.
+
+Preview dependency: the local `casm_vis_analysis` working tree already supplies
+`beam_power_vs_time(return_spectrum=True)` and
+`calibration_checks.transit_center`. Those existing calibration-workspace
+additions are not committed by this monitor change. Preserve and review them
+together before deploying from clean checkouts; the historical central API
+snapshot does not describe these additions.
 
 ## Documentation impact and checks
 

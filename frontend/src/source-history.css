@@ -10,5 +10,18 @@
 .history-notes figcaption { margin-top: 6px; overflow-wrap: anywhere; }
 .history-notes p { white-space: pre-wrap; }
 .history-caption { margin: 20px 0 0; font-size: 13px; }
+.history-result-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+.history-result-heading .history-caption { margin: 0; }
+.history-result-heading label { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
+.source-shortcuts { display: flex; gap: 8px; flex-wrap: wrap; }
+.history-cal { font-size: 12px; overflow-wrap: anywhere; }
+.transit-entry header small { color: var(--muted); font-size: 11px; }
+.transit-entry .dynamic-figure { padding-top: 12px; }
+.transit-entry .dynamic-figure .array-dynamic { grid-template-rows: 280px auto auto; }
+.transit-entry .dynamic-figure .array-dynamic > img { height: 280px; }
+.dynamic-marker { grid-row: 1; grid-column: 3; position: relative; pointer-events: none; }
+.dynamic-marker > span { position: absolute; height: 100%; border-left: 1px dashed #222; }
+.dynamic-marker small { position: absolute; top: -14px; left: 4px; font-size: 9px; color: #333; background: #fff; }
+.history-notes pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
 @media (min-width: 1800px) { .source-history-page .history-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 800px) { .source-history-page .history-grid { grid-template-columns: minmax(0, 1fr); } }

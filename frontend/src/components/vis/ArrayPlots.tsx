@@ -70,7 +70,7 @@ export function Spectrum({values,freq,quantity,log=false,range}:{values:(number|
 }
 
 export type DynamicAxes = Pick<Snapshot,'freq_mhz'|'t0'|'t1'|'integration_s'>;
-export function DynamicSpectrum({tile,data,zone,quantity}:{tile:Tile;data:DynamicAxes;zone:string;quantity:Quantity}) {
+export function DynamicSpectrum({tile,data,zone,quantity,valueLabel,marker}:{tile:Tile;data:DynamicAxes;zone:string;quantity:Quantity;valueLabel?:string;marker?:{time:number;label:string}}) {
   const raster=useRef<HTMLImageElement>(null);
   const [size,setSize]=useState({width:300,height:170});
   useEffect(()=>{
@@ -89,12 +89,13 @@ export function DynamicSpectrum({tile,data,zone,quantity}:{tile:Tile;data:Dynami
     <div className="array-dynamic" style={{gridTemplateColumns:`15px ${frequencyWidth}px minmax(0, 1fr)`}}>
       <span className="dynamic-y-label">Frequency (MHz)</span>
       <div className="dynamic-frequency">{frequencyTicks.map(f=>{const p=(f1-f)/(f1-f0),anchor=p<.03?0:p>.97?100:50;return <span key={f} style={{top:`${p*100}%`,transform:`translateY(-${anchor}%)`,['--tick-anchor' as string]:`${anchor}%`}}>{frequencyLabel(f)}</span>;})}</div>
-      <img ref={raster} src={tile.src} alt={`${quantityLabel(quantity)} dynamic spectrum`} draggable={false}/>
+      <img ref={raster} src={tile.src} alt={`${valueLabel??quantityLabel(quantity)} dynamic spectrum`} draggable={false}/>
+      {marker&&marker.time>=data.t0&&marker.time<=data.t1&&<div className="dynamic-marker"><span style={{left:`${(marker.time-data.t0)/(data.t1-data.t0)*100}%`}}><small>{marker.label}</small></span></div>}
       <div className="dynamic-time">{times.map(t=>{const p=(t-data.t0)/(data.t1-data.t0),anchor=p<.05?0:p>.95?100:50;return <span key={t} title={clock(t,zone,true)} style={{left:`${p*100}%`,transform:`translateX(-${anchor}%)`,['--tick-anchor' as string]:`${anchor}%`}}>{clock(t,zone)}</span>;})}</div>
       <div className="dynamic-x-label">Time ({zone==='UTC'?'UTC':zone})<small>{clock(data.t0,zone,true)} – {clock(data.t1,zone,true)}</small></div>
     </div>
-    <div className="tile-scale" aria-label={`${axisLabel(quantity)} colour scale`}>
-      <span>{axisLabel(quantity)}{tile.log?' · log scale':''}</span>
+    <div className="tile-scale" aria-label={`${valueLabel??axisLabel(quantity)} colour scale`}>
+      <span>{valueLabel??axisLabel(quantity)}{tile.log?' · log scale':''}</span>
       <div className="tile-scale-bar"><img src={tile.scale} alt="" draggable={false}/><div><span>{quantity==='phase'?'−π':number(tile.min)}</span><span>{quantity==='phase'?'0':number(tile.log?Math.sqrt(tile.min*tile.max):(tile.min+tile.max)/2)}</span><span>{quantity==='phase'?'π':number(tile.max)}</span></div></div>
     </div>
   </div>;
