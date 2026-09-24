@@ -74,6 +74,18 @@ and its exact-response comparison remain separate scientific workflows.
 
 ## B0329 history
 
+The page opens with detection dates and one large saved fold per date, newest
+first. One caption identifies PDMP folds from dumped filterbanks; long outcome,
+configuration and directory text is inside **Notes & saved plots**. Click a
+plot to enlarge and zoom it. **All observations** includes non-detections,
+disputed attempts and withdrawals. Grouping combines same-calendar-date rows
+without dropping their notes. A date with no accessible image stays visible.
+The September 24 check found 13 detection dates and 19 observation dates.
+
+Sun/Cyg A visibility-transit history is not implemented in this change. The
+choice between a selected-baseline dynamic spectrum and a source-directed
+visibility beam remains open. Neither is a PDMP/filterbank fold.
+
 `GET /api/sources?q=B0329` returns `sources[0].attempts` with every B0329 row from
 the canonical `casm-wiki/detections.md` ledger, newest first. Rows preserve date,
 configuration and complete outcome text, including non-detections, nulls and
@@ -85,7 +97,10 @@ Each row's `status` is one of `non_detection`, `contested`, `detection` or
 backticked filename) contains the word DETECTION and does not contain
 NON-DETECTION, and the row is not `contested`; a plot merely named
 `..._detection.png` does not set it. Status is never inferred from `snr` or any
-number in the text.
+number in the text. Eight older ledger rows describing successful folds without
+that literal word have reviewed detection overrides, keyed by their exact
+SHA-256-derived row IDs in `LEGACY_DETECTIONS`. Any change to one of those rows
+invalidates its override; neither its date nor a high S/N alone carries it forward.
 
 Saved PNGs are discovered only under explicit ledger directories and that date's
 wiki evidence folder: at most two nested levels, 3000 directory entries and
@@ -101,7 +116,21 @@ expanded, full paths matched by basename), is promoted to the front of
 artifacts is borrowed from another row sharing the same `YYYY-MM-DD` date
 prefix (same URL, not a copy). `headline_from_ledger` is true when
 `artifacts[0]` was named this way, false when it is merely the first PNG the
-scan happened to find; the frontend captions the thumbnail accordingly.
+scan happened to find. `HEADLINE_PDMP` adds reviewed per-row PDMP preferences,
+including the June 3 SVD fold instead of its null StEFCal control and the
+August 24 high-altitude fold instead of its extended low-altitude trial.
+Those preferences only reorder discovered files, never create artifact paths.
+`headline_selection: reviewed_pdmp` records that selection; `headline_from_ledger`
+still states whether its basename was explicitly named in the row. Filenames
+and all associated plots remain in the expandable notes; associated controls
+and unsuccessful folds are not relabelled as detections.
+The preferred path suffix also disambiguates identical filenames in different
+fold directories. `headline_artifact` is null when the reviewed detection plot
+is unavailable, even if other associated files exist. In particular, the May 25
+date remains visible but its free-DM artifact-fit PNGs stay in Notes rather than
+representing the recorded at-par result. August 4/5 select checked DM-locked
+folds, not the old broad-artifact/uncorrected-period variants. Discovery also
+admits the exact preferred PNG basename when it lacks `pdmp` or `fold`.
 
 `artifact_scan_partial` reports a discovery cap. Missing files do not remove the
 attempt. A directory-associated plot is not automatically a valid detection;

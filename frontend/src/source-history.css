@@ -1,0 +1,14 @@
+.source-history-page .history-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.source-history-page .history-entry { padding: 14px; min-width: 0; }
+.source-history-page .history-entry header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.source-history-page .history-entry h3 { font-size: 18px; margin: 0 0 12px; }
+.source-history-page .history-image { display: block; width: 100%; padding: 0; background: white; border: 0; border-radius: 2px; cursor: zoom-in; }
+.source-history-page .history-plot { display: block; width: 100%; height: auto; min-height: 160px; max-height: 550px; object-fit: contain; background: white; }
+.history-notes { margin-top: 12px; font-size: 12px; }
+.history-notes summary { cursor: pointer; color: var(--muted); }
+.history-notes figure { margin: 16px 0; }
+.history-notes figcaption { margin-top: 6px; overflow-wrap: anywhere; }
+.history-notes p { white-space: pre-wrap; }
+.history-caption { margin: 20px 0 0; font-size: 13px; }
+@media (min-width: 1800px) { .source-history-page .history-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 800px) { .source-history-page .history-grid { grid-template-columns: minmax(0, 1fr); } }

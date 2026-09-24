@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Antenna, axisLabel, location, Quantity, Snapshot, Tile } from "./ArrayPlots";
+import { Antenna, axisLabel, location, Quantity, Snapshot, Tile, wiringLabel } from "./ArrayPlots";
 
 export type PairTile = {pair:number[];stored_pair:number[];tile:Tile;valid_fraction:number};
 type Batch = {panels:PairTile[];t0:number;t1:number;freq_mhz:number[];quantity:Quantity};
@@ -54,13 +54,13 @@ export function PairMatrix({data,selected,quantity,onSelect}:{data:Snapshot;sele
     <p>Each image: time →, frequency ↑, same rolling window and band. Click to enlarge with axes and colour scale. {axisLabel(quantity)}{quantity==='phase'?' · fixed −π to π.':' · per-baseline colour limits; compare shapes, not absolute brightness.'}</p>
     <p className="matrix-status" role="status">{count} / {pairs.length} dynamic spectra ready{count<pairs.length&&!error?' · loading bounded batches…':''}{error&&<> · {error} <button onClick={()=>setAttempt(v=>v+1)}>Retry missing tiles</button></>}</p>
     <div className="array-matrix-scroll" tabIndex={0} aria-label="Upper-triangle dynamic spectra. Scroll to see all columns.">
-      <table><thead><tr><th>V(row, column)</th>{ants.map(a=><th scope="col" key={a.packet_idx}>{a.station}<small>ant {a.antenna}</small></th>)}</tr></thead>
-        <tbody>{ants.map((a,i)=><tr key={a.packet_idx}><th scope="row">{a.station}<small>ant {a.antenna}</small></th>
+      <table><thead><tr><th>V(row, column)</th>{ants.map(a=><th scope="col" key={a.packet_idx} title={wiringLabel(a)}>{a.station}<small>ant {a.antenna}</small></th>)}</tr></thead>
+        <tbody>{ants.map((a,i)=><tr key={a.packet_idx}><th scope="row" title={wiringLabel(a)}>{a.station}<small>ant {a.antenna}</small></th>
           {ants.map((b,j)=>{
             if(j<i)return <td className="matrix-unused" key={b.packet_idx} aria-hidden="true"/>;
             const p=tiles.get(pairKey(a.packet_idx,b.packet_idx));
             const name=`${a.station} × ${b.station}`;
-            return <td key={b.packet_idx}><button disabled={!p} className={i===j?'matrix-auto':''} aria-label={`Expand ${name}`} title={`${name}${i===j?' (auto)':''}`} onClick={()=>p&&onSelect(a,b,p)}>
+            return <td key={b.packet_idx}><button disabled={!p} className={i===j?'matrix-auto':''} aria-label={`Expand ${name}`} title={`${a.station}: ${wiringLabel(a)}\n${b.station}: ${wiringLabel(b)}${i===j?' (auto)':''}`} onClick={()=>p&&onSelect(a,b,p)}>
               {p?<img src={p.tile.src} alt={`${name} ${axisLabel(quantity)} dynamic spectrum`} draggable={false}/>:<span>Loading…</span>}{i===j&&<small>auto</small>}
             </button></td>;
           })}</tr>)}</tbody>

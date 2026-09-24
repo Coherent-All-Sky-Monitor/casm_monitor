@@ -60,6 +60,19 @@ def main():
         assert page.locator('.antenna-plot').first.evaluate('(el)=>getComputedStyle(el).backgroundColor')=='rgb(255, 255, 255)'
         assert page.locator('.antenna-plot').first.bounding_box()['width']>400
         compact_width=page.locator('.antenna-plot').first.bounding_box()['width']
+        snapshot=page.request.get(URL+'/api/science/array').json()
+        wired={a['packet_idx']:a for a in snapshot['inputs']}
+        requests_before=len(requests)
+        page.get_by_role('button',name='SNAP order',exact=True).click()
+        packets=[int(v) for v in page.locator('.antenna-plot').evaluate_all('(es)=>es.map(e=>e.dataset.packet)')]
+        expected=sorted(snapshot['default_inputs'],key=lambda p:(wired[p]['snap'],wired[p]['slot'],wired[p]['adc']))
+        assert packets==expected
+        assert page.locator('.snap-group').count()==4
+        for panel in page.locator('.antenna-plot').all():
+            ant=wired[int(panel.get_attribute('data-packet'))]
+            assert panel.locator('.wiring-label').inner_text()==f"SNAP {ant['snap']} · SLOT {ant['slot']} · ADC {ant['adc']}"
+        assert len(requests)==requests_before,'Layout switch reread visibility data'
+        page.screenshot(path=str(OUT/'array-snap-order.png'),full_page=True)
         page.get_by_role('button',name='Station grid',exact=True).click()
         assert page.locator('.antenna-plot').count()==17
         assert compact_width>1.8*page.locator('.antenna-plot').first.bounding_box()['width']

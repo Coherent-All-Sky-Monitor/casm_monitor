@@ -149,7 +149,7 @@ def snapshot(settings, reader, *, hours=24., reference_input=8, mode='auto', ref
     pairs = [(i['packet_idx'],i['packet_idx']) if mode=='auto' else tuple(sorted((i['packet_idx'],reference_input))) for i in inputs]
     vstore = VisStore(settings,reader)
     rows = bounded_rows(vstore,STREAM_AVG8,t0,t1,pairs)
-    layout_identity = tuple((i['packet_idx'],i['antenna'],i['station'],*i['position_enu_m']) for i in inputs)
+    layout_identity = tuple((i['packet_idx'],i['antenna'],i['station'],i.get('snap'),i.get('slot'),i.get('adc'),*i['position_enu_m']) for i in inputs)
     key = (str(settings.store_root),layout['id'],layout_identity,reference_input,mode,reference,hours,fmin,fmax,
            tuple((r['id'],r['t1']) for r in rows))
     with _LOCK:

@@ -276,7 +276,7 @@ def input_sets(layout_path: str | os.PathLike[str] | None = None) -> dict[str, l
 
 
 def input_table(layout_path: str | os.PathLike[str] | None = None) -> list[dict[str, Any]]:
-    """One row per wired input: packet_idx, antenna, station label, in_bf."""
+    """One row per wired input, including layout-recorded SNAP/slot/ADC wiring."""
     layout = rowmap.read_layout(layout_path if layout_path is not None else rowmap.LAYOUT_CSV)
     out = []
     for row in layout:
@@ -287,11 +287,19 @@ def input_table(layout_path: str | os.PathLike[str] | None = None) -> list[dict[
         except (KeyError, ValueError):
             continue
         label = f"{(row.get('row') or '').strip()}{(row.get('col') or '').strip()}" or None
+        def optional_int(key):
+            try:
+                return int(str(row.get(key, '')).strip())
+            except ValueError:
+                return None
         out.append(
             {
                 "packet_idx": packet_idx,
                 "antenna": int(str(row.get("antenna", "")).strip() or packet_idx + 1),
                 "station": label,
+                "snap": optional_int("snap"),
+                "slot": str(row.get("slot") or "").strip() or None,
+                "adc": optional_int("adc"),
                 "in_bf": str(row.get("include_in_beamforming", "")).strip() == "1",
             }
         )

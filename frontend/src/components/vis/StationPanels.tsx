@@ -38,3 +38,28 @@ export function StationPanels({ inputs, selected, draw }: {
     })}
   </div>;
 }
+
+/** Electronics order comes from the dated layout, never packet-index arithmetic. */
+export function SnapPanels({ inputs, selected, draw }: {
+  inputs: Antenna[];
+  selected: number[];
+  draw: (antenna: Antenna) => ReactNode;
+}) {
+  const visible = inputs.filter(a => selected.includes(a.packet_idx)).sort((a, b) =>
+    (a.snap ?? Infinity) - (b.snap ?? Infinity) ||
+    (a.slot ?? '').localeCompare(b.slot ?? '') ||
+    (a.adc ?? Infinity) - (b.adc ?? Infinity) || a.packet_idx - b.packet_idx);
+  const groups = new Map<string, Antenna[]>();
+  for (const a of visible) {
+    const key = `SNAP ${a.snap ?? '—'} · SLOT ${a.slot ?? '—'}`;
+    groups.set(key, [...(groups.get(key) ?? []), a]);
+  }
+  return <div className="compact-station-grid compact-snap-grid">
+    {[...groups].map(([name, antennas]) => <section key={name} className="station-group snap-group"
+      aria-label={`${name} plots`} style={{'--station-columns': Math.min(3, antennas.length),
+        '--station-columns-medium': Math.min(2, antennas.length)} as CSSProperties}>
+      <header className="station-group-heading"><h4>{name}</h4><span className="snap-order-note">ADC order →</span></header>
+      <div className="station-panels">{antennas.map(a => draw(a))}</div>
+    </section>)}
+  </div>;
+}

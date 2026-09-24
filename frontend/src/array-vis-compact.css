@@ -8,6 +8,9 @@
 .antenna-plot header { padding: 12px 14px 5px; }
 .antenna-plot button.plot-title { color: #202020; font-size: 15px; }
 .antenna-plot .plot-title small { color: #565d66; font-size: 11px; }
+.antenna-plot .plot-title .wiring-label { font-size: 10px; margin-top: 3px; line-height: 1.5; }
+.snap-order-note { color: var(--muted); font-size: 11px; }
+.pair-wiring { color: #565d66; font-size: 12px; }
 .antenna-plot header > span { color: #565d66; font-size: 11px; }
 .antenna-plot footer { color: #565d66; font-size: 11px; padding: 4px 12px 8px; }
 .antenna-plot footer button { color: #175783; }

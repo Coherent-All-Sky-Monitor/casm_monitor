@@ -161,8 +161,19 @@ def test_input_sets_and_table(layout) -> None:
     assert sets["live"] == [2, 3]
     table = visc.input_table()
     assert [row["packet_idx"] for row in table] == [0, 2, 3]
-    assert table[0] == {"packet_idx": 0, "antenna": 1, "station": "N01E1", "in_bf": False}
+    assert table[0] == {"packet_idx": 0, "antenna": 1, "station": "N01E1", "in_bf": False,
+                        "snap": 0, "slot": None, "adc": 0}
     assert table[2]["in_bf"] is True
+
+
+def test_wiring_labels_use_explicit_layout_fields(monkeypatch):
+    monkeypatch.setattr(visc.rowmap, 'read_layout', lambda p: [
+        dict(functional='1', packet_idx='31', antenna='32', row='N01', col='E3',
+             snap='0', slot=' A ', adc='2'),
+        dict(functional='1', packet_idx='40', antenna='41', snap='bad', adc='')])
+    first, missing = visc.input_table('dated-layout.csv')
+    assert (first['snap'], first['slot'], first['adc']) == (0, 'A', 2)
+    assert (missing['snap'], missing['slot'], missing['adc']) == (None, None, None)
 
 
 # -- per-integration scalars -------------------------------------------

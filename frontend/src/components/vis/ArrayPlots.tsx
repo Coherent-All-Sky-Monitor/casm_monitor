@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { frequencyLabel, niceTicks, timeTicks } from "./PlotTicks";
 
 export type Quantity = "amp" | "real" | "imag" | "phase";
-export type Antenna = {packet_idx:number; antenna:number; station:string; position_enu_m:number[]};
+export type Antenna = {packet_idx:number; antenna:number; station:string; position_enu_m:number[]; snap?:number|null; slot?:string|null; adc?:number|null};
+export function wiringLabel(a:Antenna) {return `SNAP ${a.snap??'—'} · SLOT ${a.slot??'—'} · ADC ${a.adc??'—'}`;}
 export type Tile = {src:string;scale:string;min:number;max:number;log:boolean;width:number;height:number};
 export type Panel = {input:number;pair:number[];is_auto:boolean;valid_fraction:number;spectra:Record<Quantity,{latest:(number|null)[];mean:(number|null)[]}>;images:Record<Quantity,Tile>};
 export type Snapshot = {inputs:Antenna[];default_inputs:number[];reference_input:number;reference:string;mode:string;panels:Panel[];freq_mhz:number[];t0:number;t1:number;samples:number;integration_s:number;matrix:Record<Quantity,(number|null)[][]>;provenance:Record<string,unknown>};

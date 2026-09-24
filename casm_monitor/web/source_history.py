@@ -12,6 +12,32 @@ WIKI = Path('/home/casm/software/dev/casm-wiki')
 MAX_ENTRIES = 3000
 MAX_IMAGES = 80
 
+# Reviewed against detections.md on 2026-09-24. Older detection sentences do
+# not all say "DETECTION". Key the exact row, not date or S/N: changed rows
+# require review again. This is presentation metadata, not a new fold result.
+LEGACY_DETECTIONS = {
+    'd8fd9c09b1b18db5',  # May 25: offline alpha sweep
+    '205419a1cff82bff',  # May 28: factorial folds
+    'e0ea59272d3ebda5',  # June 2: five beams
+    '194246c7a45e3916',  # June 3: SVD, not the null StEFCal controls
+    'e8be8370fd5eec66',  # June 3: CB - s*IB sweep
+    'b97aebbc6dc1eb8d',  # June 4: three beams
+    '050699714b6087f0',  # August 5: uniform no-26
+    '9676b1f768aaf51d',  # August 20: coherent beam 478
+}
+# Prefer relevant PDMP folds over alphabetical control/low-altitude folds or
+# summary collages. Only promote files already in the bounded inventory.
+HEADLINE_PDMP = {
+    'd8fd9c09b1b18db5': None,  # Available PNGs are free-DM artifact fits, not the at-par result.
+    'e0ea59272d3ebda5': 'b0329_detections_2026-06-02/beam001_full_clfd.png',
+    '194246c7a45e3916': 'window_refold/beam_9_b0329_svd_clfd_pdmp.png',
+    'b97aebbc6dc1eb8d': 'beam002_pdmp.png',
+    '014ab7677a0f4deb': 'dmlocked_clfd/aug04_beam08_matched_just_after_clfd_DMlocked.png',
+    '050699714b6087f0': 'dmlocked_corr/b21_full_corr_DMlocked.png',
+    '9676b1f768aaf51d': 'b478_aug20_corr_pdmp.png',
+    '989eb3fe702a4636': 'trk0824_b0329_hialt_pdmp.png',
+}
+
 
 def attempt_rows(wiki: Path = WIKI) -> list[dict]:
     """Preserve ledger prose, including nulls and retractions; never infer S/N."""
@@ -38,6 +64,8 @@ def attempt_rows(wiki: Path = WIKI) -> list[dict]:
         status = ('non_detection' if 'NON-DETECTION' in upper or upper.startswith('NULL') else
                   'contested' if 'CONTESTED' in upper else
                   'detection' if 'DETECTION' in upper_prose else 'recorded_attempt')
+        if status == 'recorded_attempt' and identity in LEGACY_DETECTIONS:
+            status = 'detection'
         rows.append(dict(id=identity, date=date, source='B0329+54', directory=directory,
                          config=config, outcome=outcome, status=status,
                          contains_retraction='RETRACT' in (config + outcome).upper(),
@@ -77,6 +105,7 @@ def images_for(row: dict, wiki: Path = WIKI) -> tuple[list[Path], bool]:
     if evidence.is_dir():
         roots.append(evidence)
     result, seen, inspected = [], set(), 0
+    preferred = Path(HEADLINE_PDMP.get(row.get('id')) or '').name
     for root in roots:
         if not root.is_dir() or root.is_symlink():
             continue
@@ -91,7 +120,7 @@ def images_for(row: dict, wiki: Path = WIKI) -> tuple[list[Path], bool]:
                         return sorted(result), True
                     if path.is_symlink():
                         continue
-                    if path.is_file() and path.suffix.lower() == '.png' and ('pdmp' in path.name.lower() or 'fold' in path.name.lower()):
+                    if path.is_file() and path.suffix.lower() == '.png' and ('pdmp' in path.name.lower() or 'fold' in path.name.lower() or path.name == preferred):
                         resolved = path.resolve()
                         if resolved not in seen and path.stat().st_size <= 30_000_000:
                             result.append(resolved)
@@ -111,9 +140,21 @@ def source_history(query: str, wiki: Path = WIKI) -> dict:
         images, partial = images_for(row, wiki)
         row['artifacts'] = [dict(id=hashlib.sha256(str(p).encode()).hexdigest()[:20], name=p.name,
                                  url=f"/api/sources/B0329/attempts/{row['id']}/artifacts/{hashlib.sha256(str(p).encode()).hexdigest()[:20]}") for p in images]
+        if row['id'] in HEADLINE_PDMP:
+            preferred = HEADLINE_PDMP[row['id']]
+            row['headline_artifact'] = next((a for a, p in zip(row['artifacts'], images)
+                                            if preferred and str(p).endswith('/' + preferred)), None)
+            row['headline_selection'] = 'reviewed_pdmp'
         row['artifact_scan_partial'] = partial
         row['evidence_note'] = 'Saved files associated by ledger directory, not newly validated detections. Full recorded S/N, width and qualifications remain in outcome text.'
     _promote_headline_artifacts(attempts)
+    for row in attempts:
+        if 'headline_artifact' not in row:
+            row['headline_artifact'] = next(iter(row['artifacts']), None)
+        headline = row['headline_artifact']
+        if headline:
+            row['artifacts'].sort(key=lambda a: a['url'] != headline['url'])
+            row['headline_from_ledger'] = headline['name'] in referenced_pngs(row['outcome'] + row['directory'])
     return {'state': 'ready' if attempts else 'unavailable',
             'sources': [{'name': 'B0329+54', 'attempts': attempts}],
             'provenance': str(wiki / 'detections.md'),

@@ -21,6 +21,14 @@ compression never removes a temporal gap in the data. Phones stack the compact
 plots vertically. White figure surfaces apply to spectra, dynamic spectra,
 the matrix, enlarged panels and detailed Matplotlib exports.
 
+Every antenna panel also labels `SNAP n · SLOT letter · ADC n` from the same
+dated layout as its geometry. **SNAP order** offers another compact arrangement,
+grouped by SNAP and slot, sorted numerically by ADC within each board. It keeps
+the existing selection, quantities, map and snapshot; changing arrangement does
+not reread data. Unknown wiring fields show `—`, never inferred packet arithmetic.
+Matrix headers/cells expose wiring on hover, and both antennas' wiring appears
+in a matrix enlargement. All pairs itself keeps its station-ordered triangle.
+
 Choose autos or baselines to a reference antenna, then **Real(V)**, **Imag(V)**,
 **|V|**, or **Phase**. Spectrum, dynamic spectrum (time-frequency image), and
 all-pairs matrix share that quantity selection. Cross-correlations opens in
@@ -42,7 +50,7 @@ browser polls every minute while visible. Spectra still explicitly select
 latest integration or window mean. A 24-hour window does not silently change
 those estimators. All pairs now shows time-frequency histories, not band means.
 
-The gzip JSON contains geometry, the default selection, spectra for all four
+The gzip JSON contains geometry (including nullable `snap`, `slot`, `adc`), the default selection, spectra for all four
 quantities (latest and window mean), PNG data-URI previews, the latest-band
 all-pairs scalar matrix (retained for API compatibility, no longer displayed),
 and selection/provenance. Ordinary panel quantity/view/antenna toggles use

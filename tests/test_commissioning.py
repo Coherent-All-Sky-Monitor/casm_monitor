@@ -129,6 +129,53 @@ def test_referenced_pngs_orders_and_expands_braces():
     assert sh.referenced_pngs(text) == ['b470_s02_lock_pdmp.png', 'b377_s02_lock_pdmp.png', 'a.png', 'c.png']
 
 
+def test_legacy_detection_review_applies_only_to_unchanged_row(tmp_path, monkeypatch):
+    import hashlib
+    line = '| 2026-05-25 | no archive | test | 14.40 at-par at alpha=-1 |'
+    monkeypatch.setattr(sh, 'LEGACY_DETECTIONS', {hashlib.sha256(line.encode()).hexdigest()[:16]})
+    path = tmp_path / 'detections.md'
+    path.write_text('## B0329+54 attempt table\n' + line + '\n## Fold recipe\n')
+    assert attempt_rows(tmp_path)[0]['status'] == 'detection'
+    path.write_text(path.read_text().replace('14.40', '14.41'))
+    assert attempt_rows(tmp_path)[0]['status'] == 'recorded_attempt'
+    path.write_text(path.read_text().replace('14.41 at-par at alpha=-1', 'NON-DETECTION 14.41'))
+    assert attempt_rows(tmp_path)[0]['status'] == 'non_detection'
+
+
+def test_reviewed_pdmp_headline_does_not_create_files(tmp_path, monkeypatch):
+    line = '| 2026-07-01 | none | test | DETECTION |'
+    (tmp_path / 'detections.md').write_text('## B0329+54 attempt table\n' + line + '\n## Fold recipe\n')
+    row = attempt_rows(tmp_path)[0]
+    monkeypatch.setattr(sh, 'HEADLINE_PDMP', {row['id']: 'source_pdmp.png'})
+    monkeypatch.setattr(sh, 'images_for', lambda *a: ([Path('/a/control_pdmp.png'), Path('/a/source_pdmp.png')], False))
+    result = source_history('B0329', tmp_path)['sources'][0]['attempts'][0]
+    assert result['artifacts'][0]['name'] == 'source_pdmp.png'
+    assert result['headline_selection'] == 'reviewed_pdmp'
+    assert not result['headline_from_ledger']
+    monkeypatch.setattr(sh, 'images_for', lambda *a: ([], False))
+    assert source_history('B0329', tmp_path)['sources'][0]['attempts'][0]['artifacts'] == []
+
+
+def test_reviewed_headline_distinguishes_same_basename_and_allows_no_plot(tmp_path, monkeypatch):
+    (tmp_path / 'detections.md').write_text('## B0329+54 attempt table\n| 2026-07-01 | none | test | DETECTION |\n')
+    row = attempt_rows(tmp_path)[0]
+    monkeypatch.setattr(sh, 'HEADLINE_PDMP', {row['id']: 'good/same_pdmp.png'})
+    monkeypatch.setattr(sh, 'images_for', lambda *a: ([Path('/a/bad/same_pdmp.png'), Path('/a/good/same_pdmp.png')], False))
+    result = source_history('B0329', tmp_path)['sources'][0]['attempts'][0]
+    assert result['headline_artifact']['id'] == sh.hashlib.sha256(b'/a/good/same_pdmp.png').hexdigest()[:20]
+    monkeypatch.setattr(sh, 'HEADLINE_PDMP', {row['id']: None})
+    result = source_history('B0329', tmp_path)['sources'][0]['attempts'][0]
+    assert result['headline_artifact'] is None and len(result['artifacts']) == 2
+
+
+def test_discovery_admits_reviewed_fold_without_pdmp_in_filename(tmp_path, monkeypatch):
+    (tmp_path / 'source_DMlocked.png').write_bytes(b'png')
+    (tmp_path / 'unrelated.png').write_bytes(b'png')
+    monkeypatch.setattr(sh, 'HEADLINE_PDMP', {'row': 'source_DMlocked.png'})
+    paths, partial = images_for(dict(id='row', roots=[str(tmp_path)], date='2026-07-01'), tmp_path)
+    assert [p.name for p in paths] == ['source_DMlocked.png'] and not partial
+
+
 def test_promote_headline_artifacts_reorders_borrows_and_flags(tmp_path):
     rows = [
         dict(date='2026-07-10', outcome='DETECTION `fold_lock/bhead_pdmp.png` seen', directory='no dirs',

@@ -65,7 +65,8 @@ def main():
         page.screenshot(path=str(OUTPUT/'workspace-calibration-comparison.png'),full_page=True)
         page.goto(URL+'/sources',wait_until='networkidle')
         page.locator('.history-entry').first.wait_for(timeout=20000)
-        assert page.locator('.history-entry').count()>=20
+        assert page.get_by_label('Show',exact=True).input_value()=='detections'
+        assert page.locator('.history-entry').count()>=13
         page.screenshot(path=str(OUTPUT/'workspace-source-history.png'),full_page=False)
         page.goto(URL+'/antennas',wait_until='networkidle')
         page.get_by_role('heading',name='SNAP spectra and history').wait_for()
