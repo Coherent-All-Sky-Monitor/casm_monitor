@@ -162,14 +162,21 @@ count palette and limits. The PNG is 1950×1875 pixels; click it to open the
 shared display-zoom viewer with Fit, +/− and pan. Zoom pins the selected PNG
 and interval, without new queries, rebinning or count normalization. Downloads,
 immutable investigation snapshots and the same-interval visibility link remain.
-The page retains rolling 24 hours with five-minute refresh; stream cards wrap
-to four or two columns on narrow screens. Search settings, candidate counts,
+The page retains rolling 24 hours with five-minute refresh. Off-white stream
+cards use dark text, explicit last-gulp and rate labels, and small status badges
+with coloured top borders: green OK, amber late, red silent, grey unknown.
+Missing ages/fractions remain `no gulps`/`n/a`; empty gulps do not imply a stopped
+stream. Cards wrap from eight to four or two columns on narrow screens.
+Search settings, candidate counts,
 the gulp ledger and production services are unchanged by this presentation update.
 
 `tests/test_t1.py` checks counts, cap overlays, zero/missing states, units,
 tick/label bounds, white PNG backgrounds and temporary style isolation.
 `scripts/check_search_browser.py` checks the name, immutable-image zoom,
 keyboard/focus behaviour, UTC/history controls, downloads and mobile overflow.
+It also checks all four card states, text contrast and seven viewport widths.
+Cards fit at 320 px; whole-page overflow is checked from 390 px because the
+existing global navigation is wider than a 320 px viewport.
 
 ## Documentation impact and validation
 

@@ -59,17 +59,6 @@ body {font-size:14px;background:var(--paper);}
 .stat-strip span,.stat-strip strong {display:block;}
 .stat-strip span {font-size:12px;color:var(--muted);}
 .stat-strip strong {font-size:26px;font-weight:400;letter-spacing:-.03em;margin-top:8px;}
-/* T1 stream liveness: same status colours as the figure's liveness strip. */
-.stream-strip {display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:6px;margin:22px 0 6px;}
-.strip-note {font-size:12px;margin:0 0 22px;}
-.stream-cell {padding:10px 8px;border:1px solid var(--hairline);border-radius:4px;text-align:center;font-size:11px;}
-.stream-cell span,.stream-cell em,.stream-cell strong {display:block;}
-.stream-cell em {font-style:normal;opacity:.75;}
-.stream-cell strong {font-size:16px;font-weight:400;margin:4px 0;}
-.stream-cell.ok {background:#0b3d2e;color:#7ee2b8;}
-.stream-cell.late {background:#4a3a00;color:#ffd166;}
-.stream-cell.silent {background:#5a1020;color:#ff8fa3;}
-.stream-cell.unknown {background:#2a2f36;color:#9aa4ad;}
 .workflow-links {display:flex;flex-wrap:wrap;gap:12px 24px;border-bottom:1px solid var(--hairline);padding:0 0 20px;margin:0 0 24px;}
 .operations-grid {display:grid;grid-template-columns:minmax(0,1.7fr) minmax(280px,.8fr);gap:35px;}
 .operations-grid aside {border-left:1px solid var(--hairline);padding-left:25px;}

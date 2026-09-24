@@ -11,6 +11,8 @@ function ageText(seconds: number | null | undefined) {
   return `${(seconds/3600).toFixed(1)} h`;
 }
 
+const STREAM_STATUS_LABEL: Record<string,string> = {ok:"OK",late:"Late",silent:"Silent",unknown:"Unknown"};
+
 export default function T1Page() {
   const [window,setWindow]=useState(initialWindow()),[data,setData]=useState<Json|null>(null),[query,setQuery]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
   const [zone,setZone]=useState(LOCAL),[rolling,setRolling]=useState(true);
@@ -32,11 +34,16 @@ export default function T1Page() {
     </div>
     {error&&<Notice>{error}</Notice>}
     {data&&<>
-      <div className="stream-strip">{streams.map((s:Json)=><div key={s.stream} className={`stream-cell ${s.status}`}>
-        <span>stream {s.stream}</span><em>{s.node}</em><strong>{ageText(s.last_gulp_age_s)}</strong><span>{s.status}</span>
-        <em>{s.gulps_last_hour}/{Math.round(s.expected_gulps_per_hour)} gulps/h</em>
-        <em>{s.empty_fraction_last_hour==null?"empty n/a":`empty ${Math.round(100*s.empty_fraction_last_hour)}%`}</em>
-      </div>)}</div>
+      <section className="stream-strip" aria-label="Stream status">{streams.map((s:Json)=><article key={s.stream} className={`stream-cell ${s.status}`} aria-label={`Stream ${s.stream}`}>
+        <header className="stream-heading"><h3>Stream {s.stream}</h3><span className="stream-node">{s.node}</span></header>
+        <div className="stream-age"><span className="stream-label">Last gulp</span><div className="stream-reading">
+          <strong>{ageText(s.last_gulp_age_s)}</strong><span className="stream-status">{STREAM_STATUS_LABEL[s.status]??"Unknown"}</span>
+        </div></div>
+        <dl className="stream-metrics">
+          <div><dt>Gulps/h</dt><dd title="Observed / expected gulps in the last hour">{s.gulps_last_hour}<span className="stream-expected"> / {Math.round(s.expected_gulps_per_hour)}</span></dd></div>
+          <div><dt>Empty gulps</dt><dd>{s.empty_fraction_last_hour==null?"n/a":`${Math.round(100*s.empty_fraction_last_hour)}%`}</dd></div>
+        </dl>
+      </article>)}</section>
       <p className="muted strip-note">Ages are as of the log read {ageText(data.ledger?.read_age_s)} ago.</p>
       <figure className="plot-surface">
         <figcaption>Stream, beam and DM candidate counts · {data.time_tz==="UTC"?"UTC":"OVRO local (PDT/PST)"} · click to enlarge</figcaption>
