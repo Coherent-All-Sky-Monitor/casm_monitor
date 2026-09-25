@@ -290,7 +290,7 @@ def render_t1(data, *, compact=False):
             counts = np.asarray(data["activity"]["cands"], dtype=float)
             beams = np.asarray(data["beam_time_counts"], dtype=float).T
             values = np.asarray(data["dm_time_counts"], dtype=float)
-            count_max = max(2, counts.max(), beams.max(), values[:, 1:].max())
+            count_max = max(2, counts.max(), beams.max(), values.max())
             count_ticks = [1.0]
             for tick in 10.0 ** np.arange(1, math.floor(math.log10(count_max)) + 1):
                 if (math.log10(count_max / tick) / math.log10(count_max) >= .12
@@ -380,12 +380,12 @@ def render_t1(data, *, compact=False):
             _time_axis(beam_ax, data, mdates, zone)
 
             edges_dm = np.asarray(data["dm_edges"], dtype=float)
-            dm_gulps = np.broadcast_to(gulps.sum(axis=1), values[:, 1:].T.shape)
-            dm_ax.pcolormesh(times, edges_dm[1:],
-                             np.ma.masked_where((dm_gulps <= 0) | (values[:, 1:].T > 0), dm_gulps),
+            dm_gulps = np.broadcast_to(gulps.sum(axis=1), values.T.shape)
+            dm_ax.pcolormesh(times, edges_dm,
+                             np.ma.masked_where((dm_gulps <= 0) | (values.T > 0), dm_gulps),
                              cmap=ListedColormap([EMPTY_COLOR]))
-            image = dm_ax.pcolormesh(times, edges_dm[1:],
-                                     np.ma.masked_less_equal(values[:, 1:].T, 0),
+            image = dm_ax.pcolormesh(times, edges_dm,
+                                     np.ma.masked_less_equal(values.T, 0),
                                      cmap=count_colors,
                                      norm=count_norm)
             bar = fig.colorbar(image, cax=dm_cax, ticks=count_ticks,
@@ -395,9 +395,12 @@ def render_t1(data, *, compact=False):
             bar.ax.yaxis.label.set_color(FG)
             bar.ax.tick_params(colors=FG, labelsize=8)
             bar.outline.set_edgecolor(SPINE)
-            dm_ax.set_yscale("log")
-            dm_ax.set(title="DM distribution over time", ylabel="DM (pc cm⁻³)",
-                      ylim=(edges_dm[1], edges_dm[-1]))
+            # Include DM zero without inventing sub-bins inside the stored 0–10 bin.
+            dm_ax.set_yscale("symlog", linthresh=1, linscale=1, base=10)
+            dm_ax.set(title="DM over time · log above 1", ylabel="DM (pc cm⁻³)",
+                      ylim=(0, 1000))
+            dm_ax.text(times[-1], 3, "0–10 bin ", color=FG, ha="right", va="center",
+                       fontsize=7, bbox=dict(facecolor="white", alpha=.9, edgecolor="none", pad=1))
             _time_axis(dm_ax, data, mdates, zone)
 
             width_counts = np.asarray(data["width_counts"], dtype=float)
@@ -406,14 +409,13 @@ def render_t1(data, *, compact=False):
                          ylabel="Candidates")
             width_ax.xaxis.set_major_locator(MaxNLocator(nbins=9, integer=True))
             dm_counts = np.asarray(data["dm_counts"], dtype=float)
-            dmhist_ax.stairs(dm_counts[1:], edges_dm[1:], fill=True, color=HIST_COLOR)
-            dmhist_ax.set_xscale("log")
+            dmhist_ax.stairs(dm_counts, edges_dm, fill=True, color=HIST_COLOR)
+            dmhist_ax.set_xscale("linear")
             dmhist_ax.set(title="DM distribution", xlabel="DM (pc cm⁻³)", ylabel="Candidates",
-                          xlim=(edges_dm[1], edges_dm[-1]))
-            dm_ticks = [10,30,100,300,1000,3000]
-            dm_ax.set_yticks(dm_ticks)
+                          xlim=(0, 1000))
+            dm_ax.set_yticks([0,1,10,30,100,300,1000])
             dm_ax.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
-            dmhist_ax.set_xticks(dm_ticks)
+            dmhist_ax.set_xticks([0,200,400,600,800,1000])
             dmhist_ax.xaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
             for ax in (width_ax,dmhist_ax):
                 ax.set_axisbelow(True)

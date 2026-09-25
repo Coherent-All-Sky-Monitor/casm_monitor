@@ -127,6 +127,30 @@ def test_histograms_and_removed_fields(payload):
         assert gone not in payload
 
 
+def test_zero_dm_bin_is_drawn_without_rebinning(payload, monkeypatch):
+    from copy import deepcopy
+    from matplotlib.figure import Figure
+    data=deepcopy(payload)
+    data['dm_time_counts'][-1][0]=9999
+    data['dm_counts'][0]=9999
+    before=deepcopy(data)
+    figures=[]
+    save=Figure.savefig
+    def inspect(fig,*args,**kwargs):
+        figures.append(fig)
+        return save(fig,*args,**kwargs)
+    monkeypatch.setattr(Figure,'savefig',inspect)
+    t1.render_t1(data)
+    axes=figures[-1].axes
+    mesh=axes[4].collections[1]
+    assert mesh.get_array().compressed().sum()==10199
+    assert mesh.norm.vmax==9999
+    hist=axes[7].patches[0].get_data()
+    assert hist.values[0]==9999 and hist.values.sum()==10199
+    assert list(hist.edges)==DM_EDGES
+    assert data==before
+
+
 def test_render_full_payload(payload, monkeypatch):
     from matplotlib.figure import Figure
 
@@ -145,7 +169,9 @@ def test_render_full_payload(payload, monkeypatch):
         assert axes[0].get_xlabel() == ("Time (UTC)" if zone == "UTC" else "Time (OVRO local · PDT/PST)")
         assert axes[0].get_ylabel() == "Stream ID"
         assert axes[2].get_ylabel() == "Beam index"
-        assert axes[4].get_yscale() == "log" and axes[7].get_xscale() == "log"
+        assert axes[4].get_yscale() == "symlog" and axes[7].get_xscale() == "linear"
+        assert axes[4].get_ylim() == axes[7].get_xlim() == (0, 1000)
+        assert axes[4].yaxis.get_transform().linthresh == 1
         assert "1 gulp ≈ 8.59 s" in axes[0].get_title()
         assert axes[1].get_ylabel() == "candidates per stream\nper 3 min (log scale)"
         assert axes[5].get_ylabel() == "candidates per DM bin\nper 3 min (log scale)"
@@ -219,8 +245,8 @@ def test_white_figure_axes_counts_and_style_isolation(payload, monkeypatch):
     assert all(p.get_facecolor()==to_rgba('#456a9a') for ax in axes[6:8] for p in ax.patches)
     assert axes[0].collections[2].cmap(0.)==to_rgba('#c53030')
     assert list(axes[2].get_yticks())==list(range(0,513,64))
-    assert list(axes[4].get_yticks())==[10,30,100,300,1000,3000]
-    assert list(axes[7].get_xticks())==[10,30,100,300,1000,3000]
+    assert list(axes[4].get_yticks())==[0,1,10,30,100,300,1000]
+    assert list(axes[7].get_xticks())==[0,200,400,600,800,1000]
     assert axes[6].get_ylabel()==axes[7].get_ylabel()=='Candidates'
     assert axes[6].get_xlabel()=='Hella width index (not FWHM)'
     assert axes[7].get_xlabel()=='DM (pc cm⁻³)'

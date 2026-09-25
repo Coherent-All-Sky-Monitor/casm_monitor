@@ -176,6 +176,10 @@ Activated in the locked monitoring checkout on September 25 at 06:38 UTC;
 a fresh getter-only verification succeeded for all four boards. Only the 8061
 preview restarted to consume the new evidence source; the worker/collector and
 observing services were not restarted. Subsequent job subprocesses load the fix.
+The first subsequently observed automatic job, **863**, finished at September
+25 **07:14:51 UTC**, with fresh spectra and PPS evidence for all four antenna
+boards; accepted-offset timing remained 4/4 OK. The monitoring DB job result
+and `snap_read/pps_timing` watermark retain the measurements.
 The September 25 management lockout was released by a separately approved
 operator session at 04:41 UTC, completing stale TFTP transfers without reflash
 or re-sync. The saved 04:43 UTC check found advancing PPS on all four boards,
@@ -237,7 +241,8 @@ Visibilities navigation or a second transmitted-band history presentation.
 averaging, zero/missing values, gaps, bounds, read budgets, lost shards and
 read-only access. Existing acquisition/scheduler tests use fake hardware.
 `scripts/check_snap_spectra_browser.py` checks current saved data, all layouts,
-48-ADC mode, expansion, shared limits, removed controls,
+48-ADC mode, expansion, shared full-data limits (including new extreme values
+arriving during an already-open page's saved-data refresh), removed controls,
 separate status boxes and 320–1500 px widths. Its acquisition POST
 is intercepted: it never causes a hardware read. Real screenshots are under
 `docs/screenshots/2026-09-25/snaps-*.png` (UTC capture date).

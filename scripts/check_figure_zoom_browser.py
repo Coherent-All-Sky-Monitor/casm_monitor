@@ -45,11 +45,23 @@ def main():
         assert dialog.get_by_label('Display zoom').inner_text()=='150%'
         page.keyboard.press('Escape')
         assert trigger.evaluate('e=>e===document.activeElement')
+        page.goto(URL+'/search',wait_until='domcontentloaded')
+        trigger=page.get_by_role('button',name='Enlarge Search (T1) plots',exact=True)
+        trigger.wait_for(timeout=60000)
+        page.wait_for_function('document.querySelector(".plot-surface img")?.naturalWidth===1950',timeout=60000)
+        source=trigger.locator('img').get_attribute('src')
+        trigger.click()
+        dialog=page.get_by_role('dialog',name='Search (T1) · Hella',exact=True)
+        assert dialog.locator('img').get_attribute('src')==source
+        dialog.get_by_role('button',name='Zoom in',exact=True).click()
+        assert dialog.get_by_label('Display zoom').inner_text()=='150%'
+        page.keyboard.press('Escape')
         assert not errors,errors
         assert not forbidden,forbidden
         browser.close()
     print(json.dumps(dict(injection='white borderless trigger; zoom, Fit and trial detail passed',
-                         candidates='shared image zoom and focus return passed',errors=errors,forbidden=forbidden)))
+                         candidates='shared image zoom and focus return passed',
+                         search='real 1950px figure and pinned zoom passed',errors=errors,forbidden=forbidden)))
 
 
 if __name__=='__main__':

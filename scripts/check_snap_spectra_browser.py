@@ -19,6 +19,11 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(viewport={'width':1500,'height':1100})
+        page.add_init_script('''const original=window.setInterval;
+            window.setInterval=(fn,ms,...args)=>{
+                if(ms===60000)window.snapRefreshForTest=fn;
+                return original(fn,ms,...args);
+            };''')
         errors, submitted, unexpected = [], [], []
         page.on('pageerror', lambda e: errors.append(str(e)))
 
@@ -129,14 +134,17 @@ def main():
         screenshot(page,'overview-snaps-status.png')
         # Display-only fixture: a later saved frame with extreme finite values
         # must expand the shared range. Never write this to the monitor store.
+        page.goto(URL+'/snaps')
+        page.locator('.snap-spectrum-card svg').first.wait_for()
         frame=page.request.get(URL+'/api/snap-workspace/spectra').json()
         target=next(b for b in frame['boards'] if b['feng_id']==2)
         adc=next(i['adc'] for i in target['inputs'] if i['station']=='N16E1')
         target['spectra_db'][adc][0]=-400
         target['spectra_db'][adc][1]=150
         page.route('**/api/snap-workspace/spectra?*',lambda r:r.fulfill(json=frame))
-        page.goto(URL+'/snaps')
-        page.locator('.snap-spectrum-card svg').first.wait_for()
+        with page.expect_response(lambda r:'/api/snap-workspace/spectra?' in r.url):
+            page.evaluate('window.snapRefreshForTest()')
+        page.wait_for_function('Number(document.querySelector(".snap-spectrum-card svg")?.dataset.yMax)>250')
         plot=page.locator('.snap-spectrum-card svg').first
         assert float(plot.get_attribute('data-y-min')) < -300
         assert float(plot.get_attribute('data-y-max')) > 250

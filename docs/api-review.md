@@ -172,7 +172,7 @@ budget, after which `status` is `partial` and the operator narrows the
 interval. A missing table is `unavailable` and still returns `streams`.
 
 `plot_url` points at a content-hashed white-background Matplotlib PNG with five panels:
-candidates per stream, beam occupancy, DM over time (DM 10-3000 pc cm^-3)
+candidates per stream, beam occupancy, DM over time (DM 0–1000 pc cm^-3)
 and the width and DM histograms. Liveness lives in the page's HTML stream strip.
 Stream and DM heatmaps show candidate counts per time bin on logarithmic colour
 scales, from pale lavender for low counts to deep purple for high counts.
@@ -196,22 +196,24 @@ stream row and flags at least one capped gulp in the time bin; its vertical
 position does not identify skipped beams. Counts reflect emitted candidates
 from the beams actually processed, without correcting for skipped beams.
 Colourbar labels use two lines to fit within their panels. The same zero/missing
-colours also appear for intervals without any candidates. The DM < 10 bucket remains in the evidence
-but is omitted from both DM displays.
-Read-only check, September 25 07:07 UTC: all eight `/tmp/hella_N.cfg` files on
-corr1/corr2 specify DM_MIN 0 and DM_MAX 1000. These plot limits therefore do
-not describe the active search. The saved 921.750557–1122.099537 bucket also
-straddles the search ceiling, so its full displayed width is not evidence of
-candidates above DM 1000. The 0–10 bucket must be included in a future display
-correction; stored counts and production search settings must not be changed.
+colours also appear for intervals without any candidates. The saved 0–10 DM
+bucket is included in both DM displays and in the shared count-colour range.
+DM versus time uses a linear 0–1 segment and log spacing above 1; the bottom
+DM histogram uses a linear 0–1000 axis. No finer bins are invented within 0–10.
+The stored edges are unchanged, including 921.750557–1122.099537 across the
+display ceiling. Its count stays intact while the axis ends at 1000; the figure
+does not infer counts on either side of that edge. All bins remain in evidence
+JSON, including bins outside the displayed range for historical intervals.
+The September 25 read-only check confirmed DM_MIN 0 and DM_MAX 1000 in all
+eight corr1/corr2 `/tmp/hella_N.cfg` files. No search configuration changed.
 `/api/t1/plot.png` renders the same figure dynamically and is not a valid
 immutable evidence URL for saving. These routes use no Plotly. Width index is
 not labelled as FWHM.
 
 The figure matches the Visibilities white scientific style: dark labels and
 spines, subtle time/histogram grids, muted-blue histogram bars, explicit time zones
-and units, beam-index ticks at stream boundaries, and readable 10–3000 DM
-ticks on both log axes. All three time panels retain their shared logarithmic
+and units, beam-index ticks at stream boundaries, and readable 0–1000 DM
+ticks with distinct histogram/time-view spacing. All three time panels retain their shared logarithmic
 count palette and limits. The PNG is 1950×1875 pixels; click it to open the
 shared display-zoom viewer with Fit, +/− and pan. Zoom pins the selected PNG
 and interval, without new queries, rebinning or count normalization. Downloads,

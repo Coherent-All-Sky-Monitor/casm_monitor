@@ -95,8 +95,10 @@ There is no agent executor or Slack integration.
 The interface uses a black background. Readiness leads with non-OK checks, then
 disk capacity and observation/data-flow checks; detailed measurements are collapsed.
 OVRO local (PDT/PST) is the default selection/plot clock; UTC is optional.
-Hella DM plots span 10–3000 pc cm^-3 on log axes without changing recorded
-counts or search configuration. White figure surfaces match Visibilities;
+Hella DM plots span 0–1000 pc cm^-3: the bottom histogram is linear, while
+DM versus time is logarithmic above 1 with a linear 0–1 segment. The original
+0–10 bucket is retained without inventing finer bins. Recorded counts and
+search configuration are unchanged. White figure surfaces match Visibilities;
 the surrounding application stays dark. Search retains rolling 24-hour
 coverage with five-minute refresh and separate zero/missing-coverage colours.
 
