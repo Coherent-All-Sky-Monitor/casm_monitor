@@ -133,6 +133,7 @@ def geometry(path):
 
 def catalog(settings, reader, layout_id=None):
     from .science_transit import calibration_catalog
+    from .science_array import INSPECTION_ANTENNAS
     path = Path(rowmap.LAYOUT_CSV).resolve()
     if layout_id:
         selected = next((e for e in layouts() if e['id'] == layout_id), None)
@@ -158,6 +159,7 @@ def catalog(settings, reader, layout_id=None):
         preset_source = 'Recorded inspected payload union, matching packet identities; not a health verdict'
     defaults = [b for b in baselines if b['i'] in default_inputs and b['j'] in default_inputs][:3]
     return {'inputs': inputs, 'baselines': baselines, 'default_pairs': [[b['i'], b['j']] for b in defaults],
+            'inspection_inputs': [r['packet_idx'] for r in inputs if r['antenna'] in INSPECTION_ANTENNAS],
             'layouts': layouts(), 'current_layout': file_identity(path), 'availability': [dict(r) for r in span],
             'transit_calibrations': calibration_catalog(settings),
             'preset_source': preset_source,

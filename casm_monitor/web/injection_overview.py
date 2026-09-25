@@ -8,6 +8,7 @@ No T2 convenience connection is used: it initializes/migrates the live store.
 from __future__ import annotations
 
 import re
+import math
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -94,24 +95,35 @@ def _shot(row: dict[str, Any], root: Path) -> dict[str, Any]:
 
 def build_injection_overview(
     settings: Settings, *, now: datetime | None = None, events_root: Path = EVENTS_ROOT,
+    t0: float | None = None, t1: float | None = None,
 ) -> dict[str, Any]:
-    """Read at most 5001 ledger rows in seven UTC calendar days.
+    """Read at most 5001 ledger rows for the selected window and seven-day trend.
 
-    Counts describe rolling 24 hours; trend includes today and six preceding days.
+    Counts default to rolling 24 hours; explicit bounds select a history interval.
+    Trend includes the selected endpoint's UTC date and six preceding days.
     An unset outcome is exposed separately as pending/legacy bookkeeping.
     If the row budget is exceeded, counts are explicitly incomplete.
     """
     now = now or datetime.now(timezone.utc)
     now = now.replace(tzinfo=timezone.utc) if now.tzinfo is None else now.astimezone(timezone.utc)
-    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    start = today - timedelta(days=6)
-    rolling_start = now - timedelta(hours=24)
+    end = now.timestamp() if t1 is None else t1
+    begin = end - 86400 if t0 is None else t0
+    if not math.isfinite(begin) or not math.isfinite(end) or not 0 < end-begin <= 7*86400:
+        raise HTTPException(400, "Injection windows must be finite, positive and at most seven days")
+    try:
+        endpoint = datetime.fromtimestamp(end, timezone.utc)
+        rolling_start = datetime.fromtimestamp(begin, timezone.utc)
+    except (ValueError, OverflowError, OSError) as exc:
+        raise HTTPException(400, "Injection timestamps are out of range") from exc
+    today = endpoint.replace(hour=0, minute=0, second=0, microsecond=0)
+    start = min(today - timedelta(days=6), rolling_start)
     result: dict[str, Any] = {
         "status": "unavailable", "as_of_utc": now.isoformat(),
-        "window_start_utc": rolling_start.isoformat(), "window_end_utc": now.isoformat(),
-        "window_label": "Rolling 24 hours", "trend_start_utc": start.isoformat(),
+        "window_start_utc": rolling_start.isoformat(), "window_end_utc": endpoint.isoformat(),
+        "window_label": "Rolling 24 hours" if t0 is None and t1 is None else "Selected interval",
+        "trend_start_utc": (today-timedelta(days=6)).isoformat(),
         "counts": _counts([]), "counts_complete": False, "trend": [],
-        "latest_completed": None, "recent": [], "misses": [],
+        "latest_completed": None, "recent": [], "misses": [], "trials": [],
         "pending_note": "Unset outcomes are pending or legacy bookkeeping, not search misses.",
         "recovery_note": "Completed, fired shots only; compare like DM, width, S/N and observing conditions.",
         "source": str(settings.t2_db),
@@ -125,7 +137,7 @@ def build_injection_overview(
             rows = [dict(row) for row in connection.execute(
                 f"SELECT {FIELDS} FROM injections WHERE inject_utc >= ? AND inject_utc <= ? "
                 "ORDER BY inject_utc DESC LIMIT ?",
-                (start.isoformat(), now.isoformat(), MAX_ROWS + 1),
+                (start.isoformat(), endpoint.isoformat(), MAX_ROWS + 1),
             )]
         finally:
             connection.close()
@@ -136,12 +148,16 @@ def build_injection_overview(
     rows = rows[:MAX_ROWS]
     result.update(status="partial" if truncated else "ok", counts_complete=not truncated)
     if truncated:
-        result["reason"] = "Seven-day row budget exceeded; displayed counts are incomplete."
-    result["counts"] = _counts([row for row in rows if row["inject_utc"] >= rolling_start.isoformat()])
+        result["reason"] = "Injection row budget exceeded; displayed counts are incomplete."
+    selected = [row for row in rows if row["inject_utc"] >= rolling_start.isoformat()]
+    result["counts"] = _counts(selected)
+    # Every retained shot in the selected interval, not the thirty-row recent list.
+    # Avoid per-shot archive probes when drawing the timeline.
+    result["trials"] = [{k:v for k,v in row.items() if k != "replay_png"} for row in selected]
     result["misses"] = [_shot(row, events_root) for row in rows if row["outcome"] in inject_outcome.MISSES]
     result["trend"] = [
         {"date_utc": day.date().isoformat(), **_counts([row for row in rows if row["inject_utc"][:10] == day.date().isoformat()])}
-        for day in (start + timedelta(days=i) for i in range(7))
+        for day in (today - timedelta(days=6) + timedelta(days=i) for i in range(7))
     ]
     result["recent"] = [_shot(row, events_root) for row in rows[:RECENT_ROWS]]
     latest = next((row for row in rows if row["outcome"] in inject_outcome.ALL), None)
@@ -152,6 +168,12 @@ def build_injection_overview(
 def build_router(settings: Settings, *, events_root: Path = EVENTS_ROOT) -> APIRouter:
     """Serve existing injection artifacts only, never generate or post them."""
     router = APIRouter(prefix="/api/observation/injections")
+
+    @router.get("")
+    def selected_interval(t0: str | None = None, t1: str | None = None):
+        from .search import _time_arg
+        return build_injection_overview(settings, events_root=events_root,
+                                        t0=_time_arg("t0", t0), t1=_time_arg("t1", t1))
 
     @router.get("/artifact/{file_id}/{kind}")
     def artifact(file_id: str, kind: str) -> FileResponse:

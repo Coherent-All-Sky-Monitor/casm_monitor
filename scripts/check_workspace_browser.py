@@ -14,12 +14,12 @@ def main():
         page=browser.new_page(viewport={'width':1440,'height':1050})
         page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto(URL+'/observation',wait_until='networkidle')
-        page.get_by_role('heading',name='Science and search recovery').wait_for()
+        page.get_by_role('heading',name='Overview',exact=True).wait_for()
         assert page.evaluate('getComputedStyle(document.body).backgroundColor')=='rgb(0, 0, 0)'
         assert page.locator('.js-plotly-plot').count()==0
         assert page.get_by_role('link',name='Imaging',exact=True).count()==0
-        page.wait_for_function('document.querySelectorAll(".monitoring-overview .plot-surface img").length >= 3 && Array.from(document.querySelectorAll(".monitoring-overview .plot-surface img")).every(i=>i.complete&&i.naturalWidth>0)',timeout=60000)
-        overview_metadata=page.locator('.monitoring-overview a',has_text='Provenance JSON').first.get_attribute('href')
+        page.wait_for_function('document.querySelectorAll(".overview-image img").length === 2 && Array.from(document.querySelectorAll(".overview-image img")).every(i=>i.complete&&i.naturalWidth>0)',timeout=60000)
+        overview_metadata=page.locator('.overview-visibility a',has_text='Figure metadata').first.get_attribute('href')
         assert page.request.get(URL+overview_metadata).json()['selection']['reference']=='raw'
         assert page.get_by_role('combobox',name='Time zone').input_value()=='America/Los_Angeles'
         page.screenshot(path=str(OUTPUT/'workspace-observation.png'),full_page=False)

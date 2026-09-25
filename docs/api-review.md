@@ -8,6 +8,30 @@ root may receive rendered products and investigation records.
 
 ## Injection review
 
+The **Overview** tab at `/observation` replaces Injection recovery. Four live
+cards show observation state, Hella streams, rolling-24-hour injection recovery
+and cached-visibility age. The live cards refresh every 30 seconds while visible;
+state and ledger evidence older than 120 seconds cannot stay green. Visibility
+age above 10 minutes is marked stale; this is a display threshold, not an
+instrument-quality test. Missing, pending and incomplete evidence remain explicit.
+History panels share a time-zone and interval control, default rolling 24 hours
+with two-minute refresh. Historical selections pause those panels, not live cards.
+The live recovery card uses the operator's absolute recovered-count thresholds:
+18 or more is yellow (including 24/24), fewer than 12 is red; the intermediate
+12–17 band is orange. These are 24-hour display bands, not recovery percentages
+or scientific acceptance criteria. Unavailable/empty evidence stays unknown;
+stale or incomplete counts take priority over count bands. Individual trial
+misses remain red; shorter historical intervals do not use these thresholds.
+
+Injection outcomes use an interactive white timeline with trial details and
+collapsed tables/seven-day UTC totals. The adjacent current-layout map reuses the
+Visibilities inspection set and labels wired, intended and inspected membership
+separately. It shows configuration, not antenna health. Recorded weights membership
+and the current ledger calibration do not establish runtime activation.
+The bottom row contains only the stream-count heatmap and a raw reference-baseline
+dynamic spectrum with amplitude/phase selection. Images and the timeline enlarge.
+Search and detailed-visibility links carry the selected history interval.
+
 `GET /api/observation` includes injection counts for a rolling 24-hour interval.
 The start and end are explicit UTC strings; the seven-day trend retains UTC
 calendar bins. `misses` contains all canonical search misses in the bounded
@@ -15,6 +39,15 @@ seven-calendar-day read, not only the thirty recent shots. The 5000-row budget
 and incomplete-count flag apply to both. Unset outcomes and fire failures remain
 separate from completed fired shots. Recovery evidence comes from the matched
 search cluster; a synthetic replay is a separate artifact.
+
+`GET /api/observation/injections?t0=<ISO-or-unix>&t1=<ISO-or-unix>` selects a
+finite positive interval of at most seven days, defaulting to rolling 24 hours.
+`trials` contains every retained shot in that interval, not the thirty-row
+`recent` sample, and omits arbitrary recorded replay paths. `counts` uses the
+same selection. UTC-day trend bins end on the selected endpoint's date, while
+`as_of_utc` records the actual read time. The read covers the union of that
+interval and its seven-day trend, with the same 5000-row budget and partial flag.
+History selection cannot change the live cards or initiate an injection.
 
 `GET /api/review` returns `items`, `csrf_token`, `writes_enabled`,
 `source_status`, `injection_counts_complete` and the source-window start. With
@@ -76,6 +109,13 @@ there is no fallback to the production store when the root is unset.
 
 The **Search (T1)** page at `/search` answers one question first: are all eight Hella streams alive.
 Streams 0-3 run on corr1, 4-7 on corr2, 64 beams each.
+
+`GET /api/t1/status` reads only current gulp-ledger status for Overview, without
+candidate-array reads or figure rendering. `GET /api/t1?compact=true` returns an
+immutable `activity_plot_url` for the first panel alone, with exactly the full
+figure's counts, zero/missing masks, cap strips and shared logarithmic scale.
+The default API/figure is unchanged. `/search?t0=...&t1=...&time_tz=UTC` opens the
+requested historical interval with rolling paused.
 
 `GET /api/t1?t0=<ISO-or-unix>&t1=<ISO-or-unix>&time_tz=America/Los_Angeles|UTC`
 defaults to a rolling 24 hours, supports at most seven days and refreshes every

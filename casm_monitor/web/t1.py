@@ -228,9 +228,9 @@ def _style(ax) -> None:
         spine.set_linewidth(.6)
 
 
-def _time_axis(ax, data, mdates, zone) -> None:
+def _time_axis(ax, data, mdates, zone, *, compact=False) -> None:
     ax.xaxis_date()
-    ax.xaxis.set_major_locator(mdates.AutoDateLocator(tz=zone, minticks=7, maxticks=11))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(tz=zone, minticks=4 if compact else 7, maxticks=7 if compact else 11))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d\n%H:%M", tz=zone))
     ax.set_xlabel("Time (UTC)" if data.get("time_tz") == "UTC" else "Time (OVRO local · PDT/PST)")
     ax.grid(axis="x", color="#6b7682", linewidth=.35, alpha=.25)
@@ -242,7 +242,7 @@ def _blank(ax, message: str) -> None:
     ax.set_yticks([])
 
 
-def render_t1(data):
+def render_t1(data, *, compact=False):
     from matplotlib import rc_context
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -260,22 +260,24 @@ def render_t1(data):
                                 "axes.titlesize": 11, "axes.labelsize": 10,
                                 "text.color": FG, "axes.labelcolor": FG,
                                 "xtick.color": FG, "ytick.color": FG}):
-        fig = Figure(figsize=(13, 12.5), layout="constrained", facecolor="white")
+        fig = Figure(figsize=(9, 3.8) if compact else (13, 12.5), layout="constrained", facecolor="white")
         FigureCanvasAgg(fig)
-        grid = fig.add_gridspec(4, 2, height_ratios=[1.6, 2.4, 2.0, 1.4],
+        grid = fig.add_gridspec(1 if compact else 4, 2, height_ratios=[1] if compact else [1.6, 2.4, 2.0, 1.4],
                                 width_ratios=[1, .05])
         act_ax = fig.add_subplot(grid[0, 0])
         act_cax = fig.add_subplot(grid[0, 1])
-        beam_ax = fig.add_subplot(grid[1, 0])
-        beam_cax = fig.add_subplot(grid[1, 1])
-        dm_ax = fig.add_subplot(grid[2, 0])
-        dm_cax = fig.add_subplot(grid[2, 1])
-        hist = grid[3, :].subgridspec(1, 2)
-        width_ax = fig.add_subplot(hist[0, 0])
-        dmhist_ax = fig.add_subplot(hist[0, 1])
-        for ax in (act_ax, beam_ax, dm_ax, width_ax, dmhist_ax):
+        beam_ax = dm_ax = width_ax = dmhist_ax = beam_cax = dm_cax = None
+        if not compact:
+            beam_ax = fig.add_subplot(grid[1, 0])
+            beam_cax = fig.add_subplot(grid[1, 1])
+            dm_ax = fig.add_subplot(grid[2, 0])
+            dm_cax = fig.add_subplot(grid[2, 1])
+            hist = grid[3, :].subgridspec(1, 2)
+            width_ax = fig.add_subplot(hist[0, 0])
+            dmhist_ax = fig.add_subplot(hist[0, 1])
+        for ax in ((act_ax,) if compact else (act_ax, beam_ax, dm_ax, width_ax, dmhist_ax)):
             _style(ax)
-        for cax in (act_cax, beam_cax, dm_cax):
+        for cax in ((act_cax,) if compact else (act_cax, beam_cax, dm_cax)):
             cax.set_axis_off()
 
         has_time = "time_edges_unix" in data
@@ -296,7 +298,7 @@ def render_t1(data):
                     count_ticks.append(tick)
             count_ticks.append(count_max)
             count_norm = LogNorm(vmin=1, vmax=count_max)
-        for ax in (act_ax, beam_ax, dm_ax):
+        for ax in ((act_ax,) if compact else (act_ax, beam_ax, dm_ax)):
             ax.set_facecolor(MISSING_COLOR)
 
         # -- 1: gulp activity --------------------------------------------
@@ -322,7 +324,7 @@ def render_t1(data):
             act_ax.set_ylabel("Stream ID")
             # Pad clears the legend strip drawn just above the axes.
             act_ax.set_title(f"Candidates per stream · 1 gulp ≈ {hella_log.GULP_S:g} s", pad=42)
-            _time_axis(act_ax, data, mdates, zone)
+            _time_axis(act_ax, data, mdates, zone, compact=compact)
             bar = fig.colorbar(image, cax=act_cax, ticks=count_ticks,
                                format=StrMethodFormatter("{x:,.0f}"),
                                label=f"candidates per stream\nper {interval} (log scale)")
@@ -336,6 +338,14 @@ def render_t1(data):
                                    Patch(facecolor=CAP_COLOR, edgecolor=SPINE, label="cap hit (red strip)")],
                           loc="lower left", bbox_to_anchor=(0, 1.02), ncol=4, fontsize=7.5,
                           frameon=False, labelcolor=FG)
+
+        if compact:
+            if has_time:
+                act_ax.set_xlim(times[0], times[-1])
+                act_cax.minorticks_off()
+            output = io.BytesIO()
+            fig.savefig(output, format="png", dpi=150, facecolor=fig.get_facecolor())
+            return output.getvalue()
 
         # -- 3/4/5: candidates -------------------------------------------
         if not has_time:
@@ -447,10 +457,12 @@ def build_router(reader, settings):
 
     @router.get("")
     def overview(t0: str | None = None, t1: str | None = None,
+                 compact: bool = False,
                  time_tz: Literal["America/Los_Angeles", "UTC"] = "America/Los_Angeles"):
         data = get(t0, t1, time_tz)
-        if settings.observation_cache_root and "plot_url" not in data:
-            content = render_t1(data)
+        plot_key = "activity_plot_url" if compact else "plot_url"
+        if settings.observation_cache_root and plot_key not in data:
+            content = render_t1(data, compact=compact)
             digest = hashlib.sha256(content).hexdigest()
             artifact_root = Path(settings.observation_cache_root).resolve()
             root = (artifact_root / "t1_products").resolve()
@@ -470,8 +482,17 @@ def build_router(reader, settings):
                     os.replace(temporary, path)
                 finally:
                     temporary.unlink(missing_ok=True)
-            data["plot_url"] = f"/api/t1/products/{digest}.png"
+            data[plot_key] = f"/api/t1/products/{digest}.png"
         return data
+
+    @router.get("/status")
+    def live_status():
+        now = time.time()
+        info = hella_log.ledger_info(ledger_db)
+        rows = stream_rows(ledger_db, {}, end=now, read_unix=info.get("last_tick_unix"))
+        fields = ("stream", "node", "status", "last_gulp_unix", "last_gulp_age_s", "cap_hits_last_hour")
+        return {"checked_utc": iso(now), "ledger": info,
+                "streams": [{key:row[key] for key in fields} for row in rows]}
 
     @router.get("/products/{filename}")
     def product(filename: str):

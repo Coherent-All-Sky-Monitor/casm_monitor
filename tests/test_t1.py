@@ -266,6 +266,49 @@ def test_empty_ledger_and_empty_cand_bins(tmp_path):
     store.close()
 
 
+def test_compact_activity_uses_the_full_plot_count_scale(payload, monkeypatch):
+    import io
+    from PIL import Image
+    from matplotlib.figure import Figure
+    captured=[]
+    save=Figure.savefig
+    def inspect(fig,*args,**kwargs):
+        captured.append(fig)
+        return save(fig,*args,**kwargs)
+    monkeypatch.setattr(Figure,'savefig',inspect)
+    t1.render_t1(payload)
+    full=captured[-1]
+    png=t1.render_t1(payload,compact=True)
+    compact=captured[-1]
+    assert len(compact.axes)==2
+    assert Image.open(io.BytesIO(png)).size==(1350,570)
+    a,b=full.axes[0],compact.axes[0]
+    assert (a.collections[1].get_array()==b.collections[1].get_array()).all()
+    assert a.collections[1].norm.vmin==b.collections[1].norm.vmin
+    assert a.collections[1].norm.vmax==b.collections[1].norm.vmax
+    assert a.collections[1].cmap(.5)==b.collections[1].cmap(.5)
+    assert a.get_ylabel()==b.get_ylabel()=='Stream ID'
+    assert sum(mesh.get_array().compressed().sum() for mesh in b.collections[2:])==1
+
+
+def test_live_status_does_not_render_or_read_candidate_arrays(tmp_path, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from casm_monitor.config import Settings
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Live status must not build or render the history plots')
+    monkeypatch.setattr(t1,'build_t1',forbidden)
+    monkeypatch.setattr(t1,'render_t1',forbidden)
+    app=FastAPI()
+    app.include_router(t1.build_router(None,Settings(observation_cache_root=tmp_path)))
+    with TestClient(app) as client:
+        payload=client.get('/api/t1/status').json()
+    assert len(payload['streams'])==8
+    assert all(s['status']=='unknown' for s in payload['streams'])
+    assert payload['ledger']['last_tick_unix'] is None
+    assert all('empty_fraction_last_hour' not in s for s in payload['streams'])
+
+
 def test_missing_cand_bins_table_still_reports_streams(tmp_path):
     store = Store(tmp_path / "monitor.sqlite")
     ledger_db = make_ledger(tmp_path / "hella_gulps.sqlite")

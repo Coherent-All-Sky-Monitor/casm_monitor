@@ -122,8 +122,13 @@ views. Pure tick-selection tests run with
 
 ## Detailed selection and render
 
-The opening page automatically renders rolling-24-hour cached raw phase and
-amplitude views on one geometry-selected long N-S baseline, alongside T1 plots.
+The opening Overview automatically renders one rolling-24-hour cached raw
+dynamic spectrum on a geometry-selected reference baseline. Amplitude is the
+default; phase is selectable. The adjacent compact T1 panel shows stream counts.
+`GET /api/science/catalog` exposes `inspection_inputs`, reusing the same antenna
+set as the Visibilities overview. Overview chooses its reference from that set
+in the selected dated layout; its separate array map always describes current
+configuration. A single baseline is not a whole-array health test.
 The detailed baseline inspector (`/vis?view=detail`) automatically renders its cached selection on entry and
 after changes. It defaults to rolling 24 hours and refreshes every minute while
 visible; drill-down from an array tile carries its window via `rolling_hours`

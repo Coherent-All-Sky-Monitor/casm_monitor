@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { FigureZoom } from "../components/FigureZoom";
 import { api, Evidence, initialWindow, isoInput, Json, Notice, SaveInvestigation, TimeWindow, TimeZone, LOCAL } from "../components/Workspace";
 import "../search.css";
@@ -14,8 +14,12 @@ function ageText(seconds: number | null | undefined) {
 const STREAM_STATUS_LABEL: Record<string,string> = {ok:"OK",late:"Late",silent:"Silent",unknown:"Unknown"};
 
 export default function T1Page() {
-  const [window,setWindow]=useState(initialWindow()),[data,setData]=useState<Json|null>(null),[query,setQuery]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
-  const [zone,setZone]=useState(LOCAL),[rolling,setRolling]=useState(true);
+  const [params]=useSearchParams();
+  const [window,setWindow]=useState(()=>{
+    const t0=Date.parse(params.get('t0')??''),t1=Date.parse(params.get('t1')??'');
+    return Number.isFinite(t0+t1)&&t1>t0?{t0:new Date(t0).toISOString().slice(0,-1),t1:new Date(t1).toISOString().slice(0,-1)}:initialWindow();
+  }),[data,setData]=useState<Json|null>(null),[query,setQuery]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
+  const [zone,setZone]=useState(params.get('time_tz')==='UTC'?'UTC':LOCAL),[rolling,setRolling]=useState(!params.has('t0'));
   const [zoom,setZoom]=useState<{url:string;query:string}|null>(null);
   const loading=useRef(false);
   const load=async()=>{if(loading.current)return;loading.current=true;setBusy(true);setError("");try{const q=new URLSearchParams({t0:isoInput(window.t0),t1:isoInput(window.t1),time_tz:zone}).toString();setData(await api("/api/t1?"+q));setQuery(q);}catch(e){setError((e as Error).message);}finally{loading.current=false;setBusy(false);}};
