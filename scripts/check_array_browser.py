@@ -45,18 +45,22 @@ def main():
         requests=[]
         page.on('request',lambda r:requests.append(r.url) if '/api/science/array?' in r.url else None)
         page.goto(URL+'/vis',wait_until='domcontentloaded')
+        snapshot=page.request.get(URL+'/api/science/array').json()
+        count=len(snapshot['default_inputs'])
+        wired_count=len(snapshot['inputs'])
+        triangle=count*(count+1)//2
         page.locator('.antenna-plot').first.wait_for(timeout=90000)
         page.wait_for_function('!document.querySelector(".array-results").getAttribute("aria-busy") || document.querySelector(".array-results").getAttribute("aria-busy")==="false"')
-        assert page.locator('.antenna-plot').count()==17
-        assert page.locator('.map-antenna[aria-pressed=true]').count()==17
+        assert page.locator('.antenna-plot').count()==count
+        assert page.locator('.map-antenna[aria-pressed=true]').count()==count
         assert page.get_by_role('link',name='Visibilities',exact=True).count()==1
         assert page.get_by_label('Rolling window').input_value()=='24'
         assert all('hours=24' in url for url in requests)
         assert page.locator('.antenna-plot.expanded').count()==0
         assert page.locator('.station-group').count()==7
         assert page.locator('.station-slot.empty').count()==18
-        assert page.locator('.station-slot.hidden').count()==7
-        assert page.locator('.station-slot.selected').count()==17
+        assert page.locator('.station-slot.hidden').count()==wired_count-count
+        assert page.locator('.station-slot.selected').count()==count
         assert page.locator('.antenna-plot').first.evaluate('(el)=>getComputedStyle(el).backgroundColor')=='rgb(255, 255, 255)'
         assert page.locator('.antenna-plot').first.bounding_box()['width']>400
         compact_width=page.locator('.antenna-plot').first.bounding_box()['width']
@@ -74,14 +78,14 @@ def main():
         assert len(requests)==requests_before,'Layout switch reread visibility data'
         page.screenshot(path=str(OUT/'array-snap-order.png'),full_page=True)
         page.get_by_role('button',name='Station grid',exact=True).click()
-        assert page.locator('.antenna-plot').count()==17
+        assert page.locator('.antenna-plot').count()==count
         assert compact_width>1.8*page.locator('.antenna-plot').first.bounding_box()['width']
         page.get_by_role('button',name='Compact panels',exact=True).click()
         page.screenshot(path=str(OUT/'array-autos.png'),full_page=True)
         before=len(requests)
         for q in ['Real(V)','Imag(V)','Phase','|V|']:
             page.get_by_role('button',name=q,exact=True).click()
-            assert page.locator('.antenna-plot').count()==17
+            assert page.locator('.antenna-plot').count()==count
             labels=page.locator('.antenna-plot').first.locator('.axis-label').all_text_contents()
             assert labels==['Frequency (MHz)',f'{q} ({"rad" if q=="Phase" else "counts"})'+(' · log scale' if q=='|V|' else '')],labels
         assert len(requests)==before,'Quantity switch reread the data'
@@ -95,18 +99,18 @@ def main():
         page.get_by_role('button',name='Fit',exact=True).click()
         page.keyboard.press('Escape')
         page.get_by_role('button',name='Dynamic spectrum',exact=True).click()
-        assert page.locator('.array-dynamic img').count()==17
+        assert page.locator('.array-dynamic img').count()==count
         assert page.locator('.array-dynamic img').first.bounding_box()['height']>=170
         page.screenshot(path=str(OUT/'array-dynamic.png'),full_page=True)
         page.get_by_role('button',name='N21E1, antenna 9',exact=True).click()
-        assert page.locator('.antenna-plot').count()==16
-        assert page.locator('.station-slot.hidden').count()==8
+        assert page.locator('.antenna-plot').count()==count-1
+        assert page.locator('.station-slot.hidden').count()==wired_count-count+1
         assert len(requests)==before,'Antenna toggle reread the data'
-        page.get_by_role('button',name='Default 17',exact=True).click()
-        assert page.locator('.antenna-plot').count()==17
+        page.get_by_role('button',name=f'Beamforming · {count}',exact=True).click()
+        assert page.locator('.antenna-plot').count()==count
         page.get_by_role('button',name='Clear',exact=True).click()
         assert page.locator('.antenna-plot').count()==0
-        page.get_by_role('button',name='Default 17',exact=True).click()
+        page.get_by_role('button',name=f'Beamforming · {count}',exact=True).click()
         page.get_by_role('button',name='Cross-correlations',exact=True).click()
         page.wait_for_function('document.querySelector(".array-results").getAttribute("aria-busy")==="false"',timeout=90000)
         assert page.get_by_role('button',name='Dynamic spectrum',exact=True).get_attribute('class')=='active'
@@ -121,10 +125,10 @@ def main():
         page.keyboard.press('Escape')
         assert page.get_by_role('dialog').count()==0
         page.get_by_role('button',name='All pairs',exact=True).click()
-        page.wait_for_function('document.querySelectorAll(".array-matrix td button img").length===153',timeout=120000)
-        assert page.locator('.array-matrix td button').count()==153
-        assert page.locator('.array-matrix .matrix-auto').count()==17
-        assert page.locator('.array-matrix .matrix-unused').count()==136
+        page.wait_for_function('(n)=>document.querySelectorAll(".array-matrix td button img").length===n',arg=triangle,timeout=120000)
+        assert page.locator('.array-matrix td button').count()==triangle
+        assert page.locator('.array-matrix .matrix-auto').count()==count
+        assert page.locator('.array-matrix .matrix-unused').count()==count*(count-1)//2
         assert page.get_by_label('Reference antenna').count()==0
         page.screenshot(path=str(OUT/'array-matrix.png'),full_page=True)
         cell=page.locator('.array-matrix td button').nth(1)
@@ -137,10 +141,10 @@ def main():
         page.keyboard.press('Escape')
         # Changing quantity must never display thumbnails for the previous quantity.
         page.get_by_role('button',name='Imag(V)',exact=True).click()
-        page.wait_for_function('document.querySelectorAll(".array-matrix td button img").length===153',timeout=120000)
+        page.wait_for_function('(n)=>document.querySelectorAll(".array-matrix td button img").length===n',arg=triangle,timeout=120000)
         assert all('Imag(V) (counts)' in s for s in page.locator('.array-matrix td img').evaluate_all('(els)=>els.map(e=>e.alt)'))
         page.get_by_role('button',name='Phase',exact=True).click()
-        page.wait_for_function('document.querySelectorAll(".array-matrix td button img").length===153',timeout=120000)
+        page.wait_for_function('(n)=>document.querySelectorAll(".array-matrix td button img").length===n',arg=triangle,timeout=120000)
         page.set_viewport_size({'width':390,'height':844})
         assert page.evaluate('document.documentElement.scrollWidth-window.innerWidth')<=1
         page.screenshot(path=str(OUT/'array-mobile.png'),full_page=True)

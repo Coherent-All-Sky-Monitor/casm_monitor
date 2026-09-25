@@ -35,19 +35,22 @@ The selected tab has a brighter blue fill, border and inset underline; keyboard
 focus has a separate visible outline. Tabs wrap on narrow screens with at least
 44-pixel touch targets. Route names and scientific behavior are unchanged.
 
-Three primary tabs group the operator workflow:
-
-- Observation: Overview, Search (T1), Visibilities,
-  source history and candidates. Imaging is withdrawn from this preview UI.
-- Readiness: infrastructure, investigation queue, calibration-day comparison,
-  independent Cyg A transit, manually confirmed build/review and events.
-- SNAPs: full-band 4096-channel spectra, SNAP/station layouts and saved history.
+One main navigation row contains Overview, Search (T1), Visibilities, SNAPs,
+Source history, Candidates and Calibration. The top-right tab group is removed;
+Readiness is absent from navigation, with its existing URL and status links
+retained. Calibration subroutes retain the Calibration active tab. The larger
+telescope title sits above the row. Overview has an enlarged heading,
+observation identifier and aligned local/UTC clock panels, responsive on phones.
 
 `/observation` is **Overview**: live status cards, an injection-outcome timeline,
 current array/calibration context, one stream-count heatmap and one raw
 reference-baseline dynamic spectrum. White panels use dark labels and prominent
 status bands. History shares one interval; live cards remain marked Now.
-`/vis` opens the array inspector with the saved antenna set selected;
+`/vis` opens the array inspector with the current recorded beamforming set
+selected, using the same inspected payload membership as Overview and SNAPs.
+Green identifies beamforming inputs, blue other wired inputs; dashed map
+borders identify hidden panels. Manual selections survive refresh, while the
+Beamforming preset follows membership updates. Unknown membership stays unknown.
 `/snaps` opens white full-band spectrum panels in compact SNAP order, with
 station order/grid, all 12 ADCs, historical overlays and expanded power trends.
 Its default and green borders follow inspected nonzero slots in the latest
@@ -111,6 +114,17 @@ stationary beam at transit, ±2 hours, and show a dynamic spectrum with its
 native-channel mean power curve below. Negative cross-power and missing data
 are retained. Both plots open together in the zoom viewer. These are tests of
 visibility phasing with the current calibration, not hardware-weight readback.
+Completed windows are capped at three per source and cached in browser storage;
+switching sources preserves figures and pending reads. Only the small catalogue
+polls, every five minutes while selected. The calibration follows uploaded
+weights through the deployment ledger, never a newly generated trial file.
+The title/location scale up to 68/25 px on desktop. Overview, Visibilities and
+SNAPs share larger green/blue antenna keys on white layout cards, with dark
+navigation and compact controls. Operational SNAP safety details stay in docs;
+failed/stale reads and missing history remain visible.
+The unified tab row uses small decorative line icons, muted navy surfaces,
+and a light underline/border on the selected tab. Text labels remain the
+accessible names; keyboard focus and reduced-motion behavior are retained.
 See [source-history API](../docs/api-commissioning.md#sun-cyg-a-cas-a-and-tau-a-visibility-history).
 
 For real documentation screenshots and a bounded service CPU/RAM sample, run

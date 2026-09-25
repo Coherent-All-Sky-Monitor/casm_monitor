@@ -1,11 +1,17 @@
 """SNAP workspace UI check. Acquisition POST is intercepted: NO hardware reads."""
 import json
+import sys
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
 URL = 'http://127.0.0.1:8061'
 OUT = Path('/home/casm/scratch/casm-observation-preview/screenshots')
+
+
+def screenshot(target, name):
+    if '--no-screenshots' not in sys.argv:
+        target.screenshot(path=str(OUT/name),timeout=10000)
 
 
 def main():
@@ -43,11 +49,13 @@ def main():
         assert page.locator('.snap-spectrum-card').first.inner_text().startswith('N21E1')
         assert page.locator('.snap-spectrum-card').first.locator('svg').get_attribute('aria-label').endswith('4096 channels')
         assert page.locator('.snap-spectrum-card').first.locator('.snap-trace').get_attribute('d').count('L') == 4095
-        assert page.locator('.diagnostic-nav').count() == 0
+        assert page.locator('.diagnostic-nav').count() == 1
+        assert page.locator('.diagnostic-nav a[aria-current=page]').inner_text() == 'SNAPs'
+        assert page.locator('.header nav').count() == 0
         assert page.get_by_role('link',name='Transmitted-band history',exact=True).count() == 0
         page.locator('.snap-health-board').first.wait_for()
         assert page.locator('.snap-health-box').count()==8
-        assert page.locator('.snap-health-box').filter(has_text='PPS alignment').count()==4
+        assert page.locator('.snap-health-box').filter(has_text='PPS / source check').count()==4
         assert set(page.locator('.snap-board-ip').all_text_contents())=={i['ip'] for i in membership['inputs']}
         assert all('192.168.120.' in text for text in page.locator('.snap-board-errors summary').all_text_contents())
         plot=page.locator('.snap-spectrum-card').first.locator('svg')
@@ -63,9 +71,9 @@ def main():
         assert float(plot.get_attribute('data-y-min'))==lower-100
         assert page.locator('.snap-spectrum-card').first.locator('.snap-trace').get_attribute('d')==positive_path
         page.get_by_label('Power reference',exact=True).select_option('1e-10')
-        page.screenshot(path=str(OUT/'snaps-latest.png'), timeout=60000)
-        page.locator('.snap-health-section').screenshot(path=str(OUT/'snaps-health.png'))
-        page.locator('.snap-panel-group').first.screenshot(path=str(OUT/'snaps-compact.png'))
+        screenshot(page,'snaps-latest.png')
+        screenshot(page.locator('.snap-health-section'),'snaps-health.png')
+        screenshot(page.locator('.snap-panel-group').first,'snaps-compact.png')
         page.get_by_label('All 12 ADCs per SNAP').check()
         assert page.locator('.snap-spectrum-card').count() == 48
         assert set(page.locator('.snap-spectrum-card.in-beamforming').evaluate_all('es=>es.map(e=>e.dataset.inputKey)'))==members
@@ -84,7 +92,7 @@ def main():
         page.get_by_role('button', name='History', exact=True).click()
         page.get_by_label('Saved acquisition', exact=True).wait_for()
         opts=page.get_by_label('Saved acquisition', exact=True).locator('option').all()
-        assert len(opts)>1
+        assert len(opts)>=1  # A fresh history epoch can contain one acquisition.
         first=opts[-1].get_attribute('value')
         page.get_by_label('Saved acquisition', exact=True).select_option(first)
         page.locator('.snap-spectrum-card').first.wait_for()
@@ -94,7 +102,7 @@ def main():
         page.get_by_role('button',name='Expand SNAP 0 ADC 0',exact=True).click()
         page.get_by_role('dialog').wait_for()
         page.get_by_role('dialog').get_by_role('img', name='Full-band power (dB) versus time (UTC)').wait_for(timeout=60000)
-        page.screenshot(path=str(OUT/'snaps-history-expanded.png'))
+        screenshot(page,'snaps-history-expanded.png')
         page.keyboard.press('Escape')
         page.get_by_role('button',name='Latest spectra',exact=True).click()
         page.locator('.snap-spectrum-card').first.wait_for()
@@ -111,7 +119,7 @@ def main():
             assert plot.locator('svg').evaluate('e=>getComputedStyle(e.parentElement).backgroundColor')=='rgb(255, 255, 255)'
             assert plot.locator('svg').bounding_box()['width']>=250
             if width==390:
-                plot.screenshot(path=str(OUT/'snaps-mobile-panel.png'))
+                screenshot(plot,'snaps-mobile-panel.png')
         page.set_viewport_size({'width':1500,'height':1100})
         button=page.get_by_role('button',name='Ping now · get spectra',exact=True)
         if button.is_enabled():
@@ -121,9 +129,9 @@ def main():
         assert not unexpected, unexpected
         page.goto(URL+'/observation')
         page.get_by_role('link',name='SNAP streaming',exact=False).wait_for()
-        page.get_by_role('link',name='SNAP PPS alignment',exact=False).wait_for()
+        page.get_by_role('link',name='SNAP PPS / source check',exact=False).wait_for()
         assert page.locator('.overview-stat').count()==6
-        page.screenshot(path=str(OUT/'overview-snaps-status.png'))
+        screenshot(page,'overview-snaps-status.png')
         assert not errors,errors
         browser.close()
     print(json.dumps({'beamforming_panels':initial,'wired_panels':24,'all_adcs':48,'history_snapshots':len(opts),

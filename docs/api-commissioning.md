@@ -146,10 +146,21 @@ longer the source-tracking view used before September 24, 2026.
 
 `GET /api/sources?q=sun` (or another selector name) returns `kind: visibility_beam`, the current
 ledger calibration identity, native-cache coverage and available `transits`.
-Catalog dates are UTC, newest first, at most seven dates, and require at least
+Catalog dates are UTC, newest first, with the latest three completed windows
+selected from at most seven searched dates. They require at least
 three cached native integrations within ±2 hours of the source's meridian
 transit. Normally only three days survive native-cache retention. The catalog
-does not list future transit centers or treat a date as a detection.
+does not list a window until its end is behind native-cache coverage, or treat
+a date as a detection. Each row has a `cache_key` tied to source, date, figure
+version, deployed calibration and dated layout identity. Browser Cache Storage
+retains at most three figure responses per source, with a memory fallback when
+browser storage is unavailable. Switching sources preserves loaded views and
+in-flight requests. Only a new completed date needs a new read; successful
+replacement evicts the oldest saved browser figure. A changed deployed cal or
+layout invalidates reuse. Clearing browser storage requires rebuilding figures
+from the available native cache; this is not a permanent server-side archive.
+The small catalogue refreshes every five minutes while selected. No figure
+polling, continuous native read or SNAP acquisition is introduced.
 
 `GET /api/sources/transits/{source}/{day}?calibration_id=<id>` accepts canonical
 `source` values `sun`, `cyg_a`, `cas_a` and `tau_a`, a `YYYY-MM-DD` UTC date and the catalog's
@@ -157,13 +168,23 @@ does not list future transit centers or treat a date as a detection.
 history rather than silently using a different solution. No arbitrary product
 paths, old averaged-cache fallback or raw archive scan are accepted.
 
-The default is the latest deployment-ledger calibration, applied to **every**
+The default is the latest deployment-ledger calibration, never the newest trial
+build on disk. Creating unuploaded calibration/weights files does not change
+the default or invalidate browser figures. That deployed calibration is applied to **every**
 displayed date, not a claim that it was deployed on that historical date or
 that every beam in a mixed-calibration weights product uses it. The page names
 the file; Plot details records the policy, dated layout, antenna IDs, shard IDs
 and read budget. All 2–32 distinct calibration antennas must be wired in that
 dated layout, without a silent subset or substitution. The current calibration
-can therefore use a different antenna set from the Visibilities inspection preset.
+can therefore use a different antenna set from a manually selected Visibilities view.
+
+Known calendar boundary (checked September 25, 2026): the maintained
+`transit_center` helper returns one altitude maximum per UTC date. Cyg A has
+two actual upper transits on November 19; the current date-keyed catalogue
+omits one. A scan November 9–30 did not reproduce a false edge marker. An
+event-keyed transit list is needed before that rollover; changing to a local
+calendar alone only moves the same boundary problem. Present September dates
+are unaffected. No flux model or `source_flux` call is used by this gallery.
 
 The maintained `casm_vis_analysis.sources.source_altaz` resolves the transit
 pointing. `casm_vis_analysis.beam_power.beam_power_vs_time` holds that altitude

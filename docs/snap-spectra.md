@@ -11,7 +11,7 @@ spectra. Opening the page or browsing history never contacts hardware.
   inspected across every channel, polarization and beam. September 25's product
   `7f00805b81f13763` has 16 populated antenna inputs, out of 24 wired inputs.
   **All wired** and **All 12 ADCs per SNAP** expose the other inputs.
-  The count is data-driven, not the separate Visibilities inspection preset.
+  The count is data-driven and matches the default in Visibilities and Overview.
 - **Compact · station order** packs panels by plank. **Station grid** preserves
   the six east–west positions, including empty and hidden positions. Entirely
   empty plank rows are compressed. The nearby layout key toggles stations.
@@ -76,9 +76,16 @@ An absent/corrupt shard does not become zero signal. EQ/FFT epoch differences
 between reference and selected spectra are flagged. Unrecorded analogue gain
 changes cannot be identified from these tags.
 
+The preview's fresh history begins at **2026-09-25 05:12:31 UTC**, the selected
+all-four successful read. Earlier shards and database rows are retained, not
+deleted. `snap_history_epoch.json` under `observation_cache_root` holds a
+version-1 `start` timestamp; missing/invalid configuration leaves all history
+available. `archive=true` on spectra/catalog/trend includes earlier records.
+The default trend, timeline and first-snapshot overlay use the same epoch.
+
 ## Live status
 
-Separate **Streaming** and **PPS alignment** boxes appear per board and in
+Separate **Streaming** and **PPS / source check** boxes appear per board and in
 Overview. They refresh saved evidence every 30 seconds, independently of the
 selected historical spectrum. Green streaming **OK** means all wired inputs
 have nonzero cached visibility data no older than 15 minutes. This is timestamped
@@ -110,6 +117,16 @@ Verified boards turn green; failed reads stay Unknown. A measured offset or
 stalled PPS is Needs attention. Checks expire after 90 minutes, and later failed
 PPS attempts supersede old success. The array summary is green only if every
 configured antenna board is verified. It does not grade relay-board telemetry.
+The strict `pps_status` and `pps` aggregate retain this exact-match rule.
+A separate `timing_source_status` / `timing_source` assessment can show green
+**Source coherence seen**, with the measured offset and source retained. This
+requires a reviewed `snap_source_check.json`, matching deployment/cal/layout
+file identities, unchanged offset/reference, fresh good PPS measurements and
+source data within 90 minutes. It never overrides a stalled, missing, changed
+or stale timing result. September 25's board-group check is documented in
+`casm-wiki/monitor-snap-source-check.md`; it is not proof of exact sample alignment
+or a pass for every ADC. No automatic source classifier or periodic native
+analysis runs in the page. The source record must be renewed by a reviewed check.
 Failed management reads leave firmware/PPS state unknown, even when the old
 driver recorded `programmed=False`. The corrected reader queries the transport
 inventory directly; its worker rollout remains pending with the collector.
@@ -143,24 +160,14 @@ that flag **changes synchronization**. The older
 not sample-exact cross-board alignment, and its timing-chain caption is outdated.
 
 Only local preview evidence is written; GET/page refresh performs no hardware
-read. The PPS-only check is manual, not a new scheduler. Hourly collector
-activation remains a separate rollout. On September 25 02:43:53 UTC, SNAPs 0/2
-matched to zero ticks over advancing PPS; SNAPs 1/3 had unreadable control
-registers. No firmware, EQ, gains, synchronization or observing state changed.
-At 03:01 UTC, direct read-only TFTP packets exposed the actual .51/.73 error:
-**Only one connection at a time is supported**. The Python TFTP library hides
-that message behind “Access violation”. Canonical 0→2→3→1 ping/read order did
-not change the failure. An active owner versus stale firmware session remains
-unresolved; no session was aborted or recovered. Evidence is recorded in
-`casm-wiki/evidence/2026-09-25/snap-monitor-checks.md`.
-
-The 03:46:41 UTC recheck retained that outcome: SNAPs 0/2 aligned, SNAPs 1/3
-unreadable. A timeout-wrap bug exists in the firmware repository's pinned
-upstream source, but its role in the live lockout is not established. Identifying
-an active peer versus stale session needs operator-assisted passive capture;
-repeated pings cannot certify PPS or clear the failure. The follow-up evidence
-above records source identities, historical failure windows and the capture
-command. No programming, synchronization or session recovery was attempted.
+read. The PPS-only check is manual, separate from hourly spectra acquisition.
+The September 25 management lockout was released by a separately approved
+operator session at 04:41 UTC, completing stale TFTP transfers without reflash
+or re-sync. The saved 04:43 UTC check found advancing PPS on all four boards,
+SNAP 2 equal to SNAP 0 and stable −1 TT tick on SNAPs 1/3. Its onset is unknown;
+there is no basis to assume it already existed during the September 17 solve.
+Procedure and dated history: `casm-wiki/snap-control-path.md` and
+`casm-wiki/evidence/2026-09-25/snap-control-frequency-followup.md`.
 
 **Ping now · get spectra** explicitly submits the existing `snap_read` job
 through the protected loopback bridge. It is a diagnostic read, not an ICMP
@@ -170,14 +177,17 @@ The getter selects the autocorrelation diagnostic mux and arms its readout.
 It does **not** program firmware, change EQ/gains, issue a PPS synchronization,
 change weights, or alter the production observing pipeline.
 
-The requested source profile is hourly (`snap.read_interval_s: 3600`).
-**Rollout is pending:** the running monitoring collector still imports the
-older locked worktree with a 7200-second profile and the shared-liveness-slot
-starvation bug. The tested independent scheduling-slot implementation exists
-in main. Activation requires updating/restarting **only the monitoring
-collector**, separately from this preview. No running production service was
-changed during this UI task. A profile interval is not proof of acquisition;
-read the actual timestamps. No preview scheduler or duplicate worker is added.
+Hourly scheduling was activated on September 25 at 05:30 UTC, by updating the
+locked monitoring checkout's `snap.read_interval_s` to 3600 and applying the
+independent SNAP scheduling slot. Only `casm-monitor-collect.service` restarted;
+the existing serialized job worker and observing pipeline were unchanged.
+Both completed-read and scheduling-slot guards prevent duplicate hourly reads;
+connectivity probes cannot starve spectra. A manual read postpones the next
+automatic read until one hour after its completion. The collector checks every
+minute, so queueing can follow the due time by up to a minute, plus worker delay.
+The five mocked scheduling regressions passed against the running checkout.
+Read actual acquisition timestamps to verify long-term cadence. No preview
+scheduler, duplicate hardware reader or firmware change was introduced.
 
 ## Storage and API
 

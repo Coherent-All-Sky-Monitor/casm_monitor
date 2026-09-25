@@ -132,6 +132,8 @@ def test_catalog_native_dates_and_no_future_transit(monkeypatch, settings):
         return datetime.fromisoformat(date).replace(tzinfo=timezone.utc).timestamp()+22*3600
     monkeypatch.setattr(st,'transit_time',peak)
     monkeypatch.setattr(st,'calibration_catalog',lambda s:[dict(id='a'*32,path='/cal/current.h5')])
+    monkeypatch.setattr(st,'select_layout',lambda *a:dict(path='/layout.csv'))
+    monkeypatch.setattr(st,'file_identity',lambda path:dict(path=path,size=10,mtime_ns=1))
     def shards(stream,t0,t1):
         assert stream == STREAM_FULL
         mid=(t0+t1)/2
@@ -139,12 +141,48 @@ def test_catalog_native_dates_and_no_future_transit(monkeypatch, settings):
         return [dict(meta=dict(t=times))] if times else []
     monkeypatch.setattr(st,'VisStore',lambda *a:SimpleNamespace(shards=SimpleNamespace(list=shards)))
     result = st.catalog(settings,reader,'sun')
-    assert [r['date'] for r in result['transits']] == ['2026-09-24','2026-09-23']
+    assert [r['date'] for r in result['transits']] == ['2026-09-23']
+    assert result['max_transits'] == 3 and result['completed_windows_only']
+    assert len(result['transits'][0]['cache_key']) == 64
     assert all(r['partial'] for r in result['transits'])
     assert result['calibration']['name'] == 'current.h5'
     assert result['coverage']['stream'] == STREAM_FULL
     monkeypatch.setattr(st,'transit_time',lambda source,date:peak(source,date)+7200)
     assert st.catalog(settings,reader,'sun')['transits'][0]['date'] == '2026-09-23'
+
+
+def test_catalog_keeps_three_completed_windows_and_keys_layout(monkeypatch, settings):
+    from datetime import datetime, timezone
+    last = datetime(2026,9,25,12,tzinfo=timezone.utc).timestamp()
+    reader = SimpleNamespace(query=lambda *a:[dict(t0=last-7*86400,t1=last)])
+    monkeypatch.setattr(st,'transit_time',lambda source,day:datetime.fromisoformat(day).replace(tzinfo=timezone.utc).timestamp()+3600)
+    monkeypatch.setattr(st,'calibration_catalog',lambda s:[dict(id='a'*32,path='/cal/deployed.h5')])
+    monkeypatch.setattr(st,'select_layout',lambda *a:dict(path='/layout.csv'))
+    monkeypatch.setattr(st,'file_identity',lambda path:dict(path=path,size=10,mtime_ns=1))
+    monkeypatch.setattr(st,'VisStore',lambda *a:SimpleNamespace(shards=SimpleNamespace(
+        list=lambda stream,t0,t1:[dict(meta=dict(t=[t0,t0+DT_S,t1]))])))
+    result = st.catalog(settings,reader,'sun')
+    assert [r['date'] for r in result['transits']] == ['2026-09-25','2026-09-24','2026-09-23']
+    assert st.catalog(settings,reader,'sun')['transits'] == result['transits']
+    monkeypatch.setattr(st,'file_identity',lambda path:dict(path=path,size=10,mtime_ns=2))
+    assert st.catalog(settings,reader,'sun')['transits'][0]['cache_key'] != result['transits'][0]['cache_key']
+
+
+def test_calibration_catalog_ignores_trial_calibrations(tmp_path, settings):
+    import csv
+    cal = tmp_path/'deployed.h5'
+    cal.write_bytes(b'deployed')
+    ledger = tmp_path/'deployed.csv'
+    with ledger.open('w') as f:
+        writer = csv.DictWriter(f,fieldnames=['cal_file'])
+        writer.writeheader()
+        writer.writerow({'cal_file':str(cal)})
+    from dataclasses import replace
+    settings = replace(settings,deployed_weights_csv=ledger)
+    before = science_transit.calibration_catalog(settings)
+    (tmp_path/'newer_trial.h5').write_bytes(b'not uploaded')
+    assert science_transit.calibration_catalog(settings) == before
+    assert before[0]['path'] == str(cal)
 
 
 @pytest.fixture

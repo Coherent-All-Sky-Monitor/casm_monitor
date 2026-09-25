@@ -110,16 +110,39 @@ def test_snapshot_payload_and_cache(monkeypatch,settings):
     monkeypatch.setattr(science,'load_selection',lambda *a:(cube,times,freq,[],0))
     vs=SimpleNamespace(series=lambda *a,**k:(np.ones((1,3,3),complex),times[-1:],freq,[8,18]))
     monkeypatch.setattr(array,'VisStore',lambda *a:vs)
-    reader=SimpleNamespace(query=lambda *a:[dict(t=times[-1])])
+    reader=SimpleNamespace(query=lambda *a:[dict(t=times[-1])],latest_scalars=lambda:{})
+    deployment=dict(inspection_state='complete',product_id='first',positions=[dict(slot=18,antenna=19)])
+    monkeypatch.setattr(array,'inspected_deployment',lambda *a:deployment)
     array._CACHE.clear()
     encoded=array.snapshot(settings,reader)
     body=json.loads(gzip.decompress(encoded))
-    assert body['default_inputs']==[8,18] and body['samples']==2
+    assert body['default_inputs']==[18] and body['samples']==2
+    assert [i['beamforming'] for i in body['inputs']]==[False,True]
+    assert body['membership']['product_id']=='first'
     assert body['selection']['hours']==24
     assert len(body['panels'])==2
     monkeypatch.setattr(science,'load_selection',lambda *a:pytest.fail('cached snapshot reread data'))
     assert array.snapshot(settings,reader)==encoded
+    # A deployment/membership change must invalidate even unchanged vis shards.
+    monkeypatch.setattr(science,'load_selection',lambda *a:(cube,times,freq,[],0))
+    deployment.update(product_id='second',positions=[dict(slot=8,antenna=9)])
+    changed=json.loads(gzip.decompress(array.snapshot(settings,reader)))
+    assert changed['default_inputs']==[8]
+    assert changed['membership']['product_id']=='second'
     array._CACHE.clear()
+
+
+@pytest.mark.parametrize('deployment',[
+    dict(inspection_state='pending'),
+    dict(inspection_state='complete',positions=[]),
+    dict(inspection_state='complete',positions=[dict(slot=8,antenna=18)]),
+    dict(inspection_state='complete',positions=[dict(slot=8,antenna=9),dict(slot=99,antenna=19)]),
+])
+def test_membership_unknown_does_not_fall_back_to_inspection_or_layout(monkeypatch,deployment):
+    monkeypatch.setattr(array,'inspected_deployment',lambda *a:deployment)
+    inputs=[dict(packet_idx=8,antenna=9,in_bf=True)]
+    result=array.beamforming_membership(None,SimpleNamespace(latest_scalars=lambda:{}),inputs)
+    assert result['status']=='unknown' and result['inputs']==[]
 
 
 @pytest.mark.parametrize('change', [dict(pairs=[]), dict(pairs=[(1, 2)]*17),

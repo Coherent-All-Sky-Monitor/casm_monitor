@@ -3,6 +3,7 @@ import { FigureZoom } from "./FigureZoom";
 import { BeamLightCurve, LightCurve } from "./BeamLightCurve";
 import { Json, LOCAL, Notice } from "./Workspace";
 import { DynamicAxes, DynamicSpectrum, Tile } from "./vis/ArrayPlots";
+import { cachedTransit } from './transitCache';
 import "../array-vis.css";
 import "../array-vis-compact.css";
 
@@ -23,36 +24,30 @@ export function SourceTransitHistory({data}:{data:Json}) {
   const cal = data.calibration;
   const dates:Json[] = data.transits ?? [];
   useEffect(() => {
-    const controller = new AbortController();
+    let active = true;
     if (!cal) return;
     setErrors({});
-    // One native selected-triangle read at a time; abort outstanding browser
-    // requests when switching source. The server serializes large reads too.
+    setBeams(old=>Object.fromEntries(dates.filter(row=>old[row.cache_key]).map(row=>[row.cache_key,old[row.cache_key]])));
     const load = async () => {
       for (const row of dates) {
-        if (controller.signal.aborted) break;
+        if (!active) break;
         try {
-          const response = await fetch(`/api/sources/transits/${data.source}/${row.date}?calibration_id=${cal.id}`, {signal:controller.signal});
-          if (!response.ok) {
-            const error = await response.json().catch(()=>null);
-            throw new Error(error?.detail ?? `Beam unavailable (HTTP ${response.status})`);
-          }
-          const body = await response.json();
-          if (!controller.signal.aborted) setBeams(old => ({...old,[row.date]:body}));
+          const body = await cachedTransit(data.source,row,cal.id) as Beam;
+          if (active) setBeams(old => ({...old,[row.cache_key]:body}));
         } catch (e) {
-          if (!controller.signal.aborted) setErrors(old => ({...old,[row.date]:(e as Error).message}));
+          if (active) setErrors(old => ({...old,[row.date]:(e as Error).message}));
         }
       }
     };
     void load();
-    return () => controller.abort();
+    return () => {active=false;};
   },[data,retry]);
   const dateLabel = (t:number) => new Intl.DateTimeFormat('en-CA',{timeZone:LOCAL,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(t*1000));
   return <section className="source-transits">
     <p className="history-caption muted">{data.name} · Fixed beam at transit · ±{data.window_hours/2} hours</p>
-    {cal?<p className="history-cal muted">Current cal: <span title={cal.path}>{cal.name}</span> · used for every date</p>:<Notice>Current calibration unavailable.</Notice>}
+    {cal?<p className="history-cal muted">Deployed cal: <span title={cal.path}>{cal.name}</span> · used for every date</p>:<Notice>Deployed calibration unavailable.</Notice>}
     <div className="history-grid">{dates.map(row => {
-      const beam = beams[row.date];
+      const beam = beams[row.cache_key];
       return <article className="history-entry transit-entry" key={row.date}>
         <header><h3>{dateLabel(row.transit_unix)}</h3><small>OVRO local</small></header>
         {beam?<>
@@ -71,7 +66,7 @@ export function SourceTransitHistory({data}:{data:Json}) {
     })}</div>
     {!dates.length&&<Notice>No cached native visibilities around this source’s transits.</Notice>}
     {!!Object.keys(errors).length&&<button onClick={()=>setRetry(v=>v+1)}>Retry beam plots</button>}
-    <p className="muted history-caption">Available native-cache history (normally 3 days). Older averaged visibilities are not substituted.</p>
+    <p className="muted history-caption">Latest {data.max_transits??3} completed transits · saved in this browser</p>
     {focus&&<FigureZoom title={`${focus.name} · ${dateLabel(focus.transit_unix)} · fixed transit beam`} onClose={()=>setFocus(null)}
       actions={<p>Cal: {focus.calibration.name} · {focus.antenna_ids.length} antennas · cross-power only</p>}><BeamFigure beam={focus}/></FigureZoom>}
   </section>;

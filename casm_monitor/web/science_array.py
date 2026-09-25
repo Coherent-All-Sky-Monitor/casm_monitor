@@ -18,14 +18,35 @@ from fastapi import HTTPException, Response
 
 from .. import vis_ops
 from ..collectors.vis import DT_S, STREAM_AVG8
+from ..observation import inspected_deployment
 from .vis import VisStore
 
-# Operator's inspection set. Deliberately independent of beam deployment/gating.
+# Legacy explicit inspection preset for the detailed inspector, not the default.
 INSPECTION_ANTENNAS = (9, 10, 15, 18, 19, 22, 23, 24, 26, 30, 32, 36, 38, 40, 42, 44, 45)
 _CACHE: OrderedDict[tuple, bytes] = OrderedDict()
 _LOCK = threading.Lock()
 _PAIR_CACHE: OrderedDict[tuple, bytes] = OrderedDict()
 PAIR_BATCH_SIZE = 16
+
+
+def beamforming_membership(settings, reader, inputs):
+    """Match the current recorded CB payload to the snapshot's antenna/packet IDs.
+
+    Reads only the small existing inspection cache; never opens weights or
+    contacts hardware. An incomplete mapping has no inferred default members.
+    """
+    deployment = inspected_deployment(settings, reader.latest_scalars())
+    known = deployment.get('inspection_state') == 'complete'
+    positions = {p['slot']: p['antenna'] for p in deployment.get('positions', [])} if known else {}
+    mapped = {a['packet_idx'] for a in inputs if positions.get(a['packet_idx']) == a['antenna']}
+    unresolved = sorted(set(positions) - mapped)
+    known = known and bool(positions) and not unresolved
+    return dict(status='complete' if known else 'unknown',
+                inputs=sorted(mapped) if known else [],
+                product_id=deployment.get('product_id'), path=deployment.get('path'),
+                inspected_at=deployment.get('inspected_at'), unresolved_slots=unresolved,
+                note='Current recorded nonzero coherent-beam payload union, with matching antenna/packet identities; '
+                     'not historical membership, hardware readback or an antenna-health verdict.')
 
 
 def phase(values):
@@ -144,6 +165,9 @@ def snapshot(settings, reader, *, hours=24., reference_input=8, mode='auto', ref
     if any(i['position_enu_m'] is None for i in inputs):
         raise HTTPException(409, 'Wired antenna has no position in the dated layout')
     inputs.sort(key=lambda a:(-a['position_enu_m'][1],a['position_enu_m'][0]))
+    membership = beamforming_membership(settings, reader, inputs)
+    inputs = [dict(a, beamforming=a['packet_idx'] in membership['inputs']
+                   if membership['status'] == 'complete' else None) for a in inputs]
     if not 1 <= len(inputs) <= 32 or reference_input not in {i['packet_idx'] for i in inputs}:
         raise HTTPException(400, 'Reference must be a wired antenna in the selected layout')
     pairs = [(i['packet_idx'],i['packet_idx']) if mode=='auto' else tuple(sorted((i['packet_idx'],reference_input))) for i in inputs]
@@ -151,6 +175,7 @@ def snapshot(settings, reader, *, hours=24., reference_input=8, mode='auto', ref
     rows = bounded_rows(vstore,STREAM_AVG8,t0,t1,pairs)
     layout_identity = tuple((i['packet_idx'],i['antenna'],i['station'],i.get('snap'),i.get('slot'),i.get('adc'),*i['position_enu_m']) for i in inputs)
     key = (str(settings.store_root),layout['id'],layout_identity,reference_input,mode,reference,hours,fmin,fmax,
+           json.dumps(membership, sort_keys=True),
            tuple((r['id'],r['t1']) for r in rows))
     with _LOCK:
         if key in _CACHE:
@@ -173,7 +198,8 @@ def snapshot(settings, reader, *, hours=24., reference_input=8, mode='auto', ref
             pos=input_positions(layout['path']); rank={p:k for k,p in enumerate(ids)}
             mz=vis_ops.fringe_stop_sun(mz,mf[mask],np.array([pos[p] for p in ids]),
                                      [(rank[i],rank[j]) for i,j in matrix_pairs],mt)
-        result = dict(inputs=inputs,default_inputs=[i['packet_idx'] for i in inputs if i['antenna'] in INSPECTION_ANTENNAS],
+        result = dict(inputs=inputs,default_inputs=[i['packet_idx'] for i in inputs if i['beamforming']],
+                      membership=membership,
                       reference_input=reference_input,mode=mode,reference=reference,panels=panels,
                       freq_mhz=f.tolist(),t0=float(t[0]),t1=float(t[-1]),samples=len(t),integration_s=DT_S,
                       matrix=matrix_values(mz[-1],matrix_pairs,inputs),
@@ -184,7 +210,7 @@ def snapshot(settings, reader, *, hours=24., reference_input=8, mode='auto', ref
                                       phase='Angle of complex value/mean; exact zero is undefined',
                                       previews='Frequency-only reduction to at most 128 channels; every time integration retained',
                                       baseline_convention='V(target, reference); reversed stored pairs are conjugated',
-                      membership='Operator inspection preset, independent of beam deployment'))
+                      membership=membership))
         body = gzip.compress(json.dumps(result,allow_nan=False,separators=(',',':')).encode(),compresslevel=3)
         _CACHE[key] = body
         while len(_CACHE)>4:

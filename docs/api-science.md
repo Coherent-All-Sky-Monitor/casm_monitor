@@ -8,10 +8,16 @@ generation or deployment occur through these endpoints.
 ## Array snapshot
 
 `/vis` opens **Visibilities**: large white figures grouped by station row,
-north to south and west to east, beside a clickable layout map. All 17 inspection
-antennas start selected. This saved operator preset is independent of deployed
-beam membership or health: antennas 9, 10, 15, 18, 19, 22, 23, 24, 26, 30, 32,
-36, 38, 40, 42, 44, 45. All wired inputs remain individually selectable.
+north to south and west to east, beside a clickable layout map. The default
+follows the inspected nonzero coherent-beam payload union in the latest recorded
+deployed weights, matched to the snapshot's antenna/packet identities. It uses
+the same inspection as Overview and SNAPs, not the former fixed 17-input preset.
+Green marks beamforming membership, blue other wired inputs; dashed map borders
+mark hidden panels. White member panels have green borders. All wired inputs
+remain selectable. The Beamforming button follows membership updates; manual
+selections survive refresh. Unknown or mismatched membership gives an empty
+default with a warning, never an inferred replacement set. This is current
+recorded membership, not historical membership, hardware readback or health.
 **Compact panels** packs occupied panels into up to three readable columns,
 including sparse rows side by side. Each row's six-position key distinguishes
 selected antennas, hidden antennas (`off`), and slots without a wired antenna
@@ -50,7 +56,9 @@ browser polls every minute while visible. Spectra still explicitly select
 latest integration or window mean. A 24-hour window does not silently change
 those estimators. All pairs now shows time-frequency histories, not band means.
 
-The gzip JSON contains geometry (including nullable `snap`, `slot`, `adc`), the default selection, spectra for all four
+The gzip JSON contains geometry (including nullable `snap`, `slot`, `adc` and
+`beamforming`), `default_inputs`, and `membership` (status, product identity,
+inspection time and unresolved slots), spectra for all four
 quantities (latest and window mean), PNG data-URI previews, the latest-band
 all-pairs scalar matrix (retained for API compatibility, no longer displayed),
 and selection/provenance. Ordinary panel quantity/view/antenna toggles use
@@ -59,10 +67,10 @@ window and band changes request a new snapshot. A four-entry in-memory cache
 avoids repeated array reads.
 At most 32 wired inputs, 24 hours and the existing 12-million-cell budget are
 admitted. Reads use only `vis_avg8`, without acquisition or native fallback.
-Layout identities and source shards enter the cache key.
+Layout identities, membership evidence and source shards enter the cache key.
 
 **All pairs** is an upper triangle ordered north to south, then west to east:
-136 cross-pairs and 17 diagonal autos for the default selection. The blank lower
+N(N−1)/2 cross-pairs and N diagonal autos for N selected antennas. The blank lower
 triangle is intentional. Each cell contains an actual dynamic spectrum in
 `V(row, column)` order; reversed packet pairs are conjugated. Compact/larger
 thumbnail sizes and sticky row/column labels support scrolling. Click a cell
@@ -125,8 +133,9 @@ views. Pure tick-selection tests run with
 The opening Overview automatically renders one rolling-24-hour cached raw
 dynamic spectrum on a geometry-selected reference baseline. Amplitude is the
 default; phase is selectable. The adjacent compact T1 panel shows stream counts.
-`GET /api/science/catalog` exposes `inspection_inputs`, reusing the same antenna
-set as the Visibilities overview. Overview chooses its reference from that set
+`GET /api/science/catalog` retains the legacy explicit `inspection_inputs`
+preset for compatibility, separate from the Visibilities membership default.
+Overview chooses its preview reference from that legacy set
 in the selected dated layout; its separate array map always describes current
 configuration. A single baseline is not a whole-array health test.
 The detailed baseline inspector (`/vis?view=detail`) automatically renders its cached selection on entry and

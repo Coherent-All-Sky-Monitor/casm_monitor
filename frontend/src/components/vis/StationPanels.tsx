@@ -27,7 +27,7 @@ export function StationPanels({ inputs, selected, draw }: {
               const antenna = wired.find(a => location(a).col === col);
               const state = !antenna ? "empty" : selected.includes(antenna.packet_idx) ? "selected" : "hidden";
               const description = state === "empty" ? "no wired antenna" : state === "hidden" ? "antenna hidden" : "antenna shown";
-              return <span key={col} className={`station-slot ${state}`} title={`${name}E${col}: ${description}`} aria-label={`${name}E${col}: ${description}`}>
+              return <span key={col} className={`station-slot ${state} ${antenna?.beamforming?'beamforming':''}`} title={`${name}E${col}: ${description}${antenna?.beamforming?' · beamforming':''}`} aria-label={`${name}E${col}: ${description}`}>
                 E{col}<small>{state === "empty" ? "×" : state === "hidden" ? "off" : "●"}</small>
               </span>;
             })}

@@ -2,21 +2,23 @@
 :root { --paper:#000000; --ink:#e2e8ef; --muted:#a0aebf; --faint:#8291a3; --hairline:#2b3644; --signal:#7cb8df; --alert:#f19a8f; --caution:#e7bc72; color-scheme:dark; }
 body {font-size:14px;background:var(--paper);}
 .main {max-width:1660px;margin:auto;padding:24px 32px 60px;}
-.header {padding:20px 32px;background:#000000;align-items:center;}
+.header {padding:26px 32px 24px;background:#080e16;align-items:center;border-bottom:1px solid #293b50;}
 .header__identity {min-width:0;max-width:100%;}
-.header__title {font-size:20px;letter-spacing:.005em;font-weight:600;line-height:1.3;}
-.header__location {margin:5px 0 0;color:var(--muted);font-size:11px;line-height:1.5;}
-.header__tabs {flex-wrap:wrap;gap:8px;}
-.header__tabs a {display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:9px 15px;border:1px solid transparent;border-radius:8px;color:#c4d2e3;font-size:15px;font-weight:600;line-height:1.4;text-decoration:none;}
-.header__tabs a.active {color:#fff;background:#203a56;border-color:#759cc5;box-shadow:inset 0 -3px #98c7f2;}
-.diagnostic-nav {padding:12px 32px;background:#080e16;gap:10px;border-bottom:1px solid #33455b;}
-.diagnostic-nav a {display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:10px 20px;background:#142030;border:1px solid #364b64;border-radius:9px;color:#cfdbeb;font-size:17px;font-weight:600;line-height:1.4;letter-spacing:.01em;text-decoration:none;transition:background-color .12s,border-color .12s,color .12s;}
-.diagnostic-nav a.active {color:#fff;background:#294f76;border:1px solid #95bfe9;box-shadow:inset 0 -3px #b3d8ff;text-decoration:none;}
-.header__tabs a:hover,.diagnostic-nav a:hover {color:#fff;background:#263d57;border-color:#88acd3;text-decoration:none;}
+.header__acronym {display:block;color:#a9d1f4;font-size:16px;font-weight:700;letter-spacing:.24em;margin-bottom:8px;}
+.header__title {font-size:clamp(32px,4.5vw,68px);letter-spacing:-.035em;font-weight:650;line-height:1.12;color:#f0f6ff;margin:0;}
+.header__location {margin:14px 0 0;color:#bdcee2;font-size:clamp(16px,1.65vw,25px);line-height:1.5;}
+.diagnostic-nav {padding:15px 32px;background:#080e16;gap:10px;border-bottom:1px solid #33455b;}
+.diagnostic-nav a {position:relative;display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:52px;padding:12px 18px;background:#111d2c;border:1px solid #34475e;border-radius:10px;color:#cfdbeb;font-size:17px;font-weight:600;line-height:1.4;letter-spacing:.01em;text-decoration:none;box-shadow:inset 0 1px 0 #ffffff08;transition:background-color .15s,border-color .15s,color .15s;}
+.diagnostic-nav .nav-icon {width:20px;height:20px;flex:none;color:#9db7d4;}
+.diagnostic-nav a.active {color:#fff;background:#294f76;border:1px solid #95bfe9;box-shadow:0 2px 10px #0004,inset 0 1px 0 #d3eaff22;text-decoration:none;}
+.diagnostic-nav a.active::after {content:'';position:absolute;bottom:0;left:18px;right:18px;height:3px;border-radius:3px 3px 0 0;background:#b3d8ff;}
+.diagnostic-nav a.active .nav-icon {color:#e3f1ff;}
+.diagnostic-nav a:hover {color:#fff;background:#20364e;border-color:#88acd3;text-decoration:none;}
+.diagnostic-nav a:hover .nav-icon {color:#e3f1ff;}
 .diagnostic-nav a.active:hover {background:#315e8a;border-color:#b3d8ff;}
-.header__tabs a:focus-visible,.diagnostic-nav a:focus-visible {outline:3px solid #c7e4ff;outline-offset:3px;}
+.diagnostic-nav a:focus-visible {outline:3px solid #c7e4ff;outline-offset:3px;}
 @media(prefers-reduced-motion:reduce) {.diagnostic-nav a {transition:none;}}
-@media(max-width:700px) {.header .header__tabs {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;gap:8px;}.header__tabs a {padding:9px 10px;}.diagnostic-nav {gap:8px;}.diagnostic-nav a {flex:1 1 auto;min-height:44px;padding:9px 12px;font-size:15px;}}
+@media(max-width:700px) {.diagnostic-nav {gap:8px;}.diagnostic-nav a {flex:1 1 auto;min-height:46px;padding:9px 12px;font-size:15px;gap:8px;}.diagnostic-nav .nav-icon{width:18px;height:18px;}}
 .page-heading {margin:24px 0 25px;}
 .main .page-heading h2 {font-size:27px;letter-spacing:-.035em;font-weight:500;margin:5px 0 9px;}
 .eyebrow {font-size:12px;color:var(--muted);letter-spacing:.07em;margin:0;}

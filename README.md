@@ -6,15 +6,23 @@ at `http://localhost:8061`; the separate production monitor remains on 8060.
 Observation pages read existing array data and write local display products.
 
 Overview brings together injection recovery, array context and rolling 24-hour
-plots. Visibilities opens all 17 inspection antennas, with compact station/SNAP
+plots. Visibilities opens the current deployed beamforming set (16 at the
+September 25 check), matching Overview and SNAPs, with compact station/SNAP
 orders and an upper-triangle pair view. Search (T1) shows stream activity and
 candidate distributions. Source history defaults to B0329 PDMP folds; Sun,
-Cyg A, Cas A and Tau A show fixed-beam transit spectra and power curves.
+Cyg A, Cas A and Tau A show fixed-beam spectra and power curves for their latest
+three completed transits, cached in the browser. Calibration follows uploaded
+weights in the deployment ledger, never an unuploaded trial build.
 SNAPs shows all 4096 board channels in compact SNAP/station layouts, with
 deployed beamforming inputs selected by default, green membership borders,
 all-wired/all-12-ADC modes, saved overlays and per-input power trends.
 Candidates shows a configurable recent-plot grid with a compact right-hand
 selector: click a row to show/hide it, or an image to zoom.
+
+Latest real preview captures (September 25):
+[tab bar](docs/screenshots/2026-09-25/navigation-1500.png),
+[Overview](docs/screenshots/2026-09-25/overview-heading-1500.png),
+[visibility layout](docs/screenshots/2026-09-25/layout-vis.png).
 
 - [Resources, storage paths and retention](docs/resources-and-storage.md)
 - [Visibility views](docs/api-science.md) and [source history](docs/api-commissioning.md#sun-cyg-a-cas-a-and-tau-a-visibility-history)

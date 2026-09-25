@@ -37,9 +37,10 @@ function HistoryDate({date, rows, all}: {date:string; rows:Json[]; all:boolean})
   </article>;
 }
 
-// Keying results prevents a previous source staying on screen during a search.
-function HistoryResults({search, filter, setFilter}: {search:string; filter:string; setFilter:(v:string)=>void}) {
-  const {data, error} = useResource(`/api/sources?q=${encodeURIComponent(search)}`);
+function HistoryResults({search, filter, setFilter, active}: {search:string; filter:string; setFilter:(v:string)=>void;active:boolean}) {
+  // Refresh only the small date catalogue. Finished figures are immutable for
+  // their calibration/layout revision and do not get re-rendered by this poll.
+  const {data, error} = useResource(`/api/sources?q=${encodeURIComponent(search)}`,active?300000:0);
   const attempts:Json[] = (data?.sources ?? []).flatMap((s:Json) => s.attempts ?? []);
   const shown = attempts.filter(a => filter === 'all' || a.status === 'detection');
   const days = new Map<string, Json[]>();
@@ -47,7 +48,7 @@ function HistoryResults({search, filter, setFilter}: {search:string; filter:stri
     const date = row.date.slice(0,10);
     days.set(date, [...(days.get(date) ?? []), row]);
   }
-  if (data?.kind === 'visibility_beam') return <SourceTransitHistory data={data}/>;
+  if (data?.kind === 'visibility_beam') return <>{error&&<Notice>Showing saved transits; the date list could not refresh. {error}</Notice>}<SourceTransitHistory data={data}/></>;
   return <>
     {error && <Notice>{error}</Notice>}
     {!data && !error && <Notice>Loading history…</Notice>}
@@ -62,8 +63,12 @@ function HistoryResults({search, filter, setFilter}: {search:string; filter:stri
 
 export default function SourceHistoryPage() {
   const [query,setQuery] = useState('B0329'), [search,setSearch] = useState('B0329'), [filter,setFilter] = useState('detections');
-  const [refresh,setRefresh] = useState(0);
-  const choose = (name:string) => {setQuery(name); setSearch(name); setRefresh(v=>v+1);};
+  const [visited,setVisited] = useState(['B0329']);
+  const choose = (name:string) => {
+    const alias=name.toLowerCase().replace(/[-_\s]/g,'');
+    const canonical=SOURCES.find(s=>s.aliases.includes(alias))?.name??name;
+    setQuery(canonical);setSearch(canonical);setVisited(old=>[...old.filter(name=>name!==canonical),canonical].slice(-8));
+  };
   const selected = search.toLowerCase().replace(/[-_\s]/g,'');
   return <div className="workspace-page source-history-page">
     <div className="page-heading"><h2>Source history</h2></div>
@@ -75,6 +80,8 @@ export default function SourceHistoryPage() {
       <label>Source<input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Source name or alias"/></label>
       <button className="primary">Search</button>
     </form>
-    <HistoryResults key={`${search}:${refresh}`} search={search} filter={filter} setFilter={setFilter}/>
+    {visited.map(name=><section key={name} hidden={name!==search}>
+      <HistoryResults search={name} active={name===search} filter={filter} setFilter={setFilter}/>
+    </section>)}
   </div>;
 }

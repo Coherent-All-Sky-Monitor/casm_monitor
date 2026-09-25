@@ -23,6 +23,7 @@ from ..store import ShardReader
 from ..store.shards import ensure_contained
 from .snapread import freq_mhz
 from .snaps import board_table
+from .snap_history import history_start
 
 MAX_RECORDS = 20000
 READ_BUDGET = 512 * 1024**2
@@ -191,8 +192,11 @@ def build_router(settings, reader):
         latest, vis = latest_reads(reader), read_latest_vis(settings)
         items = [board_health(b, latest.get(b['ip'], {}), vis, now, interval) for b in boards()]
         apply_timing(items, timing_evidence(settings), now)
+        from .snap_source_check import annotate
+        annotate(settings, reader, items, now)
         return dict(boards=items, checked_at=now, streaming=aggregate_health(items, 'streaming'),
-                    pps=aggregate_health(items, 'pps_status'), streaming_max_age_s=900)
+                    pps=aggregate_health(items, 'pps_status'),
+                    timing_source=aggregate_health(items, 'timing_source_status'), streaming_max_age_s=900)
 
     def records(ip=None, start=None, end=None, *, last=False):
         # Extract only small metadata fields, not twelve EQ coefficient arrays.
@@ -232,7 +236,7 @@ def build_router(settings, reader):
         return np.asarray(data, dtype=float)
 
     @router.get('/spectra')
-    def spectra(at: float | None = None):
+    def spectra(at: float | None = None, archive: bool = False):
         if at is not None and not math.isfinite(at):
             raise HTTPException(400, 'Select a finite acquisition time')
         now, interval = time.time(), snap_read_interval_s(settings)
@@ -243,7 +247,7 @@ def build_router(settings, reader):
         result = []
         for board in boards():
             ip = board['ip']
-            rows = records(ip, end=at, last=True)
+            rows = records(ip, start=None if archive else history_start(settings), end=at, last=True)
             row = rows[0] if rows else None
             # An historical selection is a bounded snapshot, not last-value fill.
             if row and at is not None and at - row['t0'] > interval * 1.5:
@@ -272,9 +276,11 @@ def build_router(settings, reader):
                     configured_interval_s=interval, selected_at=at)
 
     @router.get('/spectra-catalog')
-    def catalog(days: int = Query(30, ge=1, le=365)):
+    def catalog(days: int = Query(30, ge=1, le=365), archive: bool = False):
         end = time.time()
-        rows = records(start=end-days*86400, end=end)
+        epoch = history_start(settings)
+        start = max(end-days*86400, epoch or 0) if not archive else end-days*86400
+        rows = records(start=start, end=end)
         ips = {b['ip'] for b in boards()}
         groups = []
         for row in rows:
@@ -287,15 +293,17 @@ def build_router(settings, reader):
             groups[-1]['at'] = row['t0']
             if row['ip'] not in groups[-1]['boards']:
                 groups[-1]['boards'].append(row['ip'])
-        return dict(days=days, start=end-days*86400, end=end, snapshots=groups,
+        return dict(days=days, start=start, end=end, snapshots=groups, history_start=epoch, archive=archive,
                     reads=sum(len(g['boards']) for g in groups))
 
     @router.get('/spectra-trend')
-    def trend(ip: str, adc: int = Query(..., ge=0, le=11), days: int = Query(30, ge=1, le=365)):
+    def trend(ip: str, adc: int = Query(..., ge=0, le=11), days: int = Query(30, ge=1, le=365), archive: bool = False):
         if ip not in {b['ip'] for b in boards()}:
             raise HTTPException(404, 'Unknown antenna SNAP')
         end = time.time()
-        rows = records(ip, start=end-days*86400, end=end)
+        epoch = history_start(settings)
+        start = max(end-days*86400, epoch or 0) if not archive else end-days*86400
+        rows = records(ip, start=start, end=end)
         if sum(preflight(row) for row in rows) > READ_BUDGET:
             raise HTTPException(400, 'History exceeds 512 MiB read budget; select fewer days')
         key = (ip, adc, tuple(row['id'] for row in rows))
@@ -325,7 +333,7 @@ def build_router(settings, reader):
                 cache[key] = points
                 while len(cache) > 8:
                     cache.popitem(last=False)
-        return dict(ip=ip, adc=adc, days=days, start=end-days*86400, end=end,
+        return dict(ip=ip, adc=adc, days=days, start=start, end=end, history_start=epoch, archive=archive,
                     points=points, gap_s=snap_read_interval_s(settings)*1.5,
                     units='dB re 1 native power unit', channels=4096)
 

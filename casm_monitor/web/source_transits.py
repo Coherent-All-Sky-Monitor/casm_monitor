@@ -6,6 +6,7 @@ beam API. No solve, voltage/filterbank read, acquisition or persistent write.
 from __future__ import annotations
 
 import json
+import hashlib
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -25,6 +26,8 @@ from .vis import VisStore, _shard_meta_times
 SOURCES = {'sun': 'Sun', 'cyg_a': 'Cyg A', 'cas_a': 'Cas A', 'tau_a': 'Tau A'}
 HALF_WINDOW = 7200
 MAX_DAYS = 7
+MAX_TRANSITS = 3
+FIGURE_VERSION = 'stationary-cross-power-v2'
 _CACHE: OrderedDict[tuple, dict] = OrderedDict()
 
 
@@ -67,19 +70,27 @@ def catalog(settings, reader, source: str) -> dict:
             peak = transit_time(source, date)
             if peak + HALF_WINDOW < first:
                 break
-            if peak > last:
+            # Publish finished four-hour windows, not an ever-changing live beam.
+            if peak + HALF_WINDOW > last:
                 continue
             shards = store.shards.list(STREAM_FULL, t0=peak-HALF_WINDOW, t1=peak+HALF_WINDOW)
             times = sorted({t for r in shards for t in _shard_meta_times(r)
                             if peak-HALF_WINDOW <= t <= peak+HALF_WINDOW})
             if len(times) >= 3:
+                layout = select_layout(peak-HALF_WINDOW, peak+HALF_WINDOW)
+                signature = json.dumps([FIGURE_VERSION, source, date, cal,
+                                        file_identity(layout['path'])], sort_keys=True)
                 rows.append(dict(date=date, transit_unix=peak, t0=times[0], t1=times[-1],
+                                 cache_key=hashlib.sha256(signature.encode()).hexdigest(),
                                  samples=len(times), partial=times[0] > peak-HALF_WINDOW+DT_S
                                  or times[-1] < peak+HALF_WINDOW-DT_S))
+                if len(rows) == MAX_TRANSITS:
+                    break
     return dict(kind='visibility_beam', state='ready' if rows and cal else 'unavailable',
                 source=source, name=SOURCES[source], calibration=cal, transits=rows,
                 coverage=coverage, window_hours=2*HALF_WINDOW/3600, max_days=MAX_DAYS,
-                beam_mode='stationary_transit')
+                beam_mode='stationary_transit', max_transits=MAX_TRANSITS,
+                completed_windows_only=True)
 
 
 def beam_spectrum(data, mapping, cal, source, *, pointing=None):

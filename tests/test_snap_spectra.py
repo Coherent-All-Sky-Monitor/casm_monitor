@@ -171,6 +171,23 @@ def test_empty_and_invalid_requests(fixture):
     assert client.get(f'/api/snap-workspace/spectra-trend?ip={IP}&adc=12').status_code == 422
 
 
+def test_history_epoch_hides_but_never_deletes_older_reads(fixture):
+    client, store, shards, settings = fixture
+    save(shards,NOW-20000)
+    save(shards,NOW-100)
+    settings.observation_cache_root.mkdir(parents=True,exist_ok=True)
+    (settings.observation_cache_root/'snap_history_epoch.json').write_text(json.dumps({'version':1,'start':NOW-1000}))
+    current = client.get('/api/snap-workspace/spectra-catalog').json()
+    assert current['history_start'] == NOW-1000 and current['reads'] == 1
+    assert client.get('/api/snap-workspace/spectra-catalog?archive=true').json()['reads'] == 2
+    assert client.get(f'/api/snap-workspace/spectra?at={NOW-19900}').json()['boards'][0]['ts'] is None
+    assert client.get(f'/api/snap-workspace/spectra?at={NOW-19900}&archive=true').json()['boards'][0]['ts'] == NOW-20000
+    url = f'/api/snap-workspace/spectra-trend?ip={IP}&adc=0'
+    assert len(client.get(url).json()['points']) == 1
+    assert len(client.get(url+'&archive=true').json()['points']) == 2
+    assert store.query("SELECT COUNT(*) AS n FROM shards WHERE stream='snap_read'")[0]['n'] == 2
+
+
 def test_read_budget_preflight_and_cache_invalidation(fixture, monkeypatch):
     client, _, shards, _ = fixture
     save(shards)
