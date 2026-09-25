@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Evidence, initialWindow, isoInput, Json, LOCAL, Notice, TimeWindow, TimeZone } from "../components/Workspace";
 import { InjectionPanel, localStamp, OverviewImage, VisibilityPreview } from "../components/OverviewPlots";
+import { FigureZoom } from "../components/FigureZoom";
 import { location, wiringLabel } from "../components/vis/ArrayPlots";
+import telescopePhoto from "../assets/casm-telescope.jpg";
 import "../overview.css";
 
 type Health = "ok"|"late"|"silent"|"unknown"|"yellow"|"orange";
@@ -34,6 +36,7 @@ function ArrayContext({catalog,observation}:{catalog:Json;observation:Json|null}
 }
 
 export default function OperationsPage() {
+  const [photoOpen,setPhotoOpen]=useState(false);
   const live=useLive('/api/observation'),search=useLive('/api/t1/status'),catalog=useLive('/api/science/catalog',300000);
   const [now,setNow]=useState(Date.now()),[window,setWindow]=useState(initialWindow()),[zone,setZone]=useState(LOCAL),[rolling,setRolling]=useState(true);
   const [history,setHistory]=useState<Json|null>(null),[activity,setActivity]=useState<Json|null>(null),[historyError,setHistoryError]=useState(''),[activityError,setActivityError]=useState('');
@@ -68,7 +71,16 @@ export default function OperationsPage() {
   if((data||live.error)&&recoveryHealth==='unknown')alerts.push({text:inj?.status==='unavailable'?'Injection ledger unavailable.':'No completed injection trials in the last 24 h.',to:'/cands?section=injections'});
   if(data&&visHealth!=='ok')alerts.push({text:`Cached visibility age: ${ageText(visAge)}.`,to:'/vis'});
   return <div className="workspace-page overview-page">
-    <div className="overview-heading"><div><h2>Overview</h2><p>CASM · OVRO <span>Observation {data?.observation?.id??'unknown'}</span></p></div><div className="overview-clocks">{data&&<><span>{localStamp(data.clock.utc,LOCAL)} OVRO local</span><span>{localStamp(data.clock.utc,'UTC')} UTC · LST {data.clock.lst??'unknown'}</span></>}</div></div>
+    <div className="overview-heading">
+      <div className="overview-heading-copy"><h2>Overview</h2><p>Observation {data?.observation?.id??'unknown'}</p>
+        <div className="overview-clocks">{data&&<><span>{localStamp(data.clock.utc,LOCAL)} OVRO local</span><span>{localStamp(data.clock.utc,'UTC')} UTC · LST {data.clock.lst??'unknown'}</span></>}</div>
+      </div>
+      <button className="overview-photo" aria-label="Enlarge CASM telescope photo" onClick={()=>setPhotoOpen(true)}>
+        <img src={telescopePhoto} width="4032" height="3024" alt="Coherent All Sky Monitor antennas at Owens Valley Radio Observatory" decoding="async"/>
+        <span>CASM <span aria-hidden="true">↗</span></span>
+      </button>
+    </div>
+    {photoOpen&&<FigureZoom title="Coherent All Sky Monitor (CASM)" onClose={()=>setPhotoOpen(false)} actions={<><span>Owens Valley Radio Observatory · Bishop, California</span><a href={telescopePhoto} target="_blank" rel="noreferrer">Original photo</a></>}><img src={telescopePhoto} width="4032" height="3024" alt="Coherent All Sky Monitor antennas at Owens Valley Radio Observatory"/></FigureZoom>}
     <div className="overview-section-label"><span>Live snapshot · Now</span><span>Checked every 30 s while visible</span></div>
     <section className="overview-stats" aria-label="Live status">
       <Stat title="Observation" value={state??'Unknown'} note={`State checked ${ageText(stateAge)} ago`} status={obsHealth} label={obsHealth==='ok'?'Running':obsHealth==='late'?'Stale / check':obsHealth==='silent'?'Not running':'Unknown'} to="/readiness"/>
@@ -77,7 +89,7 @@ export default function OperationsPage() {
       <Stat title="Visibility data age" value={ageText(visAge)} note="Newest cached visibility · fresh ≤ 10 min" status={visHealth} label={visHealth==='ok'?'Recent data':visHealth==='late'?'Stale / check':'Unknown'} to="/vis"/>
     </section>
     {alerts.length>0&&<section className="overview-attention" aria-label="Needs attention"><strong>Needs attention</strong>{alerts.map(a=><Link key={a.text} to={a.to}>{a.text} →</Link>)}</section>}
-    <section className="overview-controls"><div className="overview-control-line"><strong>{rolling?'Rolling 24 hours':'Historical interval'}</strong><span>{localStamp(t0,zone)} – {localStamp(t1,zone)}</span><TimeZone value={zone} onChange={setZone}/><button className={rolling?'active':''} onClick={()=>{setRolling(true);setWindow(initialWindow());}}>Live · rolling 24 h</button></div>
+    <section className="overview-controls"><div className="overview-control-line"><strong>{rolling?'Rolling 24 hours':'Historical interval'}</strong><span>{localStamp(t0,zone)} – {localStamp(t1,zone)}</span><div className="overview-history-actions"><TimeZone value={zone} onChange={setZone}/><button className={rolling?'active':''} onClick={()=>{setRolling(true);setWindow(initialWindow());}}>Live · rolling 24 h</button></div></div>
       <details><summary>Change history interval</summary><TimeWindow value={window} timeZone={zone} onChange={w=>{setRolling(false);setWindow(w);}}/></details><p>{rolling?'History plots refresh every 2 min.':'History is paused.'} Live status and configuration remain current.</p>
     </section>
     <div className="overview-main-grid"><section className="overview-panel overview-injections" aria-label="Injection recovery history">{history?<InjectionPanel data={history} zone={zone}/>:historyError?<Notice>{historyError}</Notice>:<p className="overview-loading">Loading injection history…</p>}</section>

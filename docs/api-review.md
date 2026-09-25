@@ -31,6 +31,10 @@ and the current ledger calibration do not establish runtime activation.
 The bottom row contains only the stream-count heatmap and a raw reference-baseline
 dynamic spectrum with amplitude/phase selection. Images and the timeline enlarge.
 Search and detailed-visibility links carry the selected history interval.
+The header's top-right CASM photo is a bundled, operator-supplied still image,
+not a live camera. Its full uncropped frame opens in the shared zoom viewer.
+The telescope title is **Coherent All Sky Monitor (CASM)**; its location is
+shown separately as Owens Valley Radio Observatory, Bishop, California.
 
 `GET /api/observation` includes injection counts for a rolling 24-hour interval.
 The start and end are explicit UTC strings; the seven-day trend retains UTC

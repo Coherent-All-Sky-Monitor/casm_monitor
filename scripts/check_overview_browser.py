@@ -1,5 +1,6 @@
 """Read-only Overview acceptance: real data, drill-down and isolated failure fixtures."""
 import json
+from hashlib import sha256
 from copy import deepcopy
 from datetime import datetime,timedelta,timezone
 from pathlib import Path
@@ -10,6 +11,24 @@ from check_search_browser import luminance
 
 URL='http://127.0.0.1:8061'
 OUT=Path('/home/casm/scratch/casm-observation-preview/screenshots')
+
+
+def check_header_and_controls(page):
+    assert page.locator('.overview-heading').evaluate('''header=>{
+      const photo=header.querySelector('.overview-photo').getBoundingClientRect();
+      const copy=header.querySelector('.overview-heading-copy').getBoundingClientRect();
+      const bounds=header.getBoundingClientRect();
+      const image=header.querySelector('img'), frame=image.getBoundingClientRect();
+      return copy.right<photo.left && Math.abs(photo.right-bounds.right)<1
+        && Math.abs(frame.width/frame.height-4/3)<.01
+        && getComputedStyle(image).objectFit==='contain';
+    }''')
+    assert page.locator('.overview-history-actions').evaluate('''group=>{
+      const zone=group.querySelector('select').getBoundingClientRect();
+      const live=group.querySelector('button').getBoundingClientRect();
+      return Math.abs(zone.top-live.top)<1 && Math.abs(zone.bottom-live.bottom)<1
+        && zone.right<live.left && Math.abs(zone.height-38)<1;
+    }''')
 
 
 def main():
@@ -27,8 +46,32 @@ def main():
         page.on('response',capture)
         page.goto(URL+'/observation')
         page.get_by_role('heading',name='Overview',exact=True).wait_for()
+        telescope_name='Coherent All Sky Monitor (CASM)'
+        assert page.title()==telescope_name
+        assert page.get_by_role('heading',name=telescope_name,exact=True).count()==1
+        assert page.locator('.header__location').inner_text()=='Owens Valley Radio Observatory · Bishop, California'
+        assert 'CASM · OVRO' not in page.locator('body').inner_text()
         assert page.get_by_role('link',name='Overview',exact=True).count()==1
         assert not page.get_by_role('link',name='Injection recovery',exact=True).count()
+        photo=page.get_by_role('button',name='Enlarge CASM telescope photo',exact=True)
+        page.wait_for_function('document.querySelector(".overview-photo img")?.naturalWidth===4032')
+        photo_url=photo.locator('img').get_attribute('src')
+        assert photo_url.startswith('/assets/casm-telescope-')
+        response=page.request.get(URL+photo_url)
+        assert response.ok and response.headers['content-type'].startswith('image/jpeg')
+        original=Path(__file__).resolve().parents[1]/'frontend/src/assets/casm-telescope.jpg'
+        assert sha256(response.body()).digest()==sha256(original.read_bytes()).digest()
+        check_header_and_controls(page)
+        photo.focus();page.keyboard.press('Enter')
+        dialog=page.get_by_role('dialog',name=telescope_name,exact=True)
+        dialog.wait_for()
+        assert dialog.locator('img').get_attribute('src')==photo_url
+        assert dialog.get_by_role('link',name='Original photo',exact=True).get_attribute('href')==photo_url
+        dialog.get_by_role('button',name='Zoom in',exact=True).click()
+        assert dialog.get_by_label('Display zoom').inner_text()=='150%'
+        page.keyboard.press('Escape')
+        assert photo.evaluate('(e)=>e===document.activeElement')
+        page.locator('.overview-heading').screenshot(path=str(OUT/'overview-photo-header.png'))
         page.locator('.overview-search img').wait_for(timeout=90000)
         page.locator('.overview-visibility img').wait_for(timeout=90000)
         page.wait_for_function('[...document.querySelectorAll(".overview-image img")].every(i=>i.complete&&i.naturalWidth>0)')
@@ -80,6 +123,11 @@ def main():
         for width in [1500,1000,720,390]:
             page.set_viewport_size(dict(width=width,height=1100))
             assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth+1'),width
+            check_header_and_controls(page)
+        photo.click()
+        page.get_by_role('dialog',name=telescope_name,exact=True).wait_for()
+        assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth+1')
+        page.keyboard.press('Escape')
         page.screenshot(path=str(OUT/'overview-mobile.png'),full_page=True)
         with page.expect_response(lambda r:'/api/t1?' in r.url,timeout=60000) as response:
             page.goto(URL+searchlink)
@@ -157,7 +205,7 @@ def main():
                 assert card.locator('.overview-status').inner_text()=='Needs attention'
         assert not errors,errors
         browser.close()
-    print(json.dumps({'result':'passed','checks':['live counts','17 selection matches catalog','map wiring','two compact diagnostics','white figure zoom','trial details','amplitude/phase','shared historical bounds','Search drill-down','mobile','stale evidence','independent failures','history pause/live refresh','recovery threshold boundaries and contrast']},indent=2))
+    print(json.dumps({'result':'passed','checks':['telescope name and separate observatory location','original CASM photo, top-right layout and keyboard zoom','aligned time-zone and rolling controls','live counts','17 selection matches catalog','map wiring','two compact diagnostics','white figure zoom','trial details','amplitude/phase','shared historical bounds','Search drill-down','mobile','stale evidence','independent failures','history pause/live refresh','recovery threshold boundaries and contrast']},indent=2))
 
 
 if __name__=='__main__': main()

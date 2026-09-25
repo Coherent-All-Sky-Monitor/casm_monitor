@@ -6,15 +6,16 @@ const TABS: { path: string; label: string }[] = [
   { path: "/antennas", label: "Antennas" },
 ];
 
-/** One header line: the app name at left, the tabs as plain words at right,
- * the active one underlined. No clock — the UTC time is the last thing in
- * the status sentence below. */
+/** Telescope name and observatory location at left; primary navigation at right. */
 export default function Header() {
   const { pathname } = useLocation();
   const group = /^\/(snaps|antennas)/.test(pathname) ? "/antennas" : /^\/(cal|events|readiness|review)/.test(pathname) ? "/readiness" : "/observation";
   return (
     <header className="header">
-      <h1 className="header__title">CASM · OVRO</h1>
+      <div className="header__identity">
+        <h1 className="header__title">Coherent All Sky Monitor (CASM)</h1>
+        <p className="header__location">Owens Valley Radio Observatory · Bishop, California</p>
+      </div>
       <nav className="header__tabs">
         {TABS.map((tab) => (
           <Link key={tab.path} to={tab.path} className={group === tab.path ? "active" : ""} aria-current={group === tab.path ? "page" : undefined}>
