@@ -30,6 +30,11 @@ new workspace requests to production. `npm run preview` alone has no backend.
 
 ## Interface and routes
 
+Navigation uses larger, semibold high-contrast labels on dark-blue tab surfaces.
+The selected tab has a brighter blue fill, border and inset underline; keyboard
+focus has a separate visible outline. Tabs wrap on narrow screens with at least
+44-pixel touch targets. Route names and scientific behavior are unchanged.
+
 Three primary tabs group the operator workflow:
 
 - Observation: Overview, Search (T1), Visibilities,

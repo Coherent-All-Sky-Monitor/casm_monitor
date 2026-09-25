@@ -6,11 +6,17 @@ body {font-size:14px;background:var(--paper);}
 .header__identity {min-width:0;max-width:100%;}
 .header__title {font-size:20px;letter-spacing:.005em;font-weight:600;line-height:1.3;}
 .header__location {margin:5px 0 0;color:var(--muted);font-size:11px;line-height:1.5;}
-.header__tabs {flex-wrap:wrap;row-gap:4px;}
-.header__tabs a {padding:9px 3px;}
-.diagnostic-nav {padding:11px 32px;background:#000000;gap:25px;}
-.diagnostic-nav a {padding:3px 0;font-size:13px;}
-.diagnostic-nav a.active {text-decoration:none;border-bottom:1px solid var(--signal);}
+.header__tabs {flex-wrap:wrap;gap:8px;}
+.header__tabs a {display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:9px 15px;border:1px solid transparent;border-radius:8px;color:#c4d2e3;font-size:15px;font-weight:600;line-height:1.4;text-decoration:none;}
+.header__tabs a.active {color:#fff;background:#203a56;border-color:#759cc5;box-shadow:inset 0 -3px #98c7f2;}
+.diagnostic-nav {padding:12px 32px;background:#080e16;gap:10px;border-bottom:1px solid #33455b;}
+.diagnostic-nav a {display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:10px 20px;background:#142030;border:1px solid #364b64;border-radius:9px;color:#cfdbeb;font-size:17px;font-weight:600;line-height:1.4;letter-spacing:.01em;text-decoration:none;transition:background-color .12s,border-color .12s,color .12s;}
+.diagnostic-nav a.active {color:#fff;background:#294f76;border:1px solid #95bfe9;box-shadow:inset 0 -3px #b3d8ff;text-decoration:none;}
+.header__tabs a:hover,.diagnostic-nav a:hover {color:#fff;background:#263d57;border-color:#88acd3;text-decoration:none;}
+.diagnostic-nav a.active:hover {background:#315e8a;border-color:#b3d8ff;}
+.header__tabs a:focus-visible,.diagnostic-nav a:focus-visible {outline:3px solid #c7e4ff;outline-offset:3px;}
+@media(prefers-reduced-motion:reduce) {.diagnostic-nav a {transition:none;}}
+@media(max-width:700px) {.header .header__tabs {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;gap:8px;}.header__tabs a {padding:9px 10px;}.diagnostic-nav {gap:8px;}.diagnostic-nav a {flex:1 1 auto;min-height:44px;padding:9px 12px;font-size:15px;}}
 .page-heading {margin:24px 0 25px;}
 .main .page-heading h2 {font-size:27px;letter-spacing:-.035em;font-weight:500;margin:5px 0 9px;}
 .eyebrow {font-size:12px;color:var(--muted);letter-spacing:.07em;margin:0;}
