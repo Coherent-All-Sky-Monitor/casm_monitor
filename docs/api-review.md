@@ -198,7 +198,7 @@ from the beams actually processed, without correcting for skipped beams.
 Colourbar labels use two lines to fit within their panels. The same zero/missing
 colours also appear for intervals without any candidates. Both DM axes use
 logarithmic spacing from 10–1000. The bottom histogram retains linear counts,
-labelled "Candidates per bin", and the existing logarithmically spaced bins.
+labelled "Candidates", and the existing logarithmically spaced bins.
 The saved 0–10 bucket is omitted from both DM displays and their scaling,
 but retained in evidence JSON and the stream/beam candidate totals.
 The stored edges are unchanged, including 921.750557–1122.099537 across the

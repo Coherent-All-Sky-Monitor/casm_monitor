@@ -410,7 +410,7 @@ def render_t1(data, *, compact=False):
             dm_counts = np.asarray(data["dm_counts"], dtype=float)[1:]
             dmhist_ax.stairs(dm_counts, edges_dm, fill=True, color=HIST_COLOR)
             dmhist_ax.set_xscale("log")
-            dmhist_ax.set(title="DM distribution", xlabel="DM (pc cm⁻³)", ylabel="Candidates per bin",
+            dmhist_ax.set(title="DM distribution", xlabel="DM (pc cm⁻³)", ylabel="Candidates",
                           xlim=(10, 1000))
             dm_ax.set_yticks([10,30,100,300,1000])
             dm_ax.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))

@@ -252,7 +252,7 @@ def test_white_figure_axes_counts_and_style_isolation(payload, monkeypatch):
     assert len(axes[6].patches)==7
     assert list(axes[7].get_xticks())==[10,30,100,300,1000]
     assert axes[6].get_ylabel()=='Candidates'
-    assert axes[7].get_ylabel()=='Candidates per bin'
+    assert axes[7].get_ylabel()=='Candidates'
     assert axes[6].get_xlabel()=='Hella width index (not FWHM)'
     assert axes[7].get_xlabel()=='DM (pc cm⁻³)'
     for index in (0,2,4):
