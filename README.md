@@ -54,12 +54,15 @@ Search (T1): stream status, candidate heatmaps and distributions.
 
 ![Search (T1)](docs/screenshots/2026-09-24/search.png)
 
-SNAPs: full-band board spectra, fixed dB scales and saved-read timestamps.
+SNAPs: full-band spectra with shared axes, fixed power reference and saved-read timestamps.
 Hourly collector activation is pending; no hardware read was made for these captures.
+These updated SNAP captures are September 25 UTC (September 24 OVRO local).
 
-![SNAP spectra](docs/screenshots/2026-09-24/snaps-latest.png)
+![SNAP spectra](docs/screenshots/2026-09-25/snaps-compact.png)
 
-[Expanded spectrum and drift history](docs/screenshots/2026-09-24/snaps-history-expanded.png).
+[Expanded spectrum and drift history](docs/screenshots/2026-09-25/snaps-history-expanded.png).
+[Independent streaming and PPS status](docs/screenshots/2026-09-25/snaps-health.png)
+also appears in the main Overview; unverified alignment is marked Unknown.
 
 Source history: B0329 detection dates and saved PDMP folds.
 

@@ -26,6 +26,7 @@ def fixture(tmp_path, monkeypatch):
     shards = ShardWriter(store)
     monkeypatch.setattr(module.time, 'time', lambda: NOW)
     monkeypatch.setattr(module, 'latest_reads', lambda _: {})
+    monkeypatch.setattr(module, 'read_latest_vis', lambda _: None)
     readonly = Store(settings.db_path, store_root=settings.store_root, read_only=True)
     app = FastAPI()
     app.include_router(module.build_router(settings, readonly))
@@ -49,7 +50,11 @@ def test_native_shape_frequency_and_physical_mapping(fixture):
     result = client.get('/api/snap-workspace/spectra').json()
     assert result['channels'] == 4096
     assert len(result['freq_mhz']) == 4096
-    assert result['freq_mhz'][0] == 500 and result['freq_mhz'][-1] == 375
+    assert result['freq_mhz'][0] == 500
+    assert result['freq_mhz'][-1] == pytest.approx(375.030517578125)
+    assert result['freq_mhz'][512] == 484.375
+    assert result['freq_mhz'][3583] == pytest.approx(390.655517578125)
+    assert np.allclose(np.diff(result['freq_mhz']), -125/4096, atol=1e-6, rtol=0)
     board = result['boards'][0]
     assert len(board['inputs']) == len(board['spectra_db']) == 12
     assert board['inputs'][6]['station'] == 'N11E2'
@@ -147,7 +152,40 @@ def test_bad_manifest_or_lost_shard_is_not_zero_signal(fixture):
 def test_readonly_routes_never_submit_jobs(fixture):
     client, store, shards, _ = fixture
     save(shards)
-    for path in ['spectra','spectra-catalog',f'spectra-trend?ip={IP}&adc=0']:
+    for path in ['health','spectra','spectra-catalog',f'spectra-trend?ip={IP}&adc=0']:
         assert client.get('/api/snap-workspace/'+path).status_code == 200
     assert store.query('SELECT COUNT(*) n FROM jobs')[0]['n'] == 0
     assert store.query('SELECT COUNT(*) n FROM watermarks')[0]['n'] == 0
+
+
+def test_delivery_independent_of_failed_control_and_alignment(fixture, monkeypatch):
+    client, _, _, _ = fixture
+    monkeypatch.setattr(module, 'latest_reads', lambda _: {IP:dict(ts=NOW-10, programmed=False,
+        errors={'period_pps':'unreadable','autocorr':'skipped: programmed=False'})})
+    monkeypatch.setattr(module, 'read_latest_vis', lambda _: dict(ts=NOW-300,inputs=[6],vis=np.ones((1,3072))))
+    out=client.get('/api/snap-workspace/health').json()
+    b=out['boards'][0]
+    assert b['control_status']=='unavailable'
+    assert b['streaming']['state']=='ok' and out['streaming']['ok']==1
+    assert b['pps_status']['period_ok'] is None
+    assert b['pps_status']['alignment']=='unknown' and out['pps']['state']=='unknown'
+    assert b['production_evidence']['nonzero_inputs']==1
+
+
+@pytest.mark.parametrize('age,period,expected', [(10,250000000,'unknown'),(10,1,'attention'),(20000,1,'unknown')])
+def test_pps_rate_is_not_alignment_and_old_fault_is_stale(fixture,monkeypatch,age,period,expected):
+    client, _, _, _ = fixture
+    monkeypatch.setattr(module, 'latest_reads', lambda _: {IP:dict(ts=NOW-age,programmed=True,
+        pps_raw=dict(period_pps=period,count_pps=100),fs_hz=250000000)})
+    out=client.get('/api/snap-workspace/health').json()
+    assert out['pps']['state']==expected
+    assert out['boards'][0]['pps_status']['alignment']=='unknown'
+    assert out['streaming']['state']=='unknown'
+
+
+@pytest.mark.parametrize('age,inputs,values', [(901,[6],1),(1,[7],1),(1,[6],0),(-100,[6],1)])
+def test_streaming_not_green_for_stale_missing_zero_or_future_data(fixture,monkeypatch,age,inputs,values):
+    client, _, _, _ = fixture
+    monkeypatch.setattr(module, 'read_latest_vis', lambda _: dict(ts=NOW-age,inputs=inputs,vis=np.full((1,3072),values)))
+    out=client.get('/api/snap-workspace/health').json()
+    assert out['streaming']['state']=='attention'

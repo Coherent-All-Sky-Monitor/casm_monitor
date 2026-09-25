@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, Evidence, initialWindow, isoInput, Json, LOCAL, Notice, TimeWindow, TimeZone } from "../components/Workspace";
 import { InjectionPanel, localStamp, OverviewImage, VisibilityPreview } from "../components/OverviewPlots";
 import { FigureZoom } from "../components/FigureZoom";
+import { snapHealthLabel } from "../components/SnapHealth";
 import { location, wiringLabel } from "../components/vis/ArrayPlots";
 import telescopePhoto from "../assets/casm-telescope.jpg";
 import "../overview.css";
@@ -37,7 +38,7 @@ function ArrayContext({catalog,observation}:{catalog:Json;observation:Json|null}
 
 export default function OperationsPage() {
   const [photoOpen,setPhotoOpen]=useState(false);
-  const live=useLive('/api/observation'),search=useLive('/api/t1/status'),catalog=useLive('/api/science/catalog',300000);
+  const live=useLive('/api/observation'),search=useLive('/api/t1/status'),catalog=useLive('/api/science/catalog',300000),snaps=useLive('/api/snap-workspace/health');
   const [now,setNow]=useState(Date.now()),[window,setWindow]=useState(initialWindow()),[zone,setZone]=useState(LOCAL),[rolling,setRolling]=useState(true);
   const [history,setHistory]=useState<Json|null>(null),[activity,setActivity]=useState<Json|null>(null),[historyError,setHistoryError]=useState(''),[activityError,setActivityError]=useState('');
   const t0=isoInput(window.t0),t1=isoInput(window.t1),query=new URLSearchParams({t0,t1,time_tz:zone}).toString();
@@ -64,6 +65,8 @@ export default function OperationsPage() {
   const vis=data?.observation?.vis_age,visMeasureAge=secondsSince(vis?.observed_at,now);
   const visAge=typeof vis?.value==='number'&&visMeasureAge!=null?vis.value+visMeasureAge:null;
   const visHealth:Health=live.error?'late':visAge==null?'unknown':visAge>600?'late':'ok';
+  const snapState=(key:string)=>snaps.error?'unknown':snaps.data?.[key]?.state??'unknown';
+  const snapTone=(key:string):Health=>snapState(key)==='ok'?'ok':snapState(key)==='attention'?'late':'unknown';
   const alerts:{text:string;to:string}[]=[];
   if((data||live.error)&&obsHealth!=='ok')alerts.push({text:live.error?'Live observation refresh failed.':stateAge==null?'Observation state unavailable.':stateAge>120?'Observation state is stale.':`Observation state: ${state??'unknown'}.`,to:'/readiness'});
   if((search.data||search.error)&&searchHealth!=='ok')alerts.push({text:!searchFresh?'Search status unavailable or stale.':`${8-healthy} search streams need checking.`,to:'/search'});
@@ -87,6 +90,8 @@ export default function OperationsPage() {
       <Stat title="Search streams" value={searchFresh?`${healthy} / 8`:'Unknown'} note="Streams with recent gulp evidence" status={searchHealth} label={searchHealth==='ok'?'All reporting':searchHealth==='late'?'Late / stale':searchHealth==='silent'?'Stream silent':'Unknown'} to="/search"/>
       <Stat title="Injection recovery · last 24 h" value={inj&&inj.status!=='unavailable'?`${c.recovered} / ${c.completed_fired}`:'Unavailable'} note="Recovered / completed fired trials" status={recoveryHealth} label={recoveryLabel} to="/review"/>
       <Stat title="Visibility data age" value={ageText(visAge)} note="Newest cached visibility · fresh ≤ 10 min" status={visHealth} label={visHealth==='ok'?'Recent data':visHealth==='late'?'Stale / check':'Unknown'} to="/vis"/>
+      <Stat title="SNAP streaming" value={snaps.data&&!snaps.error?`${snaps.data.streaming.ok} / ${snaps.data.streaming.total}`:'Unknown'} note="Boards with recent nonzero cached data · ≤ 15 min" status={snapTone('streaming')} label={snapHealthLabel(snapState('streaming'))} to="/snaps"/>
+      <Stat title="SNAP PPS alignment" value={snaps.data&&!snaps.error?`${snaps.data.pps.ok} / ${snaps.data.pps.total}`:'Unknown'} note="Boards with verified PPS / telescope-time alignment" status={snapTone('pps')} label={snapHealthLabel(snapState('pps'))} to="/snaps"/>
     </section>
     {alerts.length>0&&<section className="overview-attention" aria-label="Needs attention"><strong>Needs attention</strong>{alerts.map(a=><Link key={a.text} to={a.to}>{a.text} →</Link>)}</section>}
     <section className="overview-controls"><div className="overview-control-line"><strong>{rolling?'Rolling 24 hours':'Historical interval'}</strong><span>{localStamp(t0,zone)} – {localStamp(t1,zone)}</span><div className="overview-history-actions"><TimeZone value={zone} onChange={setZone}/><button className={rolling?'active':''} onClick={()=>{setRolling(true);setWindow(initialWindow());}}>Live · rolling 24 h</button></div></div>

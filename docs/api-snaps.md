@@ -5,6 +5,16 @@ The legacy APIs remain available. The current `/snaps` preview uses the new
 The overview below remains on `/antennas`; legacy presentation descriptions
 are historical context.
 
+`GET /api/snap-workspace/health` supplies independent streaming and PPS-alignment
+boxes on SNAPs and Overview. Each board has `streaming`, `pps_status`,
+`control_status`, `production_evidence` and Unix-second check/data timestamps;
+aggregate `streaming` and `pps` contain `state`, `ok`, `total`. States are `ok`,
+`attention`, `unknown`. The explicit PPS-only CLI publishes local cross-board
+TT evidence with a 90-minute expiry; without it, healthy PPS period readings
+alone leave alignment `unknown`. Legacy failed
+control reads may carry `programmed=false`; do not interpret that as verified
+absent firmware. See the full-band guide for freshness and scale semantics.
+
 Legacy timestamps are ISO 8601 strings unless noted otherwise (UTC, e.g.
 `"2026-09-08T12:00:00Z"`). The new full-band routes use Unix seconds.
 `age_s` fields are seconds (float ok), server-computed at response time so the

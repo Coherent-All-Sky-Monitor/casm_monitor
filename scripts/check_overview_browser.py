@@ -76,7 +76,7 @@ def main():
         page.locator('.overview-visibility img').wait_for(timeout=90000)
         page.wait_for_function('[...document.querySelectorAll(".overview-image img")].every(i=>i.complete&&i.naturalWidth>0)')
         assert page.locator('.overview-image img').count()==2
-        assert page.locator('.overview-stats > a').count()==4
+        assert page.locator('.overview-stats > a').count()==6
         counts=records['/api/observation/injections']['counts']
         assert page.locator('.recovery-summary > strong').inner_text()==f"{counts['recovered']} / {counts['completed_fired']}"
         assert page.locator('.injection-timeline [role=button]').count()==len(records['/api/observation/injections']['trials'])
@@ -144,6 +144,9 @@ def main():
         stale=deepcopy(records['/api/t1/status']);stale['ledger']['last_tick_unix']=datetime.fromisoformat(old).timestamp()
         page.route('**/api/observation',lambda r:r.fulfill(json=fixture))
         page.route('**/api/t1/status',lambda r:r.fulfill(json=stale))
+        page.route('**/api/snap-workspace/health',lambda r:r.fulfill(json={
+            'streaming':{'state':'unknown','ok':0,'total':4},
+            'pps':{'state':'unknown','ok':0,'total':4},'boards':[]}))
         page.route('**/api/science/render',lambda r:r.fulfill(status=503,json={'detail':'Display test: visibility unavailable'}))
         page.clock.install()
         page.goto(URL+'/observation')

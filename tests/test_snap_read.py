@@ -102,6 +102,7 @@ class FakeSnap:
         self.acc_len = acc_len
         self.eq_scale = eq_scale
         self.fpga = self
+        self._cfpga = self
         self.autocorr = self
         self.input = self
         self.eq = self
@@ -113,6 +114,9 @@ class FakeSnap:
     # fpga
     def is_programmed(self) -> bool:
         return self.programmed
+
+    def listdev(self):
+        return ['version_version'] if self.programmed else ['sys_clkcounter']
 
     # autocorr
     def get_acc_len(self) -> int:
@@ -221,6 +225,23 @@ def test_parse_npz_rejects_garbage() -> None:
     np.savez_compressed(buf, something=np.zeros(3))
     with pytest.raises(ValueError):
         parse_npz(buf.getvalue())
+
+
+def test_remote_failed_inventory_is_unknown_not_unprogrammed():
+    class Unreachable(FakeSnap):
+        def listdev(self):
+            raise RuntimeError('Access violation')
+
+        def get_new_spectra(self, signal_block=0):
+            raise AssertionError('Unavailable control must skip acquisition')
+
+    parsed = parse_npz(make_npz((IP_A, IP_RELAY), connect=lambda b: Unreachable() if b.ip == IP_A else FakeSnap()))
+    board = parsed['boards'][IP_A]
+    assert board['programmed'] is None
+    assert 'Access violation' in board['errors']['firmware_register_map']
+    assert 'firmware state unknown' in board['errors']['autocorr']
+    assert np.isnan(board['spectra']).all()
+    assert parsed['boards'][IP_RELAY]['programmed'] is True
 
 
 def test_remote_unprogrammed_board_reports_pps_only() -> None:

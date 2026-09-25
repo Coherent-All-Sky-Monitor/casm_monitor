@@ -38,7 +38,26 @@ def main():
         assert page.locator('.snap-spectrum-card').first.inner_text().startswith('N01E1')
         assert page.locator('.snap-spectrum-card').first.locator('svg').get_attribute('aria-label').endswith('4096 channels')
         assert page.locator('.snap-spectrum-card').first.locator('.snap-trace').get_attribute('d').count('L') == 4095
+        assert page.locator('.diagnostic-nav').count() == 0
+        assert page.get_by_role('link',name='Transmitted-band history',exact=True).count() == 0
+        page.locator('.snap-health-board').first.wait_for()
+        assert page.locator('.snap-health-box').count()==8
+        assert page.locator('.snap-health-box').filter(has_text='PPS alignment').count()==4
+        plot=page.locator('.snap-spectrum-card').first.locator('svg')
+        assert plot.get_attribute('data-x-min')=='374.9'
+        assert plot.get_attribute('data-x-max')=='500.1'
+        limits=lambda:page.locator('.snap-spectrum-card svg').evaluate_all("es=>[...new Set(es.map(e=>e.dataset.yMin+','+e.dataset.yMax))]")
+        assert len(limits())==1
+        shared_limits=limits()
+        lower=float(plot.get_attribute('data-y-min'))
+        assert float(plot.get_attribute('data-y-max'))-lower<100
+        positive_path=page.locator('.snap-spectrum-card').first.locator('.snap-trace').get_attribute('d')
+        page.get_by_label('Power reference',exact=True).select_option('1')
+        assert float(plot.get_attribute('data-y-min'))==lower-100
+        assert page.locator('.snap-spectrum-card').first.locator('.snap-trace').get_attribute('d')==positive_path
+        page.get_by_label('Power reference',exact=True).select_option('1e-10')
         page.screenshot(path=str(OUT/'snaps-latest.png'), full_page=True)
+        page.locator('.snap-health-section').screenshot(path=str(OUT/'snaps-health.png'))
         page.locator('.snap-panel-group').first.screenshot(path=str(OUT/'snaps-compact.png'))
         page.get_by_label('All 12 ADCs per SNAP').check()
         assert page.locator('.snap-spectrum-card').count() == 48
@@ -58,6 +77,7 @@ def main():
         first=opts[-1].get_attribute('value')
         page.get_by_label('Saved acquisition', exact=True).select_option(first)
         page.locator('.snap-spectrum-card').first.wait_for()
+        assert limits()==shared_limits, 'History must preserve the shared power scale'
         page.get_by_label('Overlay first saved snapshot').check()
         page.locator('.snap-reference').first.wait_for()
         page.get_by_role('button',name='Expand SNAP 0 ADC 0',exact=True).click()
@@ -88,6 +108,11 @@ def main():
             page.get_by_text('Read queued · job 999999.',exact=False).wait_for()
             assert submitted==[{'ips':['192.168.120.52','192.168.120.51','192.168.120.62','192.168.120.73'],'confirm':True}]
         assert not unexpected, unexpected
+        page.goto(URL+'/observation')
+        page.get_by_role('link',name='SNAP streaming',exact=False).wait_for()
+        page.get_by_role('link',name='SNAP PPS alignment',exact=False).wait_for()
+        assert page.locator('.overview-stat').count()==6
+        page.screenshot(path=str(OUT/'overview-snaps-status.png'))
         assert not errors,errors
         browser.close()
     print(json.dumps({'wired_panels':initial,'all_adcs':48,'history_snapshots':len(opts),

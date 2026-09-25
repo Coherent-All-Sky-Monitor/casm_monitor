@@ -19,16 +19,22 @@ spectra. Opening the page or browsing history never contacts hardware.
 - Labels show station, antenna, SNAP, slot and ADC from the current layout/map.
   Historical comparisons follow board IP and ADC, not historical station wiring.
 - Spectra retain all native channels with no rebinning or normalization.
-  The existing board frequency convention is descending 500 to 375 MHz in the
-  API; the plot reads left-to-right from 375 to 500 MHz.
-- Power is `10 log10(native linear power)`, relative to one native power unit,
-  **not dBm** or calibrated flux. The existing hardware getter divides out its
+  Native channel centres are `500 - k*125/4096` MHz, descending: 500 through
+  375.030518 MHz. The shared plot axis runs **374.9–500.1 MHz** left-to-right,
+  leaving room at both edges without inventing samples outside the band.
+- Stored/API power is `10 log10(native linear power)`. The default display
+  reference is **10⁻¹⁰ native power units**, a constant +100 dB offset for every
+  antenna/date. Original dB re 1 remains selectable. Negative original values
+  are expected; neither scale is **dBm** or calibrated flux. The getter divides out its
   accumulation length before storage. Zero/nonfinite/negative channel values
   are not clipped to an invented noise floor: the line breaks and counts are
   displayed. Zero power has no finite dB value.
-- A shared −100 to 0 dB spectrum scale stays fixed across panels and dates.
-  Change its limits or explicitly **Fit current spectra**. Clipped points are
-  counted in each panel. No automatic per-panel rescaling hides level changes.
+- All panels share one power scale, pinned to the initially loaded snapshot
+  until **Refit scales**. **Bandpass detail** fits the 1st–99th percentiles of
+  all displayed-set channels, with padding. **Full spectrum** includes the
+  extrema; **Custom shared limits** allows explicit bounds. Changing to all
+  ADCs includes those inputs in the shared fit; hiding panels does not refit.
+  Orange edge markers and counts identify clipped peaks. The data are unchanged.
 
 Click any spectrum to expand it and see full-band power versus time. The trend
 is `10 log10(mean(linear power))` over all 4096 channels, including true zeros.
@@ -53,6 +59,61 @@ its stale timestamp and the latest attempt's errors remain visible separately.
 An absent/corrupt shard does not become zero signal. EQ/FFT epoch differences
 between reference and selected spectra are flagged. Unrecorded analogue gain
 changes cannot be identified from these tags.
+
+## Live status
+
+Separate **Streaming** and **PPS alignment** boxes appear per board and in
+Overview. They refresh saved evidence every 30 seconds, independently of the
+selected historical spectrum. Green streaming **OK** means all wired inputs
+have nonzero cached visibility data no older than 15 minutes. This is timestamped
+downstream evidence, not a live transmit-counter measurement or antenna-quality
+assessment. Old/missing/zero input data must not turn green.
+
+PPS period checks use the existing 0.1% tolerance around the board clock.
+Period/count snapshots alone cannot prove cross-board sample alignment or
+continued pulse arrival. The explicit read-only check below records two stable
+common-edge telescope-time frames, advancing counts/TT and exact deltas to SNAP 0.
+Verified boards turn green; failed reads stay Unknown. A measured offset or
+stalled PPS is Needs attention. Checks expire after 90 minutes, and later failed
+PPS attempts supersede old success. The array summary is green only if every
+configured antenna board is verified. It does not grade relay-board telemetry.
+Failed management reads leave firmware/PPS state unknown, even when the old
+driver recorded `programmed=False`. The corrected reader queries the transport
+inventory directly; its worker rollout remains pending with the collector.
+
+The existing spectrum-reading recipe is in `casm-wiki/antenna-health-triage.md`:
+`snap_ops/plot_snap_autocorrs.py` wraps the established zapdos reader. Reading
+spectra needs running firmware, an ADC clock and accumulating autocorrelator,
+not active UDP transmission or cross-board synchronization. Do not initialize,
+program or re-sync a board to troubleshoot monitoring reads.
+
+### Explicit PPS-only check
+
+From the monitor checkout on corr1:
+
+```bash
+PYTHONPATH=. /home/casm/software/dev/casm_venvs/casm_offline_env/bin/python \
+  scripts/check_snap_timing.py \
+  --output /home/casm/scratch/casm-observation-preview/snap_timing/latest.json
+```
+
+This bounded adapter uses the existing `period_pps()` / `get_tt_of_pps(False)`
+getters from the installed driver, as used by `multi_snap_config.verify()`.
+Direct count reads prevent the driver's swallowed errors from becoming zero.
+Reference reads bracket each frame to reject edge crossings; a second frame
+excludes identical-but-frozen counters. Per-board count totals may differ with
+uptime; matching TT and advancing counts are required, not equal count totals.
+Telescope-time integers are saved as strings to preserve all 64 bits in JSON.
+The adapter does not execute the configuration CLI or its `--sync-only` flag:
+that flag **changes synchronization**. The older
+`ssh zapdos 'python3 /home/user/pps_status.py 10'` checks pulse arrival/rate,
+not sample-exact cross-board alignment, and its timing-chain caption is outdated.
+
+Only local preview evidence is written; GET/page refresh performs no hardware
+read. The PPS-only check is manual, not a new scheduler. Hourly collector
+activation remains a separate rollout. On September 25 02:43:53 UTC, SNAPs 0/2
+matched to zero ticks over advancing PPS; SNAPs 1/3 had unreadable control
+registers. No firmware, EQ, gains, synchronization or observing state changed.
 
 **Ping now · get spectra** explicitly submits the existing `snap_read` job
 through the protected loopback bridge. It is a diagnostic read, not an ICMP
@@ -84,6 +145,7 @@ New read-only routes, with Unix-second timestamps:
 
 | Route | Result |
 | --- | --- |
+| `GET /api/snap-workspace/health` | Small per-board and aggregate live-status response from existing cached visibilities and latest stored board attempts. No spectrum-shard loading or hardware contact. |
 | `GET /api/snap-workspace/spectra[?at=<unix>]` | Current layout, shared frequency axis, per-board spectra in dB, acquisition time, stale flag, errors and zero/invalid channel counts. `at` omitted means latest saved success. |
 | `GET /api/snap-workspace/spectra-catalog?days=30` | Bounded saved-read timeline and board coverage; no array data. |
 | `GET /api/snap-workspace/spectra-trend?ip=<configured-ip>&adc=0&days=30` | Full-band mean power, real timestamps, EQ/FFT epoch tags and missing samples. |
@@ -93,8 +155,9 @@ path containment, with a 512 MiB decoded read budget; shorten the period if
 it exceeds the budget. An eight-selection in-memory cache avoids repeated
 trend reads. Only one cold trend is loaded at a time; no plot artifacts are
 written. A requested year can exceed the read budget once enough data exist.
-The existing `/antennas` page remains available as **Transmitted-band history**;
-its old Kafka history is separate from these full-band snapshots.
+The legacy `/antennas` URL remains available for old bookmarks, but its submenu
+is removed. SNAPs exposes only its own Latest/History controls, without duplicate
+Visibilities navigation or a second transmitted-band history presentation.
 
 ## Checks
 
@@ -102,6 +165,14 @@ its old Kafka history is separate from these full-band snapshots.
 averaging, zero/missing values, gaps, bounds, read budgets, lost shards and
 read-only access. Existing acquisition/scheduler tests use fake hardware.
 `scripts/check_snap_spectra_browser.py` checks current saved data, all layouts,
-48-ADC mode, overlays, expansion and 320–1500 px widths. Its acquisition POST
+48-ADC mode, overlays, expansion, shared limits, reference-offset invariance,
+separate status boxes and 320–1500 px widths. Its acquisition POST
 is intercepted: it never causes a hardware read. Real screenshots are under
-`docs/screenshots/2026-09-24/snaps-*.png`.
+`docs/screenshots/2026-09-25/snaps-*.png` (UTC capture date).
+
+`scripts/audit_snap_spectra.py` compares API values with at most four saved
+shards per board. The September 25 audit confirmed the 489–494 MHz features
+on N11/N16 and the 493.682861 MHz peak in the native arrays, including September
+9 reads. This verifies data-to-display fidelity, not an RFI or hardware cause.
+N11's displayed successful read was September 12, unlike N16's September 25
+read; compare their labels before interpreting them as simultaneous.

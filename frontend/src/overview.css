@@ -10,7 +10,7 @@
 .overview-page button.overview-photo:hover { border-color:#8ba7c9; background:#192638; }
 .overview-page button.overview-photo:focus-visible { outline:2px solid #a9c8ec; outline-offset:3px; }
 .overview-section-label { display:flex; justify-content:space-between; gap:10px; margin-bottom:9px; color:#b5bfcd; font-size:12px; }
-.overview-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.overview-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
 .overview-stat { --state:var(--overview-grey); display:flex; flex-direction:column; gap:7px; padding:13px 14px 12px; border:1px solid #d4dbe6; border-top:5px solid var(--state); border-radius:6px; color:#263349; background:#f7f8fb; text-decoration:none!important; }
 .overview-stat.ok { --state:var(--overview-green); }.overview-stat.late { --state:var(--overview-amber); }.overview-stat.silent { --state:var(--overview-red); }
 .overview-stat.yellow { --state:#e7c44a; }.overview-stat.orange { --state:#bb5914; }.overview-stat.yellow .overview-status { color:#352a0b; }

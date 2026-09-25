@@ -50,7 +50,10 @@ status bands. History shares one interval; live cards remain marked Now.
 `/vis` opens the array inspector with the saved antenna set selected;
 `/snaps` opens white full-band spectrum panels in compact SNAP order, with
 station order/grid, all 12 ADCs, historical overlays and expanded power trends.
-`/antennas` retains the legacy saved overview and transmitted-band history.
+All spectrum panels share 374.9–500.1 MHz and a pinned power scale. The default
+display is dB re 10⁻¹⁰ native power units, with the original reference selectable.
+SNAPs and Overview show independent Streaming/PPS boxes from saved evidence.
+`/antennas` retains the legacy URL but no longer appears as a SNAP submenu.
 See [SNAP views and acquisition status](../docs/snap-spectra.md); hourly collector
 activation remains separate from the preview build.
 `/search` is **Search (T1)**, with white Matplotlib figures, labelled count

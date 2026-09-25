@@ -8,7 +8,7 @@ library, numpy and casm_f.
 
 Hard rule (docs/plan.md): **read-only**. The only board calls made here are the
 constructor and getters — ``SnapFengine(..., use_microblaze=True)`` (which does
-not initialise anything), ``fpga.is_programmed``, ``autocorr.get_new_spectra``,
+not initialise anything), transport ``listdev``, ``autocorr.get_new_spectra``,
 ``input.get_status``, ``eq.get_coeffs``, ``pfb.get_fft_shift``,
 ``pfb.get_overflow_count``, packetizer BRAM reads and the ``sync`` counters. No
 ``program_*``, no ``initialize()``, no ``health_sweep``, no ``arm_sync`` /
@@ -151,8 +151,15 @@ class BoardReader(object):
         if snap is None:
             return self.result()
 
-        programmed = self.call("is_programmed", lambda: bool(snap.fpga.is_programmed()))
+        # casm_f.fpga.is_programmed() can return False when sys_clkcounter
+        # cannot be read: Block.listdev() then returns [], without listing the
+        # firmware. Query the transport inventory directly so read failures
+        # remain UNKNOWN, not evidence that firmware is absent.
+        programmed = self.call("firmware_register_map", lambda: "version_version" in snap._cfpga.listdev())
         self.meta["programmed"] = programmed
+        if programmed is None:
+            self.errors["autocorr"] = "skipped: control interface unavailable; firmware state unknown"
+            return self.result()
         # PPS/sync is worth trying on an unprogrammed board too: the relay
         # boards (.59 .68 .69) are not in the PPS status script and we want to
         # record which of these calls answer at all.
@@ -162,7 +169,7 @@ class BoardReader(object):
             # side refuses a board that comes back with neither spectra nor a
             # reason, so "why there is no data" has to travel in the archive.
             self.errors["autocorr"] = "skipped: programmed=%s" % (programmed,)
-            log("%s not programmed (golden image?): skipping data reads" % self.ip)
+            log("%s firmware inventory lacks version_version; skipping data reads" % self.ip)
             return self.result()
 
         self._read_autocorr(snap)

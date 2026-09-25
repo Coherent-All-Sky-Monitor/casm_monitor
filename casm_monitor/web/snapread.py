@@ -49,16 +49,16 @@ SNAP_READ_KIND = "snap_read"
 # operator-triggered board reads longer, never shorter (plan.md: "minimum 5 min
 # between manual reads").
 MANUAL_MIN_INTERVAL_FLOOR_S = 300.0
-# Board-side band: 4096 channels, 500 -> 375 MHz, descending (plan.md).
-FREQ_MHZ = np.linspace(500.0, 375.0, 4096)
+# Descending native channel centres. 375 MHz is the edge, not the last centre.
+FREQ_MHZ = 500.0 - np.arange(4096) * (125.0 / 4096)
 
 
 def freq_mhz(n_chans: int = 4096) -> list[float]:
-    """Descending board-side frequency axis, rounded for JSON compactness."""
+    """Channel centres: 500 - k * 125/n MHz, descending, rounded to 1 Hz."""
     if n_chans == FREQ_MHZ.size:
         axis = FREQ_MHZ
     else:
-        axis = np.linspace(500.0, 375.0, int(n_chans))
+        axis = 500.0 - np.arange(int(n_chans)) * (125.0 / int(n_chans))
     return [round(float(f), 6) for f in axis]
 
 
