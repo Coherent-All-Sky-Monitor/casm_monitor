@@ -18,6 +18,7 @@ def main():
         page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto(URL+'/sources')  # Saved PDMP gallery, no native-data render.
         page.locator('.history-entry').first.wait_for()
+        assert page.locator('.diagnostic-nav svg').count()==0
         for width in [1500,1024,700,390,320]:
             page.set_viewport_size(dict(width=width,height=1100))
             page.wait_for_timeout(180)

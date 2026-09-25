@@ -14,11 +14,11 @@ Everything the operator's constraints demand lives here, not in the caller:
   process group immediately, so hardware contact stops before the new owner can
   start its own. A crashed job therefore frees the lock ``LOCK_TTL_S`` after
   its last renewal, and only then.
-* **one ssh session, boards in sequence.** The remote script
+* **serialized ssh sessions, boards in sequence.** The remote script
   (``casm_monitor/remote/snap_read_remote.py``) is piped to zapdos on stdin, so
   nothing is left on its disk, and it walks the boards one after another with a
-  per-board wall-clock budget. Nothing here can start a second session while
-  the lock is held.
+  per-board wall-clock budget. A second, getter-only PPS comparison follows
+  under the same lease; it never overlaps the spectrum read.
 * **read-only.** The remote script calls getters only; this module never sends
   any other command to zapdos.
 
@@ -715,13 +715,15 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
                 raise
             _note_zapdos_contact(store, True)
             summary = ingest(store, settings, parsed, reason=reason)
+            from .snap_timing import collect as collect_timing
+            timing = collect_timing(settings, store, ips, token)
             elapsed = round(time.time() - started, 3)
             store.add_event(
                 "snap_read",
                 severity="info",
                 subject=f"{len(ips)} board(s)",
                 detail={"reason": reason, "ips": ips, "elapsed_s": elapsed,
-                        "boards": summary},
+                        "boards": summary, "pps_timing": timing},
             )
             print(json.dumps({"boards": summary, "elapsed_s": elapsed}, indent=1), flush=True)
             return {
@@ -732,6 +734,7 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
                 "ssh_elapsed_s": parsed["meta"].get("ssh_elapsed_s"),
                 "npz_bytes": parsed["meta"].get("npz_bytes"),
                 "boards": summary,
+                "pps_timing": timing,
             }
         finally:
             release_lock(store, token)

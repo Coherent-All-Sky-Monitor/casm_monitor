@@ -5,15 +5,27 @@ The legacy APIs remain available. The current `/snaps` preview uses the new
 The overview below remains on `/antennas`; legacy presentation descriptions
 are historical context.
 
-`GET /api/snap-workspace/health` supplies independent streaming and PPS-alignment
+`GET /api/snap-workspace/health` supplies independent streaming and PPS-timing
 boxes on SNAPs and Overview. Each board has `streaming`, `pps_status`,
 `control_status`, `production_evidence` and Unix-second check/data timestamps;
 aggregate `streaming` and `pps` contain `state`, `ok`, `total`. States are `ok`,
-`attention`, `unknown`. The explicit PPS-only CLI publishes local cross-board
-TT evidence with a 90-minute expiry; without it, healthy PPS period readings
+`attention`, `unknown`. Each all-antenna spectrum job and the explicit PPS-only
+CLI publish cross-board TT evidence with a 90-minute expiry, under the same
+persisted read lease. The API selects the newest monitoring-DB or local-JSON
+attempt, including failures; without that evidence, healthy PPS period readings
 alone leave alignment `unknown`. Legacy failed
 control reads may carry `programmed=false`; do not interpret that as verified
 absent firmware. See the full-band guide for freshness and scale semantics.
+
+The displayed `timing_status` per board and `timing` aggregate compare fresh,
+advancing measurements against `watermarks(snap_read, pps_baseline)`. The
+explicitly accepted version-1 reference includes `accepted_at`, `measured_at`,
+`reference_ip` and an IP→integer-string `offsets` mapping. Unchanged accepted
+offsets are OK; changed offsets/reference or stopped PPS need attention (red).
+Missing/invalid references and failed/stale reads remain Unknown. The baseline
+is never updated by polling or acquisition. Strict `pps_status`/`pps` still
+report exact equality to SNAP 0; green timing does not override those values.
+Source-check records no longer affect this health response.
 
 Legacy timestamps are ISO 8601 strings unless noted otherwise (UTC, e.g.
 `"2026-09-08T12:00:00Z"`). The new full-band routes use Unix seconds.

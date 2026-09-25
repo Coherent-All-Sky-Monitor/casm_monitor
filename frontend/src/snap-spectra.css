@@ -37,3 +37,51 @@
 @media(max-width:1000px){.snap-arrangement{grid-template-columns:1fr;}.snap-arrangement .snap-layout-key{max-width:560px;}}
 @media(max-width:380px){.snap-arrangement .snap-layout-key{padding:12px;}.snap-arrangement .snap-station-map>div{grid-template-columns:32px repeat(6,minmax(0,1fr));gap:4px;}}
 .snap-membership-evidence{font-size:12px;color:#adbbd0;margin:14px 0;overflow-wrap:anywhere}.snap-membership-evidence summary{cursor:pointer}
+/* Plot-first controls: a shallow station key alongside the everyday switches. */
+.snap-spectra-page .page-heading {display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 18px;margin:8px 0 10px;}
+.main .snap-spectra-page .page-heading h2 {margin:0;line-height:1.25;}
+.main .snap-spectra-page .page-heading p {margin:0;font-size:12px;}
+.snap-toolbar .snap-controls {margin-bottom:12px;}
+.snap-spectra-page .control-surface {padding:10px 14px;margin-bottom:0;}
+.snap-spectra-page .snap-controls .field-row {margin:0;align-items:center;}
+.snap-job-status {font-size:11px;margin-top:5px;}
+.snap-arrangement {grid-template-columns:minmax(0,1fr) minmax(420px,.9fr);gap:20px;margin-top:12px;}
+.snap-arrangement .snap-toolbar .field-row {gap:12px;}
+.snap-arrangement .snap-toolbar .choice-row {width:100%;}
+.snap-arrangement .snap-toolbar p {font-size:12px;margin-top:0;}
+.snap-arrangement .snap-layout-key {padding:10px 14px;max-width:none;}
+.snap-arrangement .snap-layout-key summary {font-size:18px;}
+.snap-layout-key summary>span {font-size:12px;font-weight:400;}
+.snap-arrangement .snap-station-map {gap:3px;margin-top:6px;max-width:none;}
+.snap-arrangement .snap-station-map>div {gap:3px 6px;}
+.snap-arrangement .snap-station-map button {height:26px;min-height:26px;padding:2px;font-size:15px;border-radius:4px;}
+.snap-map-columns {color:#586579;font-size:12px;text-align:center;}
+.snap-arrangement .snap-layout-key p {font-size:11px;line-height:1.4;margin:6px 0 0;}
+.snap-arrangement .snap-layout-key p {display:none;}
+.snap-arrangement .snap-toolbar .field-row {margin-bottom:10px;}
+.snap-arrangement .snap-toolbar p {margin-bottom:0;}
+.snap-spectra-page .snap-panel-group h3 {font-size:17px;}
+.snap-spectrum-card>header {padding-top:8px;}
+.snap-spectrum-card h4 {line-height:20px;margin-bottom:0;}
+.snap-spectrum-card>header>div>span {display:block;line-height:18px;}
+.snap-toolbar>.field-row {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);align-items:center;gap:8px!important;}
+.snap-toolbar>.field-row>[aria-label="Panel order"] {grid-column:1/-1;}
+.snap-toolbar>.field-row>[aria-label="Input selection"] {align-content:center;}
+.snap-toolbar>.field-row .snap-adc-toggle {padding:10px;gap:8px;}
+.snap-toolbar>.field-row .snap-adc-toggle small {font-size:11px;}
+@media(min-width:1101px){.snap-spectra-page{position:relative;}.snap-spectra-page .snap-health-details:not([open]){position:absolute;right:0;top:6px;margin:0;}.snap-arrangement .snap-station-map button{height:24px;min-height:24px;}}
+.snap-panel-group {margin:14px 0;}
+.snap-panel-group>header {margin-bottom:8px;}
+.snap-spectrum-card footer {font-size:12px;}
+.snap-spectra-page button.snap-adc-toggle {display:flex;align-items:center;gap:12px;padding:12px 14px;min-height:64px;width:100%;max-width:460px;text-align:left;border:1px solid #7087aa;background:#17283f;color:#f3f7ff;font-size:16px;font-weight:650;}
+.snap-adc-toggle small {display:block;font-size:12px;font-weight:400;color:#c0cfe3;margin-top:4px;}
+.snap-adc-toggle b {margin-left:auto;font-size:12px;}
+.snap-switch-track {width:38px;height:22px;border-radius:12px;background:#596b84;position:relative;flex-shrink:0;}
+.snap-switch-track::after {content:'';position:absolute;width:16px;height:16px;top:3px;left:3px;background:white;border-radius:50%;}
+.snap-spectra-page button.snap-adc-toggle.active {border-color:#92b9f0;background:#274878;}
+.snap-adc-toggle.active .snap-switch-track {background:#196bb8;}
+.snap-adc-toggle.active .snap-switch-track::after {left:19px;}
+@media(max-width:1100px){.snap-arrangement{grid-template-columns:minmax(0,1fr) minmax(340px,.9fr);}}
+@media(max-width:800px){.snap-arrangement{grid-template-columns:1fr;}.snap-spectra-page .page-heading{display:block;}}
+@media(max-width:1100px){.snap-toolbar>.field-row {display:flex;}.snap-spectrum-card>header{padding-top:8px;}}
+@media(pointer:coarse){.snap-arrangement .snap-station-map button{min-height:44px;height:44px;}}

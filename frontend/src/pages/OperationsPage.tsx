@@ -66,7 +66,7 @@ export default function OperationsPage() {
   const visAge=typeof vis?.value==='number'&&visMeasureAge!=null?vis.value+visMeasureAge:null;
   const visHealth:Health=live.error?'late':visAge==null?'unknown':visAge>600?'late':'ok';
   const snapState=(key:string)=>snaps.error?'unknown':snaps.data?.[key]?.state??'unknown';
-  const snapTone=(key:string):Health=>snapState(key)==='ok'?'ok':snapState(key)==='attention'?'late':'unknown';
+  const snapTone=(key:string):Health=>snapState(key)==='ok'?'ok':snapState(key)==='attention'?(key==='timing'?'silent':'late'):'unknown';
   const alerts:{text:string;to:string}[]=[];
   if((data||live.error)&&obsHealth!=='ok')alerts.push({text:live.error?'Live observation refresh failed.':stateAge==null?'Observation state unavailable.':stateAge>120?'Observation state is stale.':`Observation state: ${state??'unknown'}.`,to:'/readiness'});
   if((search.data||search.error)&&searchHealth!=='ok')alerts.push({text:!searchFresh?'Search status unavailable or stale.':`${8-healthy} search streams need checking.`,to:'/search'});
@@ -76,14 +76,14 @@ export default function OperationsPage() {
   return <div className="workspace-page overview-page">
     <div className="overview-heading">
       <div className="overview-heading-copy"><h2>Overview</h2><p className="overview-observation-id"><span>Observation</span><strong>{data?.observation?.id??'unknown'}</strong></p>
-        <div className="overview-clocks" aria-label="Observation clocks">{[LOCAL,'UTC'].map(tz=><div className="overview-clock" key={tz}><span>{tz===LOCAL?'OVRO local time':'Universal time · UTC'}</span><time dateTime={data?.clock?.utc}>{data?localStamp(data.clock.utc,tz):'Loading…'}</time><small>{tz===LOCAL?'Bishop, California':`Local sidereal time · ${data?.clock?.lst??'unknown'}`}</small></div>)}</div>
+        <div className="overview-clocks" aria-label="Observation clocks">{[LOCAL,'UTC'].map(tz=><div className="overview-clock" key={tz}><span>{tz===LOCAL?'OVRO local time':'Universal time · UTC'}</span><time dateTime={data?.clock?.utc}>{data?localStamp(data.clock.utc,tz):'Loading…'}</time><small>{tz===LOCAL?'Big Pine, California':'Coordinated Universal Time'}</small></div>)}<div className="overview-clock overview-clock--sidereal"><span>Local sidereal time · LST</span><time>{data?.clock?.lst??'Loading…'}</time><small>Owens Valley Radio Observatory</small></div></div>
       </div>
       <button className="overview-photo" aria-label="Enlarge CASM telescope photo" onClick={()=>setPhotoOpen(true)}>
         <img src={telescopePhoto} width="4032" height="3024" alt="Coherent All Sky Monitor antennas at Owens Valley Radio Observatory" decoding="async"/>
         <span>CASM <span aria-hidden="true">↗</span></span>
       </button>
     </div>
-    {photoOpen&&<FigureZoom title="Coherent All Sky Monitor (CASM)" onClose={()=>setPhotoOpen(false)} actions={<><span>Owens Valley Radio Observatory · Bishop, California</span><a href={telescopePhoto} target="_blank" rel="noreferrer">Original photo</a></>}><img src={telescopePhoto} width="4032" height="3024" alt="Coherent All Sky Monitor antennas at Owens Valley Radio Observatory"/></FigureZoom>}
+    {photoOpen&&<FigureZoom title="Coherent All Sky Monitor (CASM)" onClose={()=>setPhotoOpen(false)} actions={<><span>Owens Valley Radio Observatory · Big Pine, California</span><a href={telescopePhoto} target="_blank" rel="noreferrer">Original photo</a></>}><img src={telescopePhoto} width="4032" height="3024" alt="Coherent All Sky Monitor antennas at Owens Valley Radio Observatory"/></FigureZoom>}
     <div className="overview-section-label"><span>Live snapshot · Now</span><span>Checked every 30 s while visible</span></div>
     <section className="overview-stats" aria-label="Live status">
       <Stat title="Observation" value={state??'Unknown'} note={`State checked ${ageText(stateAge)} ago`} status={obsHealth} label={obsHealth==='ok'?'Running':obsHealth==='late'?'Stale / check':obsHealth==='silent'?'Not running':'Unknown'} to="/readiness"/>
@@ -91,7 +91,7 @@ export default function OperationsPage() {
       <Stat title="Injection recovery · last 24 h" value={inj&&inj.status!=='unavailable'?`${c.recovered} / ${c.completed_fired}`:'Unavailable'} note="Recovered / completed fired trials" status={recoveryHealth} label={recoveryLabel} to="/review"/>
       <Stat title="Visibility data age" value={ageText(visAge)} note="Newest cached visibility · fresh ≤ 10 min" status={visHealth} label={visHealth==='ok'?'Recent data':visHealth==='late'?'Stale / check':'Unknown'} to="/vis"/>
       <Stat title="SNAP streaming" value={snaps.data&&!snaps.error?`${snaps.data.streaming.ok} / ${snaps.data.streaming.total}`:'Unknown'} note="Recent cached data · ≤ 15 min" status={snapTone('streaming')} label={snapHealthLabel(snapState('streaming'))} to="/snaps"/>
-      <Stat title="SNAP PPS / source check" value={snaps.data&&!snaps.error?`${(snaps.data.timing_source??snaps.data.pps).ok} / ${snaps.data.pps.total}`:'Unknown'} note={snaps.data?`${snaps.data.pps.ok} exact · ${(snaps.data.timing_source?.ok??snaps.data.pps.ok)-snaps.data.pps.ok} source-checked`:'PPS and dated source evidence'} status={snapTone(snaps.data?.timing_source?'timing_source':'pps')} label={snapHealthLabel(snapState(snaps.data?.timing_source?'timing_source':'pps'))} to="/snaps"/>
+      <Stat title="SNAP PPS timing" value={snaps.data&&!snaps.error?`${(snaps.data.timing??snaps.data.pps).ok} / ${snaps.data.pps.total}`:'Unknown'} note="Offsets versus accepted reference" status={snapTone(snaps.data?.timing?'timing':'pps')} label={snapHealthLabel(snapState(snaps.data?.timing?'timing':'pps'))} to="/snaps"/>
     </section>
     {alerts.length>0&&<section className="overview-attention" aria-label="Needs attention"><strong>Needs attention</strong>{alerts.map(a=><Link key={a.text} to={a.to}>{a.text} →</Link>)}</section>}
     <section className="overview-controls"><div className="overview-control-line"><strong>{rolling?'Rolling 24 hours':'Historical interval'}</strong><span>{localStamp(t0,zone)} – {localStamp(t1,zone)}</span><div className="overview-history-actions"><TimeZone value={zone} onChange={setZone}/><button className={rolling?'active':''} onClick={()=>{setRolling(true);setWindow(initialWindow());}}>Live · rolling 24 h</button></div></div>

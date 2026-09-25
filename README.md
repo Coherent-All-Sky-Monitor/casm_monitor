@@ -1,7 +1,7 @@
 # casm_monitor
 
 Monitoring workspace for the **Coherent All Sky Monitor (CASM)** at
-Owens Valley Radio Observatory, Bishop, California. The preview runs on corr1
+Owens Valley Radio Observatory, Big Pine, California. The preview runs on corr1
 at `http://localhost:8061`; the separate production monitor remains on 8060.
 Observation pages read existing array data and write local display products.
 

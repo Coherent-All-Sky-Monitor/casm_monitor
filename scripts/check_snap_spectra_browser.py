@@ -53,60 +53,55 @@ def main():
         assert page.locator('.diagnostic-nav a[aria-current=page]').inner_text() == 'SNAPs'
         assert page.locator('.header nav').count() == 0
         assert page.get_by_role('link',name='Transmitted-band history',exact=True).count() == 0
+        page.get_by_text('Board status details',exact=True).click()
         page.locator('.snap-health-board').first.wait_for()
         assert page.locator('.snap-health-box').count()==8
-        assert page.locator('.snap-health-box').filter(has_text='PPS / source check').count()==4
+        assert page.locator('.snap-health-box').filter(has_text='PPS timing').count()==4
         assert set(page.locator('.snap-board-ip').all_text_contents())=={i['ip'] for i in membership['inputs']}
         assert all('192.168.120.' in text for text in page.locator('.snap-board-errors summary').all_text_contents())
+        page.get_by_text('Board status details',exact=True).click()
         plot=page.locator('.snap-spectrum-card').first.locator('svg')
         assert plot.get_attribute('data-x-min')=='374.9'
         assert plot.get_attribute('data-x-max')=='500.1'
         limits=lambda:page.locator('.snap-spectrum-card svg').evaluate_all("es=>[...new Set(es.map(e=>e.dataset.yMin+','+e.dataset.yMax))]")
+        def no_clipping():
+            assert len(limits())==1
+            assert page.locator('.snap-spectrum-card svg path[fill="#b9540b"]').count()==0
+            assert page.get_by_text('points outside displayed limits',exact=False).count()==0
+        no_clipping()
         assert len(limits())==1
         shared_limits=limits()
         lower=float(plot.get_attribute('data-y-min'))
         assert float(plot.get_attribute('data-y-max'))-lower<100
-        positive_path=page.locator('.snap-spectrum-card').first.locator('.snap-trace').get_attribute('d')
-        page.get_by_label('Power reference',exact=True).select_option('1')
-        assert float(plot.get_attribute('data-y-min'))==lower-100
-        assert page.locator('.snap-spectrum-card').first.locator('.snap-trace').get_attribute('d')==positive_path
-        page.get_by_label('Power reference',exact=True).select_option('1e-10')
+        assert page.get_by_label('Power reference',exact=True).count()==0
+        assert page.get_by_label('Y-axis scale',exact=True).count()==0
         screenshot(page,'snaps-latest.png')
         screenshot(page.locator('.snap-health-section'),'snaps-health.png')
         screenshot(page.locator('.snap-panel-group').first,'snaps-compact.png')
-        page.get_by_label('All 12 ADCs per SNAP').check()
+        page.get_by_role('switch',name='All 12 ADCs per SNAP',exact=False).click()
         assert page.locator('.snap-spectrum-card').count() == 48
+        no_clipping()
         assert set(page.locator('.snap-spectrum-card.in-beamforming').evaluate_all('es=>es.map(e=>e.dataset.inputKey)'))==members
         assert page.locator('.snap-panel-group').first.locator('.snap-spectrum-card').count() == 12
         page.get_by_role('button', name='Compact · station order', exact=True).click()
         assert page.locator('.snap-spectrum-card').count() == 48
         assert page.locator('.snap-panel-group').first.locator('h3').inner_text() == 'N21'
-        page.get_by_label('All 12 ADCs per SNAP').uncheck()
+        page.get_by_role('switch',name='All 12 ADCs per SNAP',exact=False).click()
         assert page.locator('.snap-spectrum-card').count() == initial
         page.get_by_role('button',name='All wired · 24',exact=True).click()
         assert page.locator('.snap-spectrum-card').count() == 24
+        no_clipping()
         shared_limits=limits()  # Changing selection scope intentionally refits its shared limits.
         page.get_by_role('button', name='Station grid', exact=True).click()
         assert page.locator('.snap-empty').count() > 0
         page.get_by_role('button', name='Compact · SNAP order', exact=True).click()
-        page.get_by_role('button', name='History', exact=True).click()
-        page.get_by_label('Saved acquisition', exact=True).wait_for()
-        opts=page.get_by_label('Saved acquisition', exact=True).locator('option').all()
-        assert len(opts)>=1  # A fresh history epoch can contain one acquisition.
-        first=opts[-1].get_attribute('value')
-        page.get_by_label('Saved acquisition', exact=True).select_option(first)
-        page.locator('.snap-spectrum-card').first.wait_for()
-        assert limits()==shared_limits, 'History must preserve the shared power scale'
-        page.get_by_label('Overlay first saved snapshot').check()
-        page.locator('.snap-reference').first.wait_for()
+        assert page.get_by_role('button',name='History',exact=True).count()==0
+        assert limits()==shared_limits
         page.get_by_role('button',name='Expand SNAP 0 ADC 0',exact=True).click()
         page.get_by_role('dialog').wait_for()
         page.get_by_role('dialog').get_by_role('img', name='Full-band power (dB) versus time (UTC)').wait_for(timeout=60000)
         screenshot(page,'snaps-history-expanded.png')
         page.keyboard.press('Escape')
-        page.get_by_role('button',name='Latest spectra',exact=True).click()
-        page.locator('.snap-spectrum-card').first.wait_for()
-        page.get_by_label('Overlay first saved snapshot').uncheck()
         page.get_by_role('button',name='Hide SNAP 0 ADC 0',exact=True).click()
         assert page.locator('.snap-spectrum-card').count()==23
         page.get_by_role('button',name='Reset selection',exact=True).click()
@@ -129,12 +124,26 @@ def main():
         assert not unexpected, unexpected
         page.goto(URL+'/observation')
         page.get_by_role('link',name='SNAP streaming',exact=False).wait_for()
-        page.get_by_role('link',name='SNAP PPS / source check',exact=False).wait_for()
+        page.get_by_role('link',name='SNAP PPS timing',exact=False).wait_for()
         assert page.locator('.overview-stat').count()==6
         screenshot(page,'overview-snaps-status.png')
+        # Display-only fixture: a later saved frame with extreme finite values
+        # must expand the shared range. Never write this to the monitor store.
+        frame=page.request.get(URL+'/api/snap-workspace/spectra').json()
+        target=next(b for b in frame['boards'] if b['feng_id']==2)
+        adc=next(i['adc'] for i in target['inputs'] if i['station']=='N16E1')
+        target['spectra_db'][adc][0]=-400
+        target['spectra_db'][adc][1]=150
+        page.route('**/api/snap-workspace/spectra?*',lambda r:r.fulfill(json=frame))
+        page.goto(URL+'/snaps')
+        page.locator('.snap-spectrum-card svg').first.wait_for()
+        plot=page.locator('.snap-spectrum-card svg').first
+        assert float(plot.get_attribute('data-y-min')) < -300
+        assert float(plot.get_attribute('data-y-max')) > 250
+        no_clipping()
         assert not errors,errors
         browser.close()
-    print(json.dumps({'beamforming_panels':initial,'wired_panels':24,'all_adcs':48,'history_snapshots':len(opts),
+    print(json.dumps({'beamforming_panels':initial,'wired_panels':24,'all_adcs':48,'trend_days':30,
                       'manual_acquisition':'intercepted, no hardware contact','screenshots':str(OUT)}))
 
 

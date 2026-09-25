@@ -34,22 +34,22 @@ spectra. Opening the page or browsing history never contacts hardware.
   leaving room at both edges without inventing samples outside the band.
 - Stored/API power is `10 log10(native linear power)`. The default display
   reference is **10⁻¹⁰ native power units**, a constant +100 dB offset for every
-  antenna/date. Original dB re 1 remains selectable. Negative original values
+  antenna/date. The reference selector is removed. Negative original values
   are expected; neither scale is **dBm** or calibrated flux. The getter divides out its
   accumulation length before storage. Zero/nonfinite/negative channel values
   are not clipped to an invented noise floor: the line breaks and counts are
   displayed. Zero power has no finite dB value.
-- All panels share one power scale, pinned to the initially loaded snapshot
-  until **Refit scales**. **Bandpass detail** fits the 1st–99th percentiles of
-  all displayed-set channels, with padding. **Full spectrum** includes the
-  extrema; **Custom shared limits** allows explicit bounds. Changing to all
-  ADCs includes those inputs in the shared fit; hiding panels does not refit.
-  Orange edge markers and counts identify clipped peaks. The data are unchanged.
+- All panels share one power scale spanning **every finite displayed channel**,
+  with padding. There is no percentile clipping. Limits update with each saved
+  spectrum or selection change, including all-ADC and individually shown inputs.
+  Expanded spectra use the same limits. Scale/refit controls are removed.
+  This supersedes the earlier pinned percentile scale and its orange clipping
+  markers; data values and the fixed dB reference are unchanged.
 
 Click any spectrum to expand it and see full-band power versus time. The trend
 is `10 log10(mean(linear power))` over all 4096 channels, including true zeros.
 An incomplete band gives a missing point, not a mean over a changing channel
-set. The optional focused trend scale reveals drift in absolute dB. Lines break
+set. The automatically focused trend scale reveals drift in absolute dB. Lines break
 at gaps longer than 1.5 configured read intervals and at EQ/FFT epoch changes.
 Only saved samples are plotted. A single point is still visible.
 
@@ -61,14 +61,11 @@ visibility autos 21–26 seconds away. Noncentral features at 400.665 and
 
 ## History and acquisition
 
-**Latest spectra** opens by default and refreshes saved data every minute.
-Acquisition status polls every ten seconds. **History** selects actual saved
-snapshots over the last 1–365 days (default 30), with an optional orange dashed
-overlay of the first snapshot in that interval. The slider steps through
-available reads, not equal wall-clock intervals. Per-board timestamps remain
-visible. A snapshot groups a sequential board pass within ten minutes; it is
-not a simultaneous measurement. An historical board with no saved spectrum
-within 1.5 read intervals before the selected time is missing, not held forward.
+The latest spectra refresh from saved data every minute; acquisition status
+polls every ten seconds. History/overlay selectors are removed from the page.
+Click a spectrum for its saved 30-day power trend. The history API remains
+available, including dated spectra and catalogue queries. Per-board timestamps
+remain visible: a board pass is sequential, not a simultaneous measurement.
 
 The latest view can show an older successful spectrum after a failed attempt;
 its stale timestamp and the latest attempt's errors remain visible separately.
@@ -81,11 +78,11 @@ all-four successful read. Earlier shards and database rows are retained, not
 deleted. `snap_history_epoch.json` under `observation_cache_root` holds a
 version-1 `start` timestamp; missing/invalid configuration leaves all history
 available. `archive=true` on spectra/catalog/trend includes earlier records.
-The default trend, timeline and first-snapshot overlay use the same epoch.
+The default trend and catalogue queries use the same epoch.
 
 ## Live status
 
-Separate **Streaming** and **PPS / source check** boxes appear per board and in
+Separate **Streaming** and **PPS timing** boxes appear per board and in
 Overview. They refresh saved evidence every 30 seconds, independently of the
 selected historical spectrum. Green streaming **OK** means all wired inputs
 have nonzero cached visibility data no older than 15 minutes. This is timestamped
@@ -113,20 +110,28 @@ PPS period checks use the existing 0.1% tolerance around the board clock.
 Period/count snapshots alone cannot prove cross-board sample alignment or
 continued pulse arrival. The explicit read-only check below records two stable
 common-edge telescope-time frames, advancing counts/TT and exact deltas to SNAP 0.
-Verified boards turn green; failed reads stay Unknown. A measured offset or
-stalled PPS is Needs attention. Checks expire after 90 minutes, and later failed
-PPS attempts supersede old success. The array summary is green only if every
-configured antenna board is verified. It does not grade relay-board telemetry.
-The strict `pps_status` and `pps` aggregate retain this exact-match rule.
-A separate `timing_source_status` / `timing_source` assessment can show green
-**Source coherence seen**, with the measured offset and source retained. This
-requires a reviewed `snap_source_check.json`, matching deployment/cal/layout
-file identities, unchanged offset/reference, fresh good PPS measurements and
-source data within 90 minutes. It never overrides a stalled, missing, changed
-or stale timing result. September 25's board-group check is documented in
-`casm-wiki/monitor-snap-source-check.md`; it is not proof of exact sample alignment
-or a pass for every ADC. No automatic source classifier or periodic native
-analysis runs in the page. The source record must be renewed by a reviewed check.
+The strict `pps_status` and `pps` aggregate retain the exact-match rule.
+Displayed `timing_status` / `timing` instead compare against an explicitly
+accepted fixed reference. On September 25 at 06:52:43 UTC the operator-requested
+reference was saved from the fresh 06:38:49 read: SNAPs 0/1/2/3 have offsets
+**0/−1/0/−1 ticks** relative to SNAP 0. Green means advancing PPS with unchanged
+offsets, not sample-exact alignment. Changed offsets/reference or stopped PPS
+are red **Needs attention**. Missing, failed or stale checks remain Unknown.
+Checks expire after 90 minutes; newer failures supersede older success.
+The summary requires every configured antenna board and does not grade relays.
+No source-check age or periodic native visibility analysis affects these boxes.
+The separate dated science result remains in `casm-wiki/monitor-snap-source-check.md`.
+The baseline is stored in monitoring SQLite at `watermarks(snap_read, pps_baseline)`.
+Acquisitions never relearn it. Only after explicit operator acceptance, replace
+it using a fresh saved complete read (no hardware contact from this command):
+
+```bash
+PYTHONPATH=. /home/casm/software/dev/casm_venvs/casm_offline_env/bin/python \
+  scripts/check_snap_timing.py --accept-saved-baseline
+```
+
+Use `CASM_MONITOR_CONFIG` for the shared monitor config when outside its service
+environment. Unreadable, stalled, inconsistent or stale evidence is rejected.
 Failed management reads leave firmware/PPS state unknown, even when the old
 driver recorded `programmed=False`. The corrected reader queries the transport
 inventory directly; its worker rollout remains pending with the collector.
@@ -159,8 +164,18 @@ that flag **changes synchronization**. The older
 `ssh zapdos 'python3 /home/user/pps_status.py 10'` checks pulse arrival/rate,
 not sample-exact cross-board alignment, and its timing-chain caption is outdated.
 
-Only local preview evidence is written; GET/page refresh performs no hardware
-read. The PPS-only check is manual, separate from hourly spectra acquisition.
+The standalone command and hourly spectrum job now share the persisted read
+lease. Every all-antenna spectrum acquisition runs the same bounded getter-only
+PPS comparison afterwards, including Ping now. Partial-board requests never
+contact additional boards. Its newest attempt is stored in monitoring SQLite
+as `watermarks(snap_read, pps_timing)`; failures publish Unknown, not old green.
+The CLI also writes the requested local JSON. The API chooses the newest saved
+attempt and retains the 90-minute expiry. GET/page refresh performs no hardware
+read. No source re-check runs in this job.
+Activated in the locked monitoring checkout on September 25 at 06:38 UTC;
+a fresh getter-only verification succeeded for all four boards. Only the 8061
+preview restarted to consume the new evidence source; the worker/collector and
+observing services were not restarted. Subsequent job subprocesses load the fix.
 The September 25 management lockout was released by a separately approved
 operator session at 04:41 UTC, completing stale TFTP transfers without reflash
 or re-sync. The saved 04:43 UTC check found advancing PPS on all four boards,
@@ -213,7 +228,7 @@ it exceeds the budget. An eight-selection in-memory cache avoids repeated
 trend reads. Only one cold trend is loaded at a time; no plot artifacts are
 written. A requested year can exceed the read budget once enough data exist.
 The legacy `/antennas` URL remains available for old bookmarks, but its submenu
-is removed. SNAPs exposes only its own Latest/History controls, without duplicate
+is removed. SNAPs shows latest spectra and expanded trends, without duplicate
 Visibilities navigation or a second transmitted-band history presentation.
 
 ## Checks
@@ -222,7 +237,7 @@ Visibilities navigation or a second transmitted-band history presentation.
 averaging, zero/missing values, gaps, bounds, read budgets, lost shards and
 read-only access. Existing acquisition/scheduler tests use fake hardware.
 `scripts/check_snap_spectra_browser.py` checks current saved data, all layouts,
-48-ADC mode, overlays, expansion, shared limits, reference-offset invariance,
+48-ADC mode, expansion, shared limits, removed controls,
 separate status boxes and 320–1500 px widths. Its acquisition POST
 is intercepted: it never causes a hardware read. Real screenshots are under
 `docs/screenshots/2026-09-25/snaps-*.png` (UTC capture date).

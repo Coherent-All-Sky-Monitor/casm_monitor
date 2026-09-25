@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import Panel from "../components/Panel";
 import Segmented from "../components/Segmented";
 import { CandidateGallery } from "../components/CandidateGallery";
+import { ProductImage } from "../components/Workspace";
 import { useUrlParam } from "../lib/useUrlParam";
 import { formatUtcStamp } from "../lib/statusSentence";
 import { eventsSentence, nowSentence, statsSentence } from "../lib/candsText";
@@ -211,12 +212,7 @@ export default function CandsPage() {
           </p>
           <p className="note">{stats ? nowSentence(stats.now) : ""}</p>
           <Panel title={`T1 -> T2 funnel, ${stats?.win_label ?? ""}`}>
-            <img
-              className="vis-figure__img"
-              src={api.statsPlotUrl(Number(hours))}
-              alt="T1 to T2 funnel"
-              loading="lazy"
-            />
+            <ProductImage url={api.statsPlotUrl(Number(hours))} label="T1 to T2 funnel"/>
           </Panel>
           {stats && stats.now && (
             <table className="cal-table" style={{ marginTop: 24 }}>

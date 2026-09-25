@@ -35,7 +35,7 @@ export function SaveInvestigation({selection, provenance, plotUrl}: {selection: 
   const save = async()=>{setBusy(true);try {const q=await api("/api/review");await api("/api/review",{title:note.slice(0,100)||"Marked scientific plot",note,selection,provenance:provenance??{},plot_url:plotUrl},{"X-CASM-Review-CSRF":q.csrf_token});setMessage("Saved to review queue. No investigation started.");setOpen(false);}catch(e){setMessage((e as Error).message);}finally{setBusy(false);}};
   return <div className="mark-investigation"><button onClick={()=>setOpen(!open)}>Mark for investigation</button>{open&&<div className="annotation-form"><label>What looks unusual?<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength={4000} placeholder="Describe the feature and the question to investigate."/></label><button className="primary" disabled={busy||!note.trim()} onClick={save}>Save plot and note</button><span className="muted">Queued for your review; no agent runs automatically.</span></div>}{message&&<p role="status">{message}</p>}</div>;
 }
-function ProductImage({url,label}:{url:string;label:string}) {
+export function ProductImage({url,label}:{url:string;label:string}) {
   const [open,setOpen]=useState(false);
   return <><button className="plot-image-trigger" aria-label={`Enlarge ${label}`} onClick={()=>setOpen(true)}><img src={url} alt={label}/></button>
     {open&&<FigureZoom title={label} onClose={()=>setOpen(false)} actions={<a href={url} target="_blank" rel="noreferrer">Open original PNG ↗</a>}><img src={url} alt={label} draggable={false}/></FigureZoom>}

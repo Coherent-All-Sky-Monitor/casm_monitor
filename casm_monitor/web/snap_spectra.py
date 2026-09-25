@@ -103,20 +103,22 @@ def aggregate_health(boards, field):
     return dict(state=state, ok=sum(s == 'ok' for s in states), total=len(states))
 
 
-def timing_evidence(settings):
-    """Explicit CLI checks publish only local preview evidence, never GET I/O."""
-    if settings.observation_cache_root is None:
-        return None
-    path = settings.observation_cache_root / 'snap_timing' / 'latest.json'
-    try:
-        if path.stat().st_size > 65536:
-            return None
-        report = json.loads(path.read_text())
-        if isinstance(report, dict) and report.get('version') == 1 and isinstance(report.get('boards'), dict):
-            return report
-    except (OSError, ValueError, TypeError):
-        pass
-    return None
+def timing_evidence(settings, reader=None):
+    """Newest saved hourly/CLI attempt, including failures; GET never probes."""
+    reports = []
+    if reader is not None:
+        reports.append(reader.get_watermark('snap_read', 'pps_timing'))
+    if settings.observation_cache_root is not None:
+        path = settings.observation_cache_root / 'snap_timing' / 'latest.json'
+        try:
+            if path.stat().st_size <= 65536:
+                reports.append(json.loads(path.read_text()))
+        except (OSError, ValueError, TypeError):
+            pass
+    valid = [r for r in reports if isinstance(r,dict) and r.get('version') == 1
+             and isinstance(r.get('boards'),dict) and isinstance(r.get('ts'),(int,float))
+             and math.isfinite(r['ts'])]
+    return max(valid, key=lambda r:r['ts']) if valid else None
 
 
 def apply_timing(items, evidence, now):
@@ -191,12 +193,12 @@ def build_router(settings, reader):
         now, interval = time.time(), snap_read_interval_s(settings)
         latest, vis = latest_reads(reader), read_latest_vis(settings)
         items = [board_health(b, latest.get(b['ip'], {}), vis, now, interval) for b in boards()]
-        apply_timing(items, timing_evidence(settings), now)
-        from .snap_source_check import annotate
-        annotate(settings, reader, items, now)
+        apply_timing(items, timing_evidence(settings, reader), now)
+        from .snap_timing_status import apply_baseline
+        apply_baseline(items, reader.get_watermark('snap_read','pps_baseline'))
         return dict(boards=items, checked_at=now, streaming=aggregate_health(items, 'streaming'),
                     pps=aggregate_health(items, 'pps_status'),
-                    timing_source=aggregate_health(items, 'timing_source_status'), streaming_max_age_s=900)
+                    timing=aggregate_health(items, 'timing_status'), streaming_max_age_s=900)
 
     def records(ip=None, start=None, end=None, *, last=False):
         # Extract only small metadata fields, not twelve EQ coefficient arrays.

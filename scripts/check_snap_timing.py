@@ -1,33 +1,41 @@
 """Run the getter-only SNAP PPS check and save evidence for the preview.
 
-No production writes, worker restarts or board configuration operations.
-GET requests never run this command. It is an explicit operator check.
+Writes monitoring evidence only. Uses the spectrum reader's persisted lease.
+No worker restarts or board configuration operations. GET never runs this command.
 """
 import argparse
 import json
-import subprocess
 import tempfile
 from pathlib import Path
 
 from casm_monitor.config import load_settings
-from casm_monitor.snapmap import all_boards
+from casm_monitor.jobs.snap_read import acquire_lock, release_lock
+from casm_monitor.jobs.snap_timing import accept_baseline, antenna_ips, collect
+from casm_monitor.store import Store
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', type=Path, required=True, help='Preview evidence JSON path')
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--output', type=Path, help='Run getter-only check and save preview evidence JSON')
+    mode.add_argument('--accept-saved-baseline', action='store_true',
+                      help='Explicitly accept the latest saved offsets; does not contact hardware')
     args = parser.parse_args()
     settings = load_settings()
-    boards = sorted((b for b in all_boards(settings) if b.role == 'antenna'), key=lambda b:b.feng_id)
-    if not boards or boards[0].feng_id != 0:
-        raise SystemExit('Configured SNAP 0 reference is required')
-    script = Path(__file__).resolve().parents[1]/'casm_monitor/remote/snap_timing_remote.py'
-    run = subprocess.run(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=10',settings.zapdos_ssh,
-                          'python3','-',*[b.ip for b in boards]], input=script.read_text(),
-                         text=True,capture_output=True,timeout=65,check=True)
-    report = json.loads(run.stdout)
-    if set(report['boards']) != {b.ip for b in boards} or report['reference_ip'] != boards[0].ip:
-        raise SystemExit('Timing response does not cover configured boards')
+    store = Store(settings.db_path, store_root=settings.store_root)
+    try:
+        if args.accept_saved_baseline:
+            print(json.dumps(accept_baseline(settings, store),indent=2))
+            return
+        token = acquire_lock(store, 'manual-pps-check')
+        if token is None:
+            raise SystemExit('SNAP diagnostic reader busy; no PPS read attempted')
+        try:
+            report = collect(settings, store, antenna_ips(settings), token)
+        finally:
+            release_lock(store, token)
+    finally:
+        store.close()
     args.output.parent.mkdir(parents=True,exist_ok=True)
     # Atomic publication of local monitoring evidence, never a production DB write.
     with tempfile.NamedTemporaryFile(mode='w',dir=args.output.parent,delete=False) as f:

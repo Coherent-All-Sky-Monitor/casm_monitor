@@ -6,7 +6,7 @@
 .overview-heading .overview-observation-id {display:flex;align-items:baseline;flex-wrap:wrap;gap:8px 12px;font-size:15px;}
 .overview-heading .overview-observation-id span {margin:0;color:#a8bdd3;}
 .overview-observation-id strong {font-size:17px;font-weight:550;color:#dce9f7;}
-.overview-clocks { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:18px; max-width:700px; text-align:left; }
+.overview-clocks { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-top:18px; max-width:1040px; text-align:left; }
 .overview-clock {display:grid;gap:5px;padding:12px 15px;background:#0d1825;border:1px solid #30465d;border-radius:7px;min-width:0;}
 .overview-clock>span {font-size:12px;color:#afc4da;font-weight:550;}
 .overview-clock time {font-size:clamp(17px,1.7vw,23px);font-weight:600;letter-spacing:-.025em;color:#edf5ff;line-height:1.35;font-variant-numeric:tabular-nums;}
@@ -72,4 +72,5 @@
 .overview-controls p {font-size:12px;}
 @media(max-width:900px){.overview-heading{grid-template-columns:minmax(0,1fr) 170px;gap:18px;}.overview-clocks{gap:8px;}.overview-clock{padding:10px;}}
 @media(max-width:720px){.overview-heading{grid-template-columns:minmax(0,1fr) 112px;gap:12px;}.overview-heading-copy{display:contents;}.overview-page .overview-heading h2{grid-column:1;grid-row:1;font-size:32px;margin:0;}.overview-observation-id{grid-column:1;grid-row:2;}.overview-observation-id strong{font-size:13px;}.overview-clocks{grid-column:1/-1;grid-row:3;margin:4px 0 0;}.overview-clock time{font-size:18px;}.overview-photo{grid-column:2;grid-row:1/3;align-self:start;}}
-@media(max-width:380px){.overview-clocks{grid-template-columns:1fr;}.overview-clock{grid-template-columns:1fr auto;align-items:center;}.overview-clock time{grid-column:1/-1;grid-row:2;}.overview-clock small{font-size:10px;}}
+@media(max-width:1100px) and (min-width:721px){.overview-clocks{grid-template-columns:repeat(2,minmax(0,1fr));}.overview-clock--sidereal{grid-column:1/-1;}}
+@media(max-width:600px){.overview-clocks{grid-template-columns:1fr;}.overview-clock{grid-template-columns:1fr auto;align-items:center;}.overview-clock time{grid-column:1/-1;grid-row:2;}.overview-clock small{font-size:10px;}}

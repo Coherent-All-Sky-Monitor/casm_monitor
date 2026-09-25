@@ -22,7 +22,8 @@
 .figure-zoom-actions p { margin: 0; color: #565d66; }
 .figure-zoom-actions a { color: #175783; }
 .plot-zoom-trigger { display: block; cursor: zoom-in; outline-offset: -2px; }
-.plot-image-trigger { display: block; width: 100%; padding: 0; border: 0; border-radius: 0; background: white; cursor: zoom-in; }
+.plot-image-trigger, .workspace-page button.plot-image-trigger { display: block; width: 100%; padding: 0; border: 0; border-radius: 0; background: white; cursor: zoom-in; }
+.workspace-page button.plot-image-trigger:hover:not(:disabled) { background: white; }
 .plot-image-trigger img { display: block; width: 100%; height: auto; }
 @media (max-width: 650px) {
   .figure-modal { width: calc(100vw - 12px); max-height: calc(100dvh - 12px); }

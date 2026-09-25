@@ -23,8 +23,12 @@ or scientific acceptance criteria. Unavailable/empty evidence stays unknown;
 stale or incomplete counts take priority over count bands. Individual trial
 misses remain red; shorter historical intervals do not use these thresholds.
 
-Injection outcomes use an interactive white timeline with trial details and
-collapsed tables/seven-day UTC totals. The adjacent current-layout map reuses the
+Injection outcomes use a white click-to-zoom timeline. Trial markers open their
+details inside the enlarged view. The trial-history/seven-day table disclosure
+is removed; API evidence remains available. All displayed data figures share
+Fit, +/−, double-click zoom and pan, including saved review evidence and candidate
+statistics. Selection maps retain their own interactions.
+The adjacent current-layout map reuses the
 Visibilities inspection set and labels wired, intended and inspected membership
 separately. It shows configuration, not antenna health. Recorded weights membership
 and the current ledger calibration do not establish runtime activation.
@@ -34,7 +38,7 @@ Search and detailed-visibility links carry the selected history interval.
 The header's top-right CASM photo is a bundled, operator-supplied still image,
 not a live camera. Its full uncropped frame opens in the shared zoom viewer.
 The telescope title is **Coherent All Sky Monitor (CASM)**; its location is
-shown separately as Owens Valley Radio Observatory, Bishop, California.
+shown separately as Owens Valley Radio Observatory, Big Pine, California.
 
 `GET /api/observation` includes injection counts for a rolling 24-hour interval.
 The start and end are explicit UTC strings; the seven-day trend retains UTC
@@ -194,6 +198,12 @@ from the beams actually processed, without correcting for skipped beams.
 Colourbar labels use two lines to fit within their panels. The same zero/missing
 colours also appear for intervals without any candidates. The DM < 10 bucket remains in the evidence
 but is omitted from both DM displays.
+Read-only check, September 25 07:07 UTC: all eight `/tmp/hella_N.cfg` files on
+corr1/corr2 specify DM_MIN 0 and DM_MAX 1000. These plot limits therefore do
+not describe the active search. The saved 921.750557–1122.099537 bucket also
+straddles the search ceiling, so its full displayed width is not evidence of
+candidates above DM 1000. The 0–10 bucket must be included in a future display
+correction; stored counts and production search settings must not be changed.
 `/api/t1/plot.png` renders the same figure dynamically and is not a valid
 immutable evidence URL for saving. These routes use no Plotly. Width index is
 not labelled as FWHM.

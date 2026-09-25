@@ -49,6 +49,6 @@ export function SnapPlot({freq, values, reference, range, trend, powerReference=
       {!trend&&line.map((v,i)=>v===null||v>=lo&&v<=hi?null:<path key={i} fill="#b9540b" d={v>hi?`M${x(axis[i])-2},${top+5}l2,-4l2,4Z`:`M${x(axis[i])-2},${bottom-5}l2,4l2,-4Z`}/>)}
       {!finite.length&&<text x={(left+right)/2} y="93" textAnchor="middle">{values===null&&!trend?'No saved spectrum':'No positive power samples'}</text>}
     </svg>
-    <div className="snap-readout">{hover|| (clipped?`${clipped} points outside scale · select Full spectrum to show peaks`:'\u00a0')}</div>
+    <div className="snap-readout">{hover|| (clipped?`${clipped} points outside displayed limits · orange edge markers`:'\u00a0')}</div>
   </div>;
 }

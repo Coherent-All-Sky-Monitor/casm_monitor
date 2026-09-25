@@ -40,26 +40,35 @@ Source history, Candidates and Calibration. The top-right tab group is removed;
 Readiness is absent from navigation, with its existing URL and status links
 retained. Calibration subroutes retain the Calibration active tab. The larger
 telescope title sits above the row. Overview has an enlarged heading,
-observation identifier and aligned local/UTC clock panels, responsive on phones.
+observation identifier and separate aligned local, UTC and local-sidereal clock
+panels, responsive on phones. The location label is Big Pine, California.
 
 `/observation` is **Overview**: live status cards, an injection-outcome timeline,
 current array/calibration context, one stream-count heatmap and one raw
 reference-baseline dynamic spectrum. White panels use dark labels and prominent
 status bands. History shares one interval; live cards remain marked Now.
+The trial-history/seven-day table disclosure is removed. Clicking the injection
+timeline opens the shared Fit/zoom/pan viewer; trial details remain selectable
+inside it. All displayed data figures on reachable routes use that viewer,
+including candidate statistics, saved review evidence and Calibration galleries.
+Array maps retain their selection actions rather than opening image zoom.
 `/vis` opens the array inspector with the current recorded beamforming set
 selected, using the same inspected payload membership as Overview and SNAPs.
 Green identifies beamforming inputs, blue other wired inputs; dashed map
 borders identify hidden panels. Manual selections survive refresh, while the
 Beamforming preset follows membership updates. Unknown membership stays unknown.
 `/snaps` opens white full-band spectrum panels in compact SNAP order, with
-station order/grid, all 12 ADCs, historical overlays and expanded power trends.
+station order/grid, a prominent all-12-ADC switch and expanded 30-day power trends.
 Its default and green borders follow inspected nonzero slots in the latest
 recorded deployed CB weights, not layout intent. All wired inputs remain in
 the nearby layout and Overview map. SNAP status/read-details include board IPs.
 `/cands` shows 12 recent saved plots by default (6/12/24/48 selectable), a compact
 searchable right sidebar with show/hide toggles, and the shared image zoom.
-All spectrum panels share 374.9–500.1 MHz and a pinned power scale. The default
-display is dB re 10⁻¹⁰ native power units, with the original reference selectable.
+All spectrum panels share 374.9–500.1 MHz and a full-data power scale. The default
+display is dB re 10⁻¹⁰ native power units. Scale/reference/history controls are
+removed; collection and the saved-history API are unchanged. Power limits cover
+every finite displayed channel with padding, including narrow peaks. They update
+with each saved spectrum or selection change; compact and expanded views match.
 SNAPs and Overview show independent Streaming/PPS boxes from saved evidence.
 `/antennas` retains the legacy URL but no longer appears as a SNAP submenu.
 See [SNAP views and acquisition status](../docs/snap-spectra.md); hourly collector
@@ -122,9 +131,18 @@ The title/location scale up to 68/25 px on desktop. Overview, Visibilities and
 SNAPs share larger green/blue antenna keys on white layout cards, with dark
 navigation and compact controls. Operational SNAP safety details stay in docs;
 failed/stale reads and missing history remain visible.
-The unified tab row uses small decorative line icons, muted navy surfaces,
-and a light underline/border on the selected tab. Text labels remain the
-accessible names; keyboard focus and reduced-motion behavior are retained.
+The unified tab row is text-only, with muted navy surfaces and a light selected
+underline/border. Visibilities and SNAPs use a shallower header and wide,
+compressed north-up maps, keeping the first plot row near the top. Less-used
+visibility controls and detailed SNAP status are expandable. SNAP status chips
+are white, with separate coloured Streaming/PPS labels and readable UTC times.
+Keyboard focus, touchscreen target sizes and reduced-motion behavior remain.
+Hourly spectrum reads now also run the getter-only cross-board PPS check under
+the existing lease. The page only polls saved results. **PPS timing** compares
+fresh advancing timestamps with explicitly accepted fixed offsets: unchanged is
+green, changed/stalled is red, and failed/stale is Unknown. It no longer depends
+on source-coherence evidence. Exact alignment remains separately available in
+the API; a green accepted offset does not assert sample-exact alignment.
 See [source-history API](../docs/api-commissioning.md#sun-cyg-a-cas-a-and-tau-a-visibility-history).
 
 For real documentation screenshots and a bounded service CPU/RAM sample, run

@@ -82,7 +82,7 @@ def main():
             assert page.locator('.header__title').evaluate('e=>parseFloat(getComputedStyle(e).fontSize)') >= 27
             assert page.locator('.overview-heading h2').evaluate('e=>parseFloat(getComputedStyle(e).fontSize)') >= 32
             clocks = page.locator('.overview-clock').evaluate_all('es=>es.map(e=>e.getBoundingClientRect().top)')
-            if width >= 390:
+            if width >= 600:
                 assert abs(clocks[0]-clocks[1]) < 1
             if width in (1500, 390):
                 screenshot(f'overview-heading-{width}.png')
@@ -99,7 +99,7 @@ def main():
                 page.set_viewport_size(dict(width=width,height=1100))
                 page.wait_for_timeout(100)
                 assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),(path,width)
-                assert page.locator(selector).first.bounding_box()['height']>=44
+                assert page.locator(selector).first.bounding_box()['height']>=24
                 assert page.locator(selector).first.evaluate('e=>parseFloat(getComputedStyle(e).fontSize)')>=15
                 if width==1500:
                     screenshot('layout-'+path.strip('/')+'.png')

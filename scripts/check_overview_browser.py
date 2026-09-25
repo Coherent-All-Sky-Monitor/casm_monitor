@@ -49,7 +49,7 @@ def main():
         telescope_name='Coherent All Sky Monitor (CASM)'
         assert page.title()==telescope_name
         assert page.get_by_role('heading',name=telescope_name,exact=True).count()==1
-        assert page.locator('.header__location').inner_text()=='Owens Valley Radio Observatory · Bishop, California'
+        assert page.locator('.header__location').inner_text()=='Owens Valley Radio Observatory · Big Pine, California'
         assert 'CASM · OVRO' not in page.locator('body').inner_text()
         assert page.get_by_role('link',name='Overview',exact=True).count()==1
         assert not page.get_by_role('link',name='Injection recovery',exact=True).count()
@@ -79,12 +79,12 @@ def main():
         assert page.locator('.overview-stats > a').count()==6
         counts=records['/api/observation/injections']['counts']
         assert page.locator('.recovery-summary > strong').inner_text()==f"{counts['recovered']} / {counts['completed_fired']}"
-        assert page.locator('.injection-timeline [role=button]').count()==len(records['/api/observation/injections']['trials'])
+        assert page.locator('.injection-timeline [role=button]').count()==0
         members=[p for p in records['/api/observation']['layout']['points'] if p['deployed'] is True]
         assert page.locator('.overview-map button.beamforming').count()==len(members)
         page.locator('.overview-map button.beamforming').first.click()
         assert 'SNAP' in page.locator('.overview-antenna-detail').inner_text()
-        assert not page.locator('.overview-history').evaluate('(e)=>e.open')
+        assert page.locator('.overview-history').count()==0
         assert '0–1000' not in page.locator('main').inner_text()
         page.screenshot(path=str(OUT/'overview-desktop.png'),full_page=True)
         for card in page.locator('.overview-stat').all():
@@ -97,10 +97,10 @@ def main():
             page.get_by_role('dialog').wait_for()
             page.get_by_role('button',name='Zoom in',exact=True).click()
             page.keyboard.press('Escape')
-        page.get_by_role('button',name='Enlarge timeline',exact=True).click()
+        page.get_by_role('button',name='Enlarge injection recovery plot',exact=True).click()
         page.get_by_role('dialog').locator('.injection-timeline').wait_for()
-        page.keyboard.press('Escape')
-        point=page.locator('.injection-timeline [role=button]').first
+        assert page.get_by_role('dialog').locator('.injection-timeline [role=button]').count()==len(records['/api/observation/injections']['trials'])
+        point=page.get_by_role('dialog').locator('.injection-timeline [role=button]').first
         point.focus();page.keyboard.press('Enter')
         page.get_by_role('dialog').locator('.injection-detail').wait_for()
         page.keyboard.press('Escape')
