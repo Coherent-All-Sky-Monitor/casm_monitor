@@ -172,7 +172,7 @@ budget, after which `status` is `partial` and the operator narrows the
 interval. A missing table is `unavailable` and still returns `streams`.
 
 `plot_url` points at a content-hashed white-background Matplotlib PNG with five panels:
-candidates per stream, beam occupancy, DM over time (DM 0–1000 pc cm^-3)
+candidates per stream, beam occupancy, DM over time (DM 10–1000 pc cm^-3)
 and the width and DM histograms. Liveness lives in the page's HTML stream strip.
 Stream and DM heatmaps show candidate counts per time bin on logarithmic colour
 scales, from pale lavender for low counts to deep purple for high counts.
@@ -196,10 +196,10 @@ stream row and flags at least one capped gulp in the time bin; its vertical
 position does not identify skipped beams. Counts reflect emitted candidates
 from the beams actually processed, without correcting for skipped beams.
 Colourbar labels use two lines to fit within their panels. The same zero/missing
-colours also appear for intervals without any candidates. The saved 0–10 DM
-bucket is included in both DM displays and in the shared count-colour range.
-DM versus time uses a linear 0–1 segment and log spacing above 1; the bottom
-DM histogram uses a linear 0–1000 axis. No finer bins are invented within 0–10.
+colours also appear for intervals without any candidates. DM versus time uses
+a logarithmic 10–1000 axis; the bottom DM histogram uses a linear 10–1000
+axis. The saved 0–10 bucket is omitted from both DM displays and their scaling,
+but retained in evidence JSON and the stream/beam candidate totals.
 The stored edges are unchanged, including 921.750557–1122.099537 across the
 display ceiling. Its count stays intact while the axis ends at 1000; the figure
 does not infer counts on either side of that edge. All bins remain in evidence
@@ -212,7 +212,7 @@ not labelled as FWHM.
 
 The figure matches the Visibilities white scientific style: dark labels and
 spines, subtle time/histogram grids, muted-blue histogram bars, explicit time zones
-and units, beam-index ticks at stream boundaries, and readable 0–1000 DM
+and units, beam-index ticks at stream boundaries, and readable 10–1000 DM
 ticks with distinct histogram/time-view spacing. All three time panels retain their shared logarithmic
 count palette and limits. The PNG is 1950×1875 pixels; click it to open the
 shared display-zoom viewer with Fit, +/− and pan. Zoom pins the selected PNG
