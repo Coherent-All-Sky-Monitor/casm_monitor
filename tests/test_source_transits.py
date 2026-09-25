@@ -25,7 +25,8 @@ def mapping(reverse=False):
 
 
 @pytest.mark.parametrize('text,expected', [('Sun','sun'),('cyg-a','cyg_a'),('Cyg A','cyg_a'),
-    ('CYGNUS_A','cyg_a'),('B0329',None),('unknown',None)])
+    ('CYGNUS_A','cyg_a'),('cas-a','cas_a'),('Cas A','cas_a'),('Cassiopeia A','cas_a'),
+    ('tau-a','tau_a'),('Tau A','tau_a'),('Taurus A','tau_a'),('Crab','tau_a'),('B0329',None),('unknown',None)])
 def test_aliases(text, expected):
     assert st.source_key(text) == expected
 
@@ -160,14 +161,14 @@ def snapshot_fixture(monkeypatch,tmp_path):
     monkeypatch.setattr(AntennaMapping,'load',lambda *a:mapping())
     cal = SimpleNamespace(ant_ids=np.array([9,19]))
     monkeypatch.setattr(bf_weights_generator,'load_calibration_weights',lambda *a:cal)
-    rows = [dict(id=1,t1=5200)]
+    rows = [dict(id=1,t1=5300,meta=dict(t=(5000+np.arange(3)*DT_S).tolist()))]
     monkeypatch.setattr(st,'VisStore',lambda *a:SimpleNamespace(shards=SimpleNamespace(list=lambda *a,**k:rows)))
     calls = []
     def native(*args,**kwargs):
         calls.append(kwargs)
         return dict(time_unix=5000+np.arange(3)*DT_S,freq_mhz=np.array([480.,470.,460.])),mapping(),rows,1234
     monkeypatch.setattr(st,'native_inputs',native)
-    monkeypatch.setattr(st,'beam_spectrum',lambda *a:(np.array([[1,2,3],[-1,-2,-3],[4,5,6]]),np.ones(3,bool)))
+    monkeypatch.setattr(st,'beam_spectrum',lambda *a,**k:(np.array([[1,2,3],[-1,-2,-3],[4,5,6]]),np.ones(3,bool)))
     yield item,cal,calls,rows,calpath
     st._CACHE.clear()
 
@@ -177,6 +178,10 @@ def test_snapshot_current_cal_cache_and_signed_preview(snapshot_fixture, setting
     result = st.snapshot(settings,store,'sun','2026-09-24',item['id'])
     json.dumps(jsonable_encoder(result),allow_nan=False)
     assert result['preview']['cross_power'][1] == [-1.,-2.,-3.]
+    assert result['light_curve']['cross_power'] == [2.,-2.,5.]
+    assert result['light_curve']['time_unix'] == result['preview']['time_unix']
+    assert result['light_curve']['channels'] == 3
+    assert result['light_curve']['freq_range_mhz'] == [460.,480.]
     assert result['tile']['min'] < 0 < result['tile']['max']
     assert result['antenna_ids'] == [9,19]
     assert result['details']['stream'] == STREAM_FULL
@@ -192,6 +197,18 @@ def test_snapshot_current_cal_cache_and_signed_preview(snapshot_fixture, setting
     assert error.value.status_code == 409 and len(calls) == 2
 
 
+@pytest.mark.parametrize('source', list(st.SOURCES))
+def test_native_band_mean_flags_missing_and_source_identity(snapshot_fixture, monkeypatch, settings, store, source):
+    item,_,_,_,_ = snapshot_fixture
+    power = np.array([[2.,900.,6.],[-2.,800.,-6.],[4.,700.,np.nan]])
+    monkeypatch.setattr(st,'beam_spectrum',lambda *a,**k:(power,np.array([True,False,True])))
+    result = st.snapshot(settings,store,source,'2026-09-24',item['id'])
+    assert result['source'] == source and result['name'] == st.SOURCES[source]
+    assert result['light_curve']['cross_power'] == [4.,-4.,None]
+    assert result['light_curve']['channels'] == 2
+    json.dumps(jsonable_encoder(result),allow_nan=False)
+
+
 def test_no_silent_antenna_subset(snapshot_fixture, settings, store):
     item,cal,calls,_,_ = snapshot_fixture
     cal.ant_ids = np.array([9,19,42])
@@ -202,13 +219,55 @@ def test_no_silent_antenna_subset(snapshot_fixture, settings, store):
 
 def test_changed_cal_during_read_refused(snapshot_fixture, monkeypatch, settings, store):
     item,_,_,_,calpath = snapshot_fixture
-    def beam(*a):
+    def beam(*a,**k):
         calpath.write_text('changed calibration fixture')
         return np.ones((3,3)),np.ones(3,bool)
     monkeypatch.setattr(st,'beam_spectrum',beam)
     with pytest.raises(HTTPException) as error:
         st.snapshot(settings,store,'sun','2026-09-24',item['id'])
     assert error.value.status_code == 409 and not st._CACHE
+
+
+def test_stationary_phasing_is_fixed_not_tracking(monkeypatch):
+    import casm_vis_analysis.beam_power as api
+    from casm_vis_analysis.sources import source_enu
+    freq=np.array([470.,450.,430.])
+    times=1_790_000_000+np.arange(3)*1200
+    # Inject a moving point source; phase only to its middle-time direction.
+    direction=source_enu('cyg_a',times)
+    baseline=np.array([3.,10.,1.])
+    phase=2*np.pi*(direction@baseline)[:,None]/C_LIGHT_M_S*freq[None,:]*1e6
+    vis=np.zeros((3,3,3),complex);vis[:,:,1]=np.exp(1j*phase)
+    cal=CalibrationWeights(weights=np.ones((2,3),complex),flags=np.ones(3,bool),
+        frequencies_hz=freq*1e6,ant_ids=np.array([9,19]),ref_ant_id=9)
+    from casm_vis_analysis.sources import source_altaz
+    alt,az=source_altaz('cyg_a',times[1:2])
+    fixed,good=st.beam_spectrum(dict(vis=vis,time_unix=times,freq_mhz=freq),mapping(),cal,'cyg_a',pointing=(alt[0],az[0]))
+    expected=2*np.cos(phase-phase[1])
+    np.testing.assert_allclose(fixed,expected,atol=1e-6)
+    assert not np.allclose(fixed[0],fixed[1])
+    np.testing.assert_allclose(fixed[1],2,atol=1e-6)
+
+
+def test_four_hour_window_streams_small_chunks(monkeypatch,settings,store):
+    stamps=5000+np.arange(105)*DT_S
+    rows=[dict(id=1,meta=dict(t=stamps.tolist()))]
+    bounds=[]
+    def native(reader,m,ants,t0,t1,*args,**kwargs):
+        times=stamps[(stamps>=t0)&(stamps<=t1)]
+        assert 3<=len(times)<=26
+        bounds.append((t0,t1))
+        return dict(time_unix=times,freq_mhz=np.array([480.,470.,460.])),mapping(),rows,100
+    monkeypatch.setattr(st,'native_inputs',native)
+    seen=[]
+    def beam(data,m,cal,source,*,pointing):
+        seen.append(pointing)
+        return np.ones((len(data['time_unix']),3)),np.ones(3,bool)
+    monkeypatch.setattr(st,'beam_spectrum',beam)
+    power,good,times,freq,used,size=st.window_spectrum(settings,store,mapping(),[9,19],None,'cas_a',(60.,0.),rows,stamps[0],stamps[-1])
+    np.testing.assert_array_equal(times,stamps)
+    assert power.shape==(105,3) and len(bounds)==5 and size==500
+    assert seen==[(60.,0.)]*5 and len(used)==1
 
 
 def test_router_separates_beams_pdmp_and_validates_identity(monkeypatch,settings,store,tmp_path):
@@ -220,6 +279,8 @@ def test_router_separates_beams_pdmp_and_validates_identity(monkeypatch,settings
     with TestClient(app) as client:
         assert client.get('/api/sources?q=cyg-a').json()['source'] == 'cyg_a'
         assert client.get('/api/sources?q=sun').json()['kind'] == 'visibility_beam'
+        assert client.get('/api/sources?q=cas-a').json()['source'] == 'cas_a'
+        assert client.get('/api/sources?q=tau-a').json()['source'] == 'tau_a'
         assert 'kind' not in client.get('/api/sources?q=B0329').json()
         url = '/api/sources/transits/sun/2026-09-24'
         assert client.get(url,params=dict(calibration_id='../../cal.h5')).status_code == 422

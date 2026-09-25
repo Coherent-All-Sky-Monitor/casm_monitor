@@ -32,7 +32,7 @@ def main():
     reader = Store(settings.db_path,read_only=True,store_root=settings.store_root)
     report = {}
     try:
-        for source in ['sun','cyg_a']:
+        for source in ['sun','cyg_a','cas_a','tau_a']:
             cat = get('/api/sources?q='+source)
             day = cat['transits'][0]['date']
             beam = get(f'/api/sources/transits/{source}/{day}?calibration_id={cat["calibration"]["id"]}')
@@ -61,7 +61,8 @@ def main():
             np.testing.assert_allclose(cf,freq,atol=1e-5,rtol=0)
             good = good & np.isfinite(weights).all(axis=0)
             positions=np.array([layout.dataframe.loc[layout.dataframe.antenna_id==a,['x_m','y_m','z_m']].values[0] for a in ants])
-            tau=source_enu(source,times)@positions.T/C_LIGHT_M_S
+            # One transit direction, held fixed for every integration.
+            tau=np.broadcast_to(source_enu(source,np.array([beam['transit_unix']])),(len(times),3))@positions.T/C_LIGHT_M_S
             steering=weights.T[None,:,:]*np.exp(2j*np.pi*freq[None,:,None]*1e6*tau[:,None,:])
             direct=np.einsum('tfi,tfij,tfj->tf',steering,matrix,steering.conj()).real
             direct[:,~good]=np.nan
@@ -72,9 +73,28 @@ def main():
             error=float(np.nanmax(np.abs(actual-expected)))
             scale=float(np.nanmax(np.abs(expected)))
             assert error/max(scale,1)<3e-6,(source,error,scale)
+            expected_curve=np.mean(direct[:,good],axis=1)
+            actual_curve=np.array(beam['light_curve']['cross_power'][:3],dtype=float)
+            np.testing.assert_allclose(actual_curve,expected_curve,rtol=3e-6,atol=scale*3e-6,equal_nan=True)
+            assert beam['beam_mode']=='stationary_transit'
+            from casm_vis_analysis.calibration_checks import exact_stationary_response
+            model_mapping=AntennaMapping(layout.dataframe.loc[layout.dataframe.antenna_id.isin(ants)].copy())
+            offsets=np.arange(-7200,7201,60)
+            model_freq=freq[good][np.linspace(0,int(good.sum())-1,min(32,int(good.sum()))).astype(int)]
+            model=exact_stationary_response(model_mapping,source,beam['transit_unix']+offsets,
+                                            model_freq,beam['transit_unix']).mean(axis=1)
+            shoulders={}
+            for label,sign in [('before',-1),('after',1)]:
+                distances=np.abs(offsets[(offsets*sign>0)&(model<=.1)])/60
+                shoulders[label]=float(distances.min()) if len(distances) else None
             report[source]=dict(utc_date=day,integrations=len(times),antennas=ants,
                 channels=len(freq),preview_bins=128,calibration=cat['calibration']['name'],
                 max_abs_error=error,max_abs_expected=scale,scaled_error=error/max(scale,1),
+                beam_mode=beam['beam_mode'],
+                band_mean_max_abs_error=float(np.nanmax(np.abs(actual_curve-expected_curve))),
+                ideal_cross_response_10percent_minutes=shoulders,
+                ideal_response_at_window_edges=[float(model[0]),float(model[-1])],
+                model_scope='Equal-amplitude exact cross-only array factor at up to 32 good-channel frequencies, no element beam or amplitude taper',
                 method='Direct packet-pair Hermitian cross matrix; w.T V conj(w), diagonal zero')
     finally:
         reader.close()

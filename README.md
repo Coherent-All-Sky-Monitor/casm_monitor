@@ -1,9 +1,19 @@
 # casm_monitor
 
-Work in progress.
+Monitoring workspace for the **Coherent All Sky Monitor (CASM)** at
+Owens Valley Radio Observatory, Bishop, California. The preview runs on corr1
+at `http://localhost:8061`; the separate production monitor remains on 8060.
+Observation pages read existing array data and write local display products.
 
-Monitoring workspace for the CASM array at OVRO. Runs on corr1 at
-`http://localhost:8061`, read-only against the array data stores.
+Overview brings together injection recovery, array context and rolling 24-hour
+plots. Visibilities opens all 17 inspection antennas, with compact station/SNAP
+orders and an upper-triangle pair view. Search (T1) shows stream activity and
+candidate distributions. Source history defaults to B0329 PDMP folds; Sun,
+Cyg A, Cas A and Tau A show fixed-beam transit spectra and power curves.
+
+- [Resources, storage paths and retention](docs/resources-and-storage.md)
+- [Visibility views](docs/api-science.md) and [source history](docs/api-commissioning.md#sun-cyg-a-cas-a-and-tau-a-visibility-history)
+- [Frontend build and checks](frontend/README.md)
 
 ## Run
 
@@ -21,26 +31,36 @@ ssh -L 8061:localhost:8061 corr1
 
 ## Screenshots
 
-Observation: injection recovery and rolling T1 plots
+Real preview captures from **September 24, 2026 (OVRO local)**, not mock data.
+These show the working checkout at capture time, including the existing
+Calibration navigation. Capture times, file hashes and service measurements:
+[capture manifest](docs/screenshots/2026-09-24/measurements.json).
 
-![Observation](docs/screenshots/observation.png)
+Overview: injection recovery, array context and rolling 24-hour plots.
 
-Baseline phase
+![Overview](docs/screenshots/2026-09-24/overview.png)
 
-![Baseline phase](docs/screenshots/phase.png)
+Visibilities: white-background autocorrelation spectra in compact station order.
 
-T1 / Hella streams
+![Visibilities](docs/screenshots/2026-09-24/visibilities-autos.png)
 
-![T1](docs/screenshots/search.png)
+[Cross-correlation dynamic spectra](docs/screenshots/2026-09-24/visibilities-crosses.png)
+use the same rolling window and antenna selection.
 
-Source history: B0329 fold ledger
+Search (T1): stream status, candidate heatmaps and distributions.
 
-![Source history](docs/screenshots/sources.png)
+![Search (T1)](docs/screenshots/2026-09-24/search.png)
 
-Readiness
+Source history: B0329 detection dates and saved PDMP folds.
 
-![Readiness](docs/screenshots/readiness.png)
+![B0329 history](docs/screenshots/2026-09-24/sources-b0329.png)
 
-Antennas: SNAP spectra
+Sun: fixed pointing at transit, waterfall and band-averaged cross-power curve.
+The current calibration is applied to each date; these are not flux-calibrated
+measurements or a readback of live hardware weights.
 
-![Antennas](docs/screenshots/antennas.png)
+![Sun transit history](docs/screenshots/2026-09-24/sources-sun.png)
+
+Also captured: [Cyg A](docs/screenshots/2026-09-24/sources-cyg-a.png),
+[Cas A](docs/screenshots/2026-09-24/sources-cas-a.png) and
+[Tau A](docs/screenshots/2026-09-24/sources-tau-a.png).

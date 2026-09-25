@@ -283,9 +283,11 @@ remapped `AntennaMapping` preserve the original physical antenna IDs. Missing
 antenna data removes the integration rather than silently changing membership.
 Calibration flags and the selected frequency band are honored.
 First-of-file integrations are retained; file position is not a quality flag.
-The separate [source-history gallery](api-commissioning.md#sun-and-cyg-a-visibility-history)
-uses this native-input helper with missing samples preserved, then computes
-source-tracking cross-power instead of these fixed-direction curves.
+The separate [source-history gallery](api-commissioning.md#sun-cyg-a-cas-a-and-tau-a-visibility-history)
+uses this native-input helper in bounded chunks with missing samples preserved.
+It fixes one beam at each source's transit position and shows four hours of
+dynamic spectrum and band-averaged cross-power. It does not run this two-pointing
+control comparison or its exact-model overlay.
 
 `array_factor_response` computes the exact ideal equal-amplitude geometry
 response for both directions, using 32 frequencies. A local geometry-only HDF5

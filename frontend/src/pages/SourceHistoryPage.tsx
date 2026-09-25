@@ -4,6 +4,14 @@ import { Json, Notice, useResource } from "../components/Workspace";
 import { SourceTransitHistory } from "../components/SourceTransitHistory";
 import "../source-history.css";
 
+const SOURCES = [
+  {name:'B0329', aliases:['b0329','b0329+54','b032954']},
+  {name:'Sun', aliases:['sun']},
+  {name:'Cyg A', aliases:['cyga','cygnusa']},
+  {name:'Cas A', aliases:['casa','cassiopeiaa']},
+  {name:'Tau A', aliases:['taua','taurusa','crab']},
+];
+
 function HistoryDate({date, rows, all}: {date:string; rows:Json[]; all:boolean}) {
   const [image, setImage] = useState<Json|null>(null);
   const headline = rows.find(r => r.headline_artifact)?.headline_artifact;
@@ -56,12 +64,16 @@ export default function SourceHistoryPage() {
   const [query,setQuery] = useState('B0329'), [search,setSearch] = useState('B0329'), [filter,setFilter] = useState('detections');
   const [refresh,setRefresh] = useState(0);
   const choose = (name:string) => {setQuery(name); setSearch(name); setRefresh(v=>v+1);};
+  const selected = search.toLowerCase().replace(/[-_\s]/g,'');
   return <div className="workspace-page source-history-page">
     <div className="page-heading"><h2>Source history</h2></div>
+    <div className="source-selector" role="group" aria-label="Choose source">
+      {SOURCES.map(({name,aliases})=><button key={name} type="button" aria-pressed={aliases.includes(selected)}
+        onClick={()=>choose(name)}>{name}</button>)}
+    </div>
     <form className="field-row control-surface" onSubmit={e => {e.preventDefault(); choose(query.trim());}}>
-      <label>Source<input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="B0329, Sun or Cyg A"/></label>
+      <label>Source<input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Source name or alias"/></label>
       <button className="primary">Search</button>
-      <div className="source-shortcuts">{['B0329','Sun','Cyg A'].map(name=><button key={name} type="button" onClick={()=>choose(name)}>{name}</button>)}</div>
     </form>
     <HistoryResults key={`${search}:${refresh}`} search={search} filter={filter} setFilter={setFilter}/>
   </div>;

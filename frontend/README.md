@@ -89,6 +89,20 @@ verified reference product and matched local-clock windows, not two blank ranges
 
 ## Implementation pointers
 
+Source history has a five-button source bar: B0329 (default), Sun, Cyg A,
+Cas A and Tau A. B0329 serves saved PDMP/filterbank plots. The other four use a
+stationary beam at transit, ±2 hours, and show a dynamic spectrum with its
+native-channel mean power curve below. Negative cross-power and missing data
+are retained. Both plots open together in the zoom viewer. These are tests of
+visibility phasing with the current calibration, not hardware-weight readback.
+See [source-history API](../docs/api-commissioning.md#sun-cyg-a-cas-a-and-tau-a-visibility-history).
+
+For real documentation screenshots and a bounded service CPU/RAM sample, run
+`scripts/capture_monitor_docs.py --output docs/screenshots/YYYY-MM-DD` with the
+offline Python environment from the repository root. It captures loaded live
+views, never fixture responses or calibration/acquisition jobs. See
+[resources and storage](../docs/resources-and-storage.md) for paths and limits.
+
 - `src/App.tsx`: current reachable routes; do not infer bundle use from legacy
   source files merely remaining in the tree.
 - `src/workspace.css`: current dark tokens, layout and controls, loaded after

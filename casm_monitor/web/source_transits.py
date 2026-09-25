@@ -1,4 +1,4 @@
-"""Read-only source-tracking beams from bounded, native cached visibilities.
+"""Read-only fixed transit beams from bounded, native cached visibilities.
 
 Apply the current ledger calibration at native channels through the maintained
 beam API. No solve, voltage/filterbank read, acquisition or persistent write.
@@ -22,15 +22,17 @@ from .science_array import _LOCK, finite_list, image_tile
 from .science_transit import calibration_catalog, native_inputs
 from .vis import VisStore, _shard_meta_times
 
-SOURCES = {'sun': 'Sun', 'cyg_a': 'Cyg A'}
-HALF_WINDOW = 3600
+SOURCES = {'sun': 'Sun', 'cyg_a': 'Cyg A', 'cas_a': 'Cas A', 'tau_a': 'Tau A'}
+HALF_WINDOW = 7200
 MAX_DAYS = 7
 _CACHE: OrderedDict[tuple, dict] = OrderedDict()
 
 
 def source_key(query: str) -> str | None:
     name = query.strip().lower().replace('-', '').replace('_', '').replace(' ', '')
-    return {'sun': 'sun', 'cyga': 'cyg_a', 'cygnusa': 'cyg_a'}.get(name)
+    return {'sun': 'sun', 'cyga': 'cyg_a', 'cygnusa': 'cyg_a',
+            'casa': 'cas_a', 'cassiopeiaa': 'cas_a',
+            'taua': 'tau_a', 'taurusa': 'tau_a', 'crab': 'tau_a'}.get(name)
 
 
 @lru_cache(maxsize=128)
@@ -76,10 +78,11 @@ def catalog(settings, reader, source: str) -> dict:
                                  or times[-1] < peak+HALF_WINDOW-DT_S))
     return dict(kind='visibility_beam', state='ready' if rows and cal else 'unavailable',
                 source=source, name=SOURCES[source], calibration=cal, transits=rows,
-                coverage=coverage, window_hours=2, max_days=MAX_DAYS)
+                coverage=coverage, window_hours=2*HALF_WINDOW/3600, max_days=MAX_DAYS,
+                beam_mode='stationary_transit')
 
 
-def beam_spectrum(data, mapping, cal, source):
+def beam_spectrum(data, mapping, cal, source, *, pointing=None):
     """Native signed cross-power; flagged channels keep their frequency positions."""
     from casm_vis_analysis.beam_power import beam_power_vs_time
     freq = np.asarray(data['freq_mhz'])
@@ -97,18 +100,49 @@ def beam_spectrum(data, mapping, cal, source):
     good = good & np.isfinite(weights).all(axis=0)
     if np.count_nonzero(good) < 2:
         raise HTTPException(409, 'Calibration has fewer than two usable channels')
-    # Named direction tracks the source. Do not take abs() of cross-only power:
+    # A supplied alt/az remains fixed throughout the observation. Do not abs():
     # negative values are real measurements, not invalid intensity samples.
+    direction = source if pointing is None else (source, *pointing)
     result = beam_power_vs_time({**data, 'freq_mask': ~good}, mapping,
-                                sources=[source], cal_weights=cal, sign=-1, return_spectrum=True)
+                                sources=[direction], cal_weights=cal, sign=-1, return_spectrum=True)
     full = np.full((len(data['time_unix']), len(freq)), np.nan)
     full[:, good] = result['spectrum'][source]
     return full, good
 
 
+def window_spectrum(settings, reader, mapping, ants, cal, source, pointing, rows, t0, t1):
+    """Stream a four-hour window in bounded native reads, retaining only power."""
+    stamps = sorted({t for row in rows for t in _shard_meta_times(row) if t0 <= t <= t1})
+    if not 3 <= len(stamps) <= 110:
+        raise HTTPException(400, 'Transit requires 3–110 native integrations in the four-hour window')
+    parts, times, used = [], [], {}
+    total_bytes = 0
+    freq = good = None
+    # Balanced groups avoid one/two-sample tails and cap each read at 26 samples.
+    for group in np.array_split(stamps, int(np.ceil(len(stamps)/26))):
+        data, compact, shards, size = native_inputs(reader, mapping, ants, float(group[0]),
+                                                  float(group[-1]), settings, preserve_missing=True)
+        if not np.isfinite(compact.dataframe[['x_m','y_m','z_m']].to_numpy()).all():
+            raise HTTPException(409, 'Dated layout has missing antenna positions')
+        power, mask = beam_spectrum(data, compact, cal, source, pointing=pointing)
+        if freq is not None and (not np.array_equal(freq, data['freq_mhz']) or not np.array_equal(good, mask)):
+            raise HTTPException(409, 'Native channel axis or calibration mask changed across the window')
+        freq, good = np.asarray(data['freq_mhz']), mask
+        parts.append(power)
+        times.append(np.asarray(data['time_unix']))
+        total_bytes += size
+        used.update((r['id'],r) for r in shards)
+        del data, compact
+    times = np.concatenate(times)
+    if np.any(np.diff(times) <= 0):
+        raise HTTPException(409, 'Overlapping native integrations across transit chunks')
+    return np.concatenate(parts), good, times, freq, list(used.values()), total_bytes
+
+
 def snapshot(settings, reader, source: str, day: str, calibration_id: str) -> dict:
     from bf_weights_generator import load_calibration_weights
     from casm_io.correlator.mapping import AntennaMapping
+    from casm_vis_analysis.sources import source_altaz
     peak = transit_time(source, day)
     # Only allow the current catalogue, never user-supplied paths or a quiet
     # fallback to a different calibration after a deployment changes.
@@ -136,28 +170,39 @@ def snapshot(settings, reader, source: str, day: str, calibration_id: str) -> di
         wired = set(mapping.dataframe.loc[mapping.dataframe.functional == 1, 'antenna_id'].astype(int))
         if not 2 <= len(ants) <= 32 or len(set(ants)) != len(ants) or not set(ants) <= wired:
             raise HTTPException(409, 'All calibration antennas must be distinct and wired in the dated layout; no silent subset')
-        data, compact, used, read_bytes = native_inputs(reader, mapping, ants, t0, t1, settings, preserve_missing=True)
-        if not np.isfinite(compact.dataframe[['x_m','y_m','z_m']].to_numpy()).all():
-            raise HTTPException(409, 'Dated layout has missing antenna positions')
-        power, good = beam_spectrum(data, compact, cal, source)
+        altitude, azimuth = source_altaz(source, np.array([peak]))
+        pointing = (float(altitude[0]), float(azimuth[0]))
+        power, good, times, freq, used, read_bytes = window_spectrum(
+            settings, reader, mapping, ants, cal, source, pointing, rows, t0, t1)
         if not np.isfinite(power).any():
             raise HTTPException(404, 'No complete calibrated cross-baseline samples for this transit')
-        times, freq = np.asarray(data['time_unix']), np.asarray(data['freq_mhz'])
         preview = block_mean(power, 128)
+        # Same native-channel mean as the maintained beam API, not a mean of
+        # display bins (which can contain different numbers of good channels).
+        # A missing good-channel measurement leaves a gap, not a changed band.
+        broadband = np.mean(power[:, good], axis=1)
         if file_identity(item['path']) != {k:item[k] for k in ('path','size','mtime_ns')} or file_identity(layout['path']) != identity:
             raise HTTPException(409, 'Calibration or layout changed during the read; refresh source history')
         result = dict(source=source, name=SOURCES[source], date=day, transit_unix=peak,
                       t0=float(times[0]), t1=float(times[-1]), freq_mhz=freq.tolist(), integration_s=DT_S,
                       tile=image_tile(preview, times, 'real'), samples=len(times), antenna_ids=ants,
+                      beam_mode='stationary_transit', window_hours=2*HALF_WINDOW/3600,
+                      pointing=dict(alt_deg=pointing[0], az_deg=pointing[1], time_unix=peak),
                       partial=bool(times[0] > t0+DT_S or times[-1] < t1-DT_S),
                       calibration={**item, 'name':Path(item['path']).name},
                       preview=dict(time_unix=times.tolist(), freq_mhz=block_mean(freq,128).tolist(),
                                    cross_power=finite_list(preview)),
-                      details=dict(beam='Source tracking; signed cross-only power, autos excluded',
+                      light_curve=dict(time_unix=times.tolist(), cross_power=finite_list(broadband),
+                                       channels=int(good.sum()),
+                                       freq_range_mhz=[float(freq[good].min()), float(freq[good].max())]),
+                      details=dict(beam='Stationary at the source transit alt/az; signed cross-only power, autos excluded',
                                    units='Calibration-weighted correlator counts, not Jy',
                                    calibration_policy='Current ledger calibration applied to every displayed date, not the calibration deployed on that date',
                                    background='No static or off-source subtraction',
                                    averaging='Calibration and beamforming at native channels, then frequency-only display averaging to 128 bins',
+                                   light_curve='Equal-weight mean over the fixed set of usable native channels; no time smoothing; missing good channels leave null samples',
+                                   pointing='Fixed geometric phasing plus the current calibration; not a replay of uploaded quantized hardware weights',
+                                   window='±2 hours around transit; native reads in groups of at most 26 integrations; no raw archive fallback',
                                    gaps='Missing baselines propagate to missing beam samples; no antenna substitution or file-boundary exclusion',
                                    good_channels=int(good.sum()), native_channels=len(freq), layout={**layout, **identity},
                                    stream=STREAM_FULL, shard_ids=[r['id'] for r in used], selected_read_bytes=read_bytes,

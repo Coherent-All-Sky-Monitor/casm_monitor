@@ -1,0 +1,700 @@
+{
+  "captured_at_utc": "2026-09-25T00:52:01.296303+00:00",
+  "base_url": "http://127.0.0.1:8061",
+  "git_head": "080a2b8ce40899543a9b0e672962cfec309515a2",
+  "working_tree": "M README.md\n M casm_monitor/jobs/kinds.py\n M casm_monitor/web/app.py\n M casm_monitor/web/cal.py\n M casm_monitor/web/source_transits.py\n D casm_monitor/web/static/assets/index-Bsbj1RPl.js\n D casm_monitor/web/static/assets/index-D2f2sY8f.css\n M casm_monitor/web/static/index.html\n M docs/api-commissioning.md\n M docs/api-science.md\n M docs/plan.md\n M frontend/README.md\n M frontend/src/App.tsx\n M frontend/src/components/DiagnosticNav.tsx\n M frontend/src/components/Header.tsx\n M frontend/src/components/SourceTransitHistory.tsx\n M frontend/src/pages/SourceHistoryPage.tsx\n M frontend/src/source-history.css\n M scripts/check_source_transits_browser.py\n M scripts/check_source_transits_science.py\n M scripts/check_workspace_browser.py\n M tests/test_cal.py\n M tests/test_source_transits.py\n M tests/test_workspace_security.py\n?? casm_monitor/jobs/calibration_workspace.py\n?? casm_monitor/web/calibration_workspace.py\n?? casm_monitor/web/static/assets/casm-telescope-DDkJN3jN.jpg\n?? casm_monitor/web/static/assets/index-AFeeY5Et.css\n?? casm_monitor/web/static/assets/index-CG3RgUSx.js\n?? deploy/systemd/casm-monitor-calibration.service\n?? docs/calibration-workflow-design.md\n?? docs/calibration-workspace.md\n?? docs/resources-and-storage.md\n?? docs/screenshots/2026-09-24/\n?? frontend/src/calibration.css\n?? frontend/src/components/BeamLightCurve.tsx\n?? frontend/src/pages/CalibrationWorkspacePage.tsx\n?? scripts/capture_monitor_docs.py\n?? scripts/check_calibration_browser.py\n?? scripts/check_calibration_reference.py\n?? scripts/check_calibration_science.py\n?? tests/test_calibration_workspace.py",
+  "logical_cpus": 96,
+  "services": {
+    "casm-monitor-preview": {
+      "MainPID": "1288409",
+      "ControlGroup": "/user.slice/user-1000.slice/user@1000.service/app.slice/casm-monitor-preview.service",
+      "CPUQuotaPerSecUSec": "infinity",
+      "MemoryMax": "4294967296"
+    },
+    "casm-monitor-web": {
+      "MainPID": "3573014",
+      "ControlGroup": "/user.slice/user-1000.slice/user@1000.service/app.slice/casm-monitor-web.service",
+      "CPUQuotaPerSecUSec": "infinity",
+      "MemoryMax": "4294967296"
+    },
+    "casm-monitor-collect": {
+      "MainPID": "3573148",
+      "ControlGroup": "/user.slice/user-1000.slice/user@1000.service/app.slice/casm-monitor-collect.service",
+      "CPUQuotaPerSecUSec": "infinity",
+      "MemoryMax": "8589934592"
+    },
+    "casm-monitor-jobs": {
+      "MainPID": "3573239",
+      "ControlGroup": "/user.slice/user-1000.slice/user@1000.service/app.slice/casm-monitor-jobs.service",
+      "CPUQuotaPerSecUSec": "16s",
+      "MemoryMax": "274877906944"
+    },
+    "casm-monitor-calibration": {
+      "MainPID": "2555899",
+      "ControlGroup": "/user.slice/user-1000.slice/user@1000.service/app.slice/casm-monitor-calibration.service",
+      "CPUQuotaPerSecUSec": "4s",
+      "MemoryMax": "68719476736"
+    }
+  },
+  "phases": [
+    {
+      "name": "20s without this audit browser (other clients may be active)",
+      "wall_seconds": 20.000833737198263,
+      "services": {
+        "casm-monitor-preview": {
+          "before": {
+            "cpu_usec": 320365124,
+            "cgroup_bytes": 3194793984,
+            "anon_bytes": 607535104,
+            "file_bytes": 2544099328,
+            "rss_bytes": 677335040,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 320404428,
+            "cgroup_bytes": 3194793984,
+            "anon_bytes": 607535104,
+            "file_bytes": 2544099328,
+            "rss_bytes": 677335040,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 0.19651180803978696,
+          "sampled_peak_cgroup_bytes": 3194793984,
+          "sampled_peak_rss_bytes": 677335040
+        },
+        "casm-monitor-web": {
+          "before": {
+            "cpu_usec": 3213956558,
+            "cgroup_bytes": 318898176,
+            "anon_bytes": 296267776,
+            "file_bytes": 15761408,
+            "rss_bytes": 335265792,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 3213999284,
+            "cgroup_bytes": 318898176,
+            "anon_bytes": 296267776,
+            "file_bytes": 15761408,
+            "rss_bytes": 335265792,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 0.21362109480734626,
+          "sampled_peak_cgroup_bytes": 318898176,
+          "sampled_peak_rss_bytes": 335265792
+        },
+        "casm-monitor-collect": {
+          "before": {
+            "cpu_usec": 238146646705,
+            "cgroup_bytes": 8573247488,
+            "anon_bytes": 1211101184,
+            "file_bytes": 5536661504,
+            "rss_bytes": 1218142208,
+            "swap_bytes": 93700096
+          },
+          "after": {
+            "cpu_usec": 238149489465,
+            "cgroup_bytes": 8573235200,
+            "anon_bytes": 1211101184,
+            "file_bytes": 5536661504,
+            "rss_bytes": 1218142208,
+            "swap_bytes": 93700096
+          },
+          "mean_cpu_percent": 14.213207496010197,
+          "sampled_peak_cgroup_bytes": 8574083072,
+          "sampled_peak_rss_bytes": 1218142208
+        },
+        "casm-monitor-jobs": {
+          "before": {
+            "cpu_usec": 934987112075,
+            "cgroup_bytes": 70049775616,
+            "anon_bytes": 2175156224,
+            "file_bytes": 67576348672,
+            "rss_bytes": 40738816,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 935007164937,
+            "cgroup_bytes": 70049574912,
+            "anon_bytes": 2175156224,
+            "file_bytes": 67576344576,
+            "rss_bytes": 40738816,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 100.26013046998622,
+          "sampled_peak_cgroup_bytes": 70049845248,
+          "sampled_peak_rss_bytes": 40738816
+        },
+        "casm-monitor-calibration": {
+          "before": {
+            "cpu_usec": 1012194117,
+            "cgroup_bytes": 37481680896,
+            "anon_bytes": 29073408,
+            "file_bytes": 37442932736,
+            "rss_bytes": 49496064,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 1012195763,
+            "cgroup_bytes": 37481680896,
+            "anon_bytes": 29073408,
+            "file_bytes": 37442932736,
+            "rss_bytes": 49496064,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 0.008229656931444366,
+          "sampled_peak_cgroup_bytes": 37481680896,
+          "sampled_peak_rss_bytes": 49496064
+        }
+      }
+    },
+    {
+      "name": "Overview rolling 24h",
+      "wall_seconds": 21.794634359888732,
+      "services": {
+        "casm-monitor-preview": {
+          "before": {
+            "cpu_usec": 320404947,
+            "cgroup_bytes": 3194793984,
+            "anon_bytes": 607535104,
+            "file_bytes": 2544099328,
+            "rss_bytes": 677335040,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 330382588,
+            "cgroup_bytes": 3231453184,
+            "anon_bytes": 641568768,
+            "file_bytes": 2546278400,
+            "rss_bytes": 711344128,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 45.780263321889194,
+          "sampled_peak_cgroup_bytes": 3232202752,
+          "sampled_peak_rss_bytes": 711344128
+        },
+        "casm-monitor-web": {
+          "before": {
+            "cpu_usec": 3214000576,
+            "cgroup_bytes": 318898176,
+            "anon_bytes": 296267776,
+            "file_bytes": 15761408,
+            "rss_bytes": 335265792,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 3214045192,
+            "cgroup_bytes": 318898176,
+            "anon_bytes": 296267776,
+            "file_bytes": 15761408,
+            "rss_bytes": 335265792,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 0.2047109360187852,
+          "sampled_peak_cgroup_bytes": 318898176,
+          "sampled_peak_rss_bytes": 335265792
+        },
+        "casm-monitor-collect": {
+          "before": {
+            "cpu_usec": 238150048455,
+            "cgroup_bytes": 8573235200,
+            "anon_bytes": 1211101184,
+            "file_bytes": 5536661504,
+            "rss_bytes": 1218142208,
+            "swap_bytes": 93700096
+          },
+          "after": {
+            "cpu_usec": 238152959858,
+            "cgroup_bytes": 8573235200,
+            "anon_bytes": 1211101184,
+            "file_bytes": 5536661504,
+            "rss_bytes": 1218142208,
+            "swap_bytes": 93700096
+          },
+          "mean_cpu_percent": 13.358347526849096,
+          "sampled_peak_cgroup_bytes": 8573874176,
+          "sampled_peak_rss_bytes": 1218142208
+        },
+        "casm-monitor-jobs": {
+          "before": {
+            "cpu_usec": 935007724956,
+            "cgroup_bytes": 70049574912,
+            "anon_bytes": 2175156224,
+            "file_bytes": 67576344576,
+            "rss_bytes": 40738816,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 935053955146,
+            "cgroup_bytes": 70272040960,
+            "anon_bytes": 2362429440,
+            "file_bytes": 67574280192,
+            "rss_bytes": 40738816,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 212.11730023368932,
+          "sampled_peak_cgroup_bytes": 70272122880,
+          "sampled_peak_rss_bytes": 40738816
+        },
+        "casm-monitor-calibration": {
+          "before": {
+            "cpu_usec": 1012195763,
+            "cgroup_bytes": 37481680896,
+            "anon_bytes": 29073408,
+            "file_bytes": 37442932736,
+            "rss_bytes": 49496064,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 1012197620,
+            "cgroup_bytes": 37481680896,
+            "anon_bytes": 29073408,
+            "file_bytes": 37442932736,
+            "rss_bytes": 49496064,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 0.00852044576355756,
+          "sampled_peak_cgroup_bytes": 37481680896,
+          "sampled_peak_rss_bytes": 49496064
+        }
+      }
+    },
+    {
+      "name": "Visibilities autos then cross dynamic spectra",
+      "wall_seconds": 2.4045352870598435,
+      "services": {
+        "casm-monitor-preview": {
+          "before": {
+            "cpu_usec": 330382588,
+            "cgroup_bytes": 3231453184,
+            "anon_bytes": 641568768,
+            "file_bytes": 2546278400,
+            "rss_bytes": 711344128,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 330514373,
+            "cgroup_bytes": 3231129600,
+            "anon_bytes": 641531904,
+            "file_bytes": 2546278400,
+            "rss_bytes": 711344128,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 5.480684800477214,
+          "sampled_peak_cgroup_bytes": 3231453184,
+          "sampled_peak_rss_bytes": 711344128
+        },
+        "casm-monitor-web": {
+          "before": {
+            "cpu_usec": 3214045192,
+            "cgroup_bytes": 318898176,
+            "anon_bytes": 296267776,
+            "file_bytes": 15761408,
+            "rss_bytes": 335265792,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 3214050282,
+            "cgroup_bytes": 318898176,
+            "anon_bytes": 296267776,
+            "file_bytes": 15761408,
+            "rss_bytes": 335265792,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 0.21168331475076088,
+          "sampled_peak_cgroup_bytes": 318898176,
+          "sampled_peak_rss_bytes": 335265792
+        },
+        "casm-monitor-collect": {
+          "before": {
+            "cpu_usec": 238152959858,
+            "cgroup_bytes": 8573235200,
+            "anon_bytes": 1211101184,
+            "file_bytes": 5536661504,
+            "rss_bytes": 1218142208,
+            "swap_bytes": 93700096
+          },
+          "after": {
+            "cpu_usec": 238153120856,
+            "cgroup_bytes": 8573263872,
+            "anon_bytes": 1211101184,
+            "file_bytes": 5536661504,
+            "rss_bytes": 1218142208,
+            "swap_bytes": 93700096
+          },
+          "mean_cpu_percent": 6.695597310067387,
+          "sampled_peak_cgroup_bytes": 8573517824,
+          "sampled_peak_rss_bytes": 1218142208
+        },
+        "casm-monitor-jobs": {
+          "before": {
+            "cpu_usec": 935053987156,
+            "cgroup_bytes": 70272040960,
+            "anon_bytes": 2362429440,
+            "file_bytes": 67574280192,
+            "rss_bytes": 40738816,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 935073228366,
+            "cgroup_bytes": 70271926272,
+            "anon_bytes": 2362429440,
+            "file_bytes": 67574317056,
+            "rss_bytes": 40738816,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 800.2049337162058,
+          "sampled_peak_cgroup_bytes": 70272040960,
+          "sampled_peak_rss_bytes": 40738816
+        },
+        "casm-monitor-calibration": {
+          "before": {
+            "cpu_usec": 1012197620,
+            "cgroup_bytes": 37481680896,
+            "anon_bytes": 29073408,
+            "file_bytes": 37442932736,
+            "rss_bytes": 49496064,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 1012197776,
+            "cgroup_bytes": 37481680896,
+            "anon_bytes": 29073408,
+            "file_bytes": 37442932736,
+            "rss_bytes": 49496064,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 0.00648774009845161,
+          "sampled_peak_cgroup_bytes": 37481680896,
+          "sampled_peak_rss_bytes": 49496064
+        }
+      }
+    },
+    {
+      "name": "Search T1 rolling 24h",
+      "wall_seconds": 2.795030761975795,
+      "services": {
+        "casm-monitor-preview": {
+          "before": {
+            "cpu_usec": 330514373,
+            "cgroup_bytes": 3231129600,
+            "anon_bytes": 641531904,
+            "file_bytes": 2546278400,
+            "rss_bytes": 711344128,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 332187671,
+            "cgroup_bytes": 3247550464,
+            "anon_bytes": 657375232,
+            "file_bytes": 2546634752,
+            "rss_bytes": 727220224,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 59.86689029558848,
+          "sampled_peak_cgroup_bytes": 3247710208,
+          "sampled_peak_rss_bytes": 727220224
+        },
+        "casm-monitor-web": {
+          "before": {
+            "cpu_usec": 3214050282,
+            "cgroup_bytes": 318898176,
+            "anon_bytes": 296267776,
+            "file_bytes": 15761408,
+            "rss_bytes": 335265792,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 3214056549,
+            "cgroup_bytes": 318898176,
+            "anon_bytes": 296267776,
+            "file_bytes": 15761408,
+            "rss_bytes": 335265792,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 0.22421935691218958,
+          "sampled_peak_cgroup_bytes": 318898176,
+          "sampled_peak_rss_bytes": 335265792
+        },
+        "casm-monitor-collect": {
+          "before": {
+            "cpu_usec": 238153120856,
+            "cgroup_bytes": 8573263872,
+            "anon_bytes": 1211101184,
+            "file_bytes": 5536661504,
+            "rss_bytes": 1218142208,
+            "swap_bytes": 93700096
+          },
+          "after": {
+            "cpu_usec": 238153129758,
+            "cgroup_bytes": 8573255680,
+            "anon_bytes": 1211101184,
+            "file_bytes": 5536661504,
+            "rss_bytes": 1218142208,
+            "swap_bytes": 93700096
+          },
+          "mean_cpu_percent": 0.31849381127051407,
+          "sampled_peak_cgroup_bytes": 8573509632,
+          "sampled_peak_rss_bytes": 1218142208
+        },
+        "casm-monitor-jobs": {
+          "before": {
+            "cpu_usec": 935073244367,
+            "cgroup_bytes": 70271926272,
+            "anon_bytes": 2362429440,
+            "file_bytes": 67574317056,
+            "rss_bytes": 40738816,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 935095613144,
+            "cgroup_bytes": 70271676416,
+            "anon_bytes": 2362429440,
+            "file_bytes": 67574325248,
+            "rss_bytes": 40738816,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 800.3052168265801,
+          "sampled_peak_cgroup_bytes": 70271926272,
+          "sampled_peak_rss_bytes": 40738816
+        },
+        "casm-monitor-calibration": {
+          "before": {
+            "cpu_usec": 1012197776,
+            "cgroup_bytes": 37481680896,
+            "anon_bytes": 29073408,
+            "file_bytes": 37442932736,
+            "rss_bytes": 49496064,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 1012198109,
+            "cgroup_bytes": 37481680896,
+            "anon_bytes": 29073408,
+            "file_bytes": 37442932736,
+            "rss_bytes": 49496064,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 0.011914001252873644,
+          "sampled_peak_cgroup_bytes": 37481680896,
+          "sampled_peak_rss_bytes": 49496064
+        }
+      }
+    },
+    {
+      "name": "Source history five selectors",
+      "wall_seconds": 3.945795306004584,
+      "services": {
+        "casm-monitor-preview": {
+          "before": {
+            "cpu_usec": 332187671,
+            "cgroup_bytes": 3247550464,
+            "anon_bytes": 657547264,
+            "file_bytes": 2546634752,
+            "rss_bytes": 727220224,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 333319629,
+            "cgroup_bytes": 3247861760,
+            "anon_bytes": 657743872,
+            "file_bytes": 2546634752,
+            "rss_bytes": 727220224,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 28.687702027457505,
+          "sampled_peak_cgroup_bytes": 3248398336,
+          "sampled_peak_rss_bytes": 727220224
+        },
+        "casm-monitor-web": {
+          "before": {
+            "cpu_usec": 3214056549,
+            "cgroup_bytes": 318898176,
+            "anon_bytes": 296267776,
+            "file_bytes": 15761408,
+            "rss_bytes": 335265792,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 3214066013,
+            "cgroup_bytes": 318898176,
+            "anon_bytes": 296267776,
+            "file_bytes": 15761408,
+            "rss_bytes": 335265792,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 0.23985025238379676,
+          "sampled_peak_cgroup_bytes": 318898176,
+          "sampled_peak_rss_bytes": 335265792
+        },
+        "casm-monitor-collect": {
+          "before": {
+            "cpu_usec": 238153129758,
+            "cgroup_bytes": 8573255680,
+            "anon_bytes": 1211101184,
+            "file_bytes": 5536661504,
+            "rss_bytes": 1218142208,
+            "swap_bytes": 93700096
+          },
+          "after": {
+            "cpu_usec": 238154221443,
+            "cgroup_bytes": 8573255680,
+            "anon_bytes": 1211101184,
+            "file_bytes": 5536661504,
+            "rss_bytes": 1218142208,
+            "swap_bytes": 93700096
+          },
+          "mean_cpu_percent": 27.66704593973005,
+          "sampled_peak_cgroup_bytes": 8573259776,
+          "sampled_peak_rss_bytes": 1218142208
+        },
+        "casm-monitor-jobs": {
+          "before": {
+            "cpu_usec": 935095644670,
+            "cgroup_bytes": 70271672320,
+            "anon_bytes": 2362429440,
+            "file_bytes": 67574325248,
+            "rss_bytes": 40738816,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 935127220856,
+            "cgroup_bytes": 78182281216,
+            "anon_bytes": 10329104384,
+            "file_bytes": 67574349824,
+            "rss_bytes": 40738816,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 800.2489625335703,
+          "sampled_peak_cgroup_bytes": 93538410496,
+          "sampled_peak_rss_bytes": 40738816
+        },
+        "casm-monitor-calibration": {
+          "before": {
+            "cpu_usec": 1012198109,
+            "cgroup_bytes": 37481680896,
+            "anon_bytes": 29073408,
+            "file_bytes": 37442932736,
+            "rss_bytes": 49496064,
+            "swap_bytes": 0
+          },
+          "after": {
+            "cpu_usec": 1012198465,
+            "cgroup_bytes": 37481680896,
+            "anon_bytes": 29073408,
+            "file_bytes": 37442932736,
+            "rss_bytes": 49496064,
+            "swap_bytes": 0
+          },
+          "mean_cpu_percent": 0.009022262240979675,
+          "sampled_peak_cgroup_bytes": 37481680896,
+          "sampled_peak_rss_bytes": 49496064
+        }
+      }
+    }
+  ],
+  "screenshots": [
+    {
+      "file": "overview.png",
+      "url": "http://127.0.0.1:8061/observation",
+      "captured_at_utc": "2026-09-25T00:52:43.659441+00:00",
+      "sha256": "da43f1c3b74abcd1f38eadae55ead10aba3626d700879563be8f627db8294bce",
+      "viewport": {
+        "width": 1500,
+        "height": 1100
+      },
+      "full_page": true
+    },
+    {
+      "file": "visibilities-autos.png",
+      "url": "http://127.0.0.1:8061/vis",
+      "captured_at_utc": "2026-09-25T00:52:44.720976+00:00",
+      "sha256": "b1af4290dfc938a4761fbe9acc4dcbc3baceb1cced3ca7b12f13a23f65526601",
+      "viewport": {
+        "width": 1500,
+        "height": 1100
+      },
+      "full_page": true
+    },
+    {
+      "file": "visibilities-crosses.png",
+      "url": "http://127.0.0.1:8061/vis",
+      "captured_at_utc": "2026-09-25T00:52:46.069612+00:00",
+      "sha256": "2dc9be8a57d2cd2d08127835d3c15be03360dc9746572371318651d834e349d6",
+      "viewport": {
+        "width": 1500,
+        "height": 1100
+      },
+      "full_page": true
+    },
+    {
+      "file": "search.png",
+      "url": "http://127.0.0.1:8061/search",
+      "captured_at_utc": "2026-09-25T00:52:48.868192+00:00",
+      "sha256": "312129912affa60372227640781782d57847c07b5f530d159c523aaf48c538ef",
+      "viewport": {
+        "width": 1500,
+        "height": 1100
+      },
+      "full_page": true
+    },
+    {
+      "file": "sources-b0329.png",
+      "url": "http://127.0.0.1:8061/sources",
+      "captured_at_utc": "2026-09-25T00:52:49.605718+00:00",
+      "sha256": "f7ab26395cba43575babc0e042ce2990c0930fc56d250c932bfc3171de6004dc",
+      "viewport": {
+        "width": 1500,
+        "height": 1100
+      },
+      "full_page": false
+    },
+    {
+      "file": "sources-sun.png",
+      "url": "http://127.0.0.1:8061/sources",
+      "captured_at_utc": "2026-09-25T00:52:50.462184+00:00",
+      "sha256": "fd330a3894294da5ce099957002036673a9d3f7197f0574c4298fdbcd8d26cca",
+      "viewport": {
+        "width": 1500,
+        "height": 1100
+      },
+      "full_page": true
+    },
+    {
+      "file": "sources-cyg-a.png",
+      "url": "http://127.0.0.1:8061/sources",
+      "captured_at_utc": "2026-09-25T00:52:51.257231+00:00",
+      "sha256": "5ba17186a120fd3e20dd2cb4f904a2506cef5a2ef2101df375a5e44d26c2e330",
+      "viewport": {
+        "width": 1500,
+        "height": 1100
+      },
+      "full_page": true
+    },
+    {
+      "file": "sources-cas-a.png",
+      "url": "http://127.0.0.1:8061/sources",
+      "captured_at_utc": "2026-09-25T00:52:52.059527+00:00",
+      "sha256": "1a3f08dd1e049f16f554966ba3e8beb096720fc79bf08eeb9ea641d8c5c6515c",
+      "viewport": {
+        "width": 1500,
+        "height": 1100
+      },
+      "full_page": true
+    },
+    {
+      "file": "sources-tau-a.png",
+      "url": "http://127.0.0.1:8061/sources",
+      "captured_at_utc": "2026-09-25T00:52:52.821555+00:00",
+      "sha256": "42082e0fcd0dc8051f232a96a7d31a57e84dc1676fb833da386670baf0c30b87",
+      "viewport": {
+        "width": 1500,
+        "height": 1100
+      },
+      "full_page": true
+    }
+  ],
+  "method": "Live shared preview, not isolated; CPU percent is one core=100%. Memory sampled every second. Browser is separate from web cgroup. No mocked responses.",
+  "disk_usage_bytes": "53911552\t/home/casm/scratch/casm-observation-preview/t1_products\n806912\t/home/casm/scratch/casm-observation-preview/snap_views\n959156224\t/home/casm/scratch/casm-observation-preview/science\n21315584\t/home/casm/scratch/casm-observation-preview/screenshots\n490450944\t/home/casm/scratch/casm-observation-preview/calibration\n1652457472\t/home/casm/scratch/casm-observation-preview",
+  "filesystems": "Filesystem         1B-blocks          Used     Available Use% Mounted on\n/dev/nvme2n1p2 7618652209152 3790872612864 3443744247808  53% /\n/dev/nvme3n1p1 7619772022784 3082693750784 4152986509312  43% /mnt/nvme3\n/dev/nvme4n1p1 7619772022784 6957609455616  278070804480  97% /mnt/nvme5"
+}

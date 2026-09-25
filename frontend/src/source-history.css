@@ -13,7 +13,20 @@
 .history-result-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
 .history-result-heading .history-caption { margin: 0; }
 .history-result-heading label { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
-.source-shortcuts { display: flex; gap: 8px; flex-wrap: wrap; }
+.source-history-page .source-selector { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 4px; padding: 5px; max-width: 740px; border: 1px solid #344255; border-radius: 10px; background: #141d29; margin-bottom: 14px; }
+.source-history-page .source-selector button { min-width: 0; min-height: 44px; padding: 8px 4px; background: transparent; border: 1px solid transparent; color: #aebed1; font-weight: 600; }
+.source-history-page .source-selector button[aria-pressed="true"] { background: #456a9a; color: #fff; border-color: #88a9d3; box-shadow: 0 2px 5px #0004; }
+.source-history-page .source-selector button:hover { border-color: #88a9d3; color: #fff; }
+.beam-light-curve { background: #fff; color: #17212d; border-top: 1px solid #dde1e7; padding: 12px 0 4px; }
+.beam-light-curve > p { margin: 0 16px 4px; font-size: 12px; }
+.beam-light-curve svg { display: block; width: 100%; height: auto; font-family: Arial,sans-serif; }
+.beam-light-curve text { fill: #27313c; font-size: 11px; }
+.beam-light-curve .curve-axis { stroke: #27313c; stroke-width: 1; }
+.beam-light-curve .curve-guide { stroke: #e5e7eb; stroke-width: 1; }
+.beam-light-curve .curve-trace { fill: none; stroke: #315f9c; stroke-width: 1.8; }
+.beam-light-curve .curve-point { fill: #315f9c; }
+.beam-light-curve .curve-transit { stroke: #555; stroke-dasharray: 4 3; }
+.beam-light-curve .curve-readout { min-height: 17px; color: #525e6d; font-size: 11px; text-align: center; }
 .history-cal { font-size: 12px; overflow-wrap: anywhere; }
 .transit-entry header small { color: var(--muted); font-size: 11px; }
 .transit-entry .dynamic-figure { padding-top: 12px; }
