@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query
 from ..collectors.snapread import snap_read_interval_s
 from ..collectors.vis import auto_indices, read_latest_vis
 from ..jobs.snap_read import FS_HZ, PPS_PERIOD_TOL, latest_reads
+from ..observation import inspected_deployment
 from ..store import ShardReader
 from ..store.shards import ensure_contained
 from .snapread import freq_mhz
@@ -154,6 +155,34 @@ def build_router(settings, reader):
     def boards():
         return [b for b in board_table(settings.snap_layout_csv, settings.snap_map_csv)
                 if b['role'] == 'antenna']
+
+    @router.get('/beamforming')
+    def beamforming():
+        """Current recorded CB payload union, mapped to today's board/ADC wiring."""
+        deployment = inspected_deployment(settings, reader.latest_scalars())
+        known = deployment.get('inspection_state') == 'complete'
+        positions = {p['slot']: p['antenna'] for p in deployment.get('positions', [])} if known else {}
+        inputs, unresolved = [], []
+        for board in boards():
+            for inp in board['inputs']:
+                slot, antenna = inp['packet_idx'], inp['antenna']
+                member = None if not known else False
+                if known and slot in positions:
+                    member = True if inp['functional'] and antenna == positions[slot] else None
+                    if member is None:
+                        unresolved.append(slot)
+                inputs.append(dict(ip=board['ip'], adc=inp['adc'], antenna=antenna,
+                                   packet_idx=slot, beamforming=member))
+        mapped = {i['packet_idx'] for i in inputs if i['beamforming'] is True}
+        unresolved = sorted(set(unresolved) | (set(positions) - mapped))
+        return dict(status='complete' if known and not unresolved else 'unknown',
+                    product_id=deployment.get('product_id'), path=deployment.get('path'),
+                    live_event_utc=deployment.get('live_event_utc'),
+                    inspected_at=deployment.get('inspected_at'),
+                    evidence=deployment.get('evidence'), inputs=inputs,
+                    beam_count=len(deployment.get('beams', [])), unresolved_slots=unresolved,
+                    note='Union of nonzero coherent-beam weights across all beams/channels/polarizations. '
+                         'Latest recorded deployment, not a new runtime readback. Current wiring, including in history.')
 
     @router.get('/health')
     def health():

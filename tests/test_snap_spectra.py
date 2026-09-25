@@ -21,7 +21,8 @@ def fixture(tmp_path, monkeypatch):
                       '19,0,6,6,1,N11,E2,1\n')
     mapping = tmp_path / 'map.csv'
     mapping.write_text(f'chassis,slot,feng_id,snap_ip\n1,A,0,{IP}\n')
-    settings = Settings(store_root=tmp_path/'store', snap_map_csv=mapping, snap_layout_csv=layout)
+    settings = Settings(store_root=tmp_path/'store', snap_map_csv=mapping, snap_layout_csv=layout,
+                        registry_dir=tmp_path/'registry', observation_cache_root=tmp_path/'preview')
     store = Store(settings.db_path, store_root=settings.store_root)
     shards = ShardWriter(store)
     monkeypatch.setattr(module.time, 'time', lambda: NOW)
@@ -34,6 +35,49 @@ def fixture(tmp_path, monkeypatch):
         yield client, store, shards, settings
     readonly.close()
     store.close()
+
+
+def test_beamforming_unknown_never_uses_layout_intent(fixture):
+    client, _, _, _ = fixture
+    result = client.get('/api/snap-workspace/beamforming').json()
+    assert result['status'] == 'unknown'
+    assert all(i['beamforming'] is None for i in result['inputs'])
+
+
+def test_beamforming_cached_payload_identity_and_wiring(fixture, monkeypatch):
+    import h5py
+    from casm_monitor.observation import file_identity
+    client, store, _, settings = fixture
+    product = settings.observation_cache_root / 'payload.h5'
+    product.parent.mkdir()
+    product.write_bytes(b'Only a stat is needed by GET')
+    products = settings.registry_dir / 'products'
+    products.mkdir(parents=True)
+    (products/'test.json').write_text(json.dumps({'h5_path':str(product)}))
+    (settings.registry_dir/'live_events.jsonl').write_text('\n'.join(
+        json.dumps({'stream':s,'product_id':'test','utc':'2026-09-25T00:00:00Z'}) for s in range(6)))
+    store.put_scalar('weights.product_id', 'test')
+    store.put_scalar('weights.product_source', 'live_event')
+    cache = dict(product_id='test', path=str(product), identity=file_identity(product),
+                 inspection_state='complete', antennas=[19], beams=[dict(beam=0,antennas=[19])],
+                 positions=[dict(antenna=19,slot=6)])
+    target = settings.observation_cache_root/'membership.json'
+    target.write_text(json.dumps(cache))
+    def forbidden(*_, **__):
+        raise AssertionError('GET must not open weights payload')
+    monkeypatch.setattr(h5py, 'File', forbidden)
+    result = client.get('/api/snap-workspace/beamforming').json()
+    assert result['status'] == 'complete'
+    assert [i['adc'] for i in result['inputs'] if i['beamforming']] == [6]
+    cache['positions'][0]['antenna'] = 99  # Rewired slot cannot borrow old membership.
+    target.write_text(json.dumps(cache))
+    result = client.get('/api/snap-workspace/beamforming').json()
+    assert result['status'] == 'unknown' and result['unresolved_slots'] == [6]
+    assert result['inputs'][6]['beamforming'] is None
+    product.write_bytes(b'Changed payload invalidates cache')
+    result = client.get('/api/snap-workspace/beamforming').json()
+    assert result['status'] == 'unknown'
+    assert all(i['beamforming'] is None for i in result['inputs'])
 
 
 def save(shards, ts=NOW-100, values=None, epoch='e1', ip=IP):

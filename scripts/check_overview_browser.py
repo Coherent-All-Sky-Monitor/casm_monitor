@@ -80,8 +80,9 @@ def main():
         counts=records['/api/observation/injections']['counts']
         assert page.locator('.recovery-summary > strong').inner_text()==f"{counts['recovered']} / {counts['completed_fired']}"
         assert page.locator('.injection-timeline [role=button]').count()==len(records['/api/observation/injections']['trials'])
-        assert page.locator('.overview-map button.inspected').count()==len(records['/api/science/catalog']['inspection_inputs'])
-        page.locator('.overview-map button.inspected').first.click()
+        members=[p for p in records['/api/observation']['layout']['points'] if p['deployed'] is True]
+        assert page.locator('.overview-map button.beamforming').count()==len(members)
+        page.locator('.overview-map button.beamforming').first.click()
         assert 'SNAP' in page.locator('.overview-antenna-detail').inner_text()
         assert not page.locator('.overview-history').evaluate('(e)=>e.open')
         assert '0–1000' not in page.locator('main').inner_text()

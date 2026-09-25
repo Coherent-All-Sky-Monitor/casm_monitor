@@ -63,8 +63,8 @@ def _write_json(path, value):
     os.replace(tmp, path)
 
 
-def render_observation(store, settings, *, now=None):
-    now = time.time() if now is None else now
+def refresh_membership(store, settings):
+    """Inspect recorded weights offline; only write the small membership cache."""
     root = cache_dir(settings)
     root.mkdir(parents=True, exist_ok=True)
     product = recorded_product(settings, store.latest_scalars())
@@ -82,6 +82,13 @@ def render_observation(store, settings, *, now=None):
     except Exception as exc:
         membership = {**product, "inspection_state": "unavailable", "error": str(exc), "beams": [], "antennas": []}
     _write_json(root / "membership.json", membership)
+    return membership
+
+
+def render_observation(store, settings, *, now=None):
+    now = time.time() if now is None else now
+    membership = refresh_membership(store, settings)
+    root = cache_dir(settings)
     try:
         solar = render_solar(store, settings, root, now=now)
         _write_json(root / "solar.json", solar)

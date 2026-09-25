@@ -7,9 +7,11 @@ spectra. Opening the page or browsing history never contacts hardware.
 
 ## Views and scales
 
-- **Compact · SNAP order** is the default, with all currently wired stations.
-  On September 24, 2026, this is 24 stations; it is not the 17-antenna visibility
-  inspection preset or the 16-antenna calibration set.
+- **Compact · SNAP order** defaults to the latest recorded deployed CB weights,
+  inspected across every channel, polarization and beam. September 25's product
+  `7f00805b81f13763` has 16 populated antenna inputs, out of 24 wired inputs.
+  **All wired** and **All 12 ADCs per SNAP** expose the other inputs.
+  The count is data-driven, not the separate Visibilities inspection preset.
 - **Compact · station order** packs panels by plank. **Station grid** preserves
   the six east–west positions, including empty and hidden positions. Entirely
   empty plank rows are compressed. The nearby layout key toggles stations.
@@ -17,7 +19,15 @@ spectra. Opening the page or browsing history never contacts hardware.
   Station arrangements place unwired inputs in their own SNAP-ordered section.
   Relay boards have no antenna spectra and do not receive fabricated panels.
 - Labels show station, antenna, SNAP, slot and ADC from the current layout/map.
+  Status boxes and expandable control-read summaries also show the board IP.
   Historical comparisons follow board IP and ADC, not historical station wiring.
+- Green borders and **Beamforming** badges mark the inspected deployed union,
+  including in all-ADC view. The nearby layout and Overview map show every wired
+  station: green/BF for deployed members, blue for other wired inputs, and × for
+  absent antennas. Hiding a spectrum does not change beamforming membership.
+  History keeps current membership explicitly labelled, not historical membership.
+  Missing/mismatched deployment evidence or changed slot identities give Unknown,
+  not a fallback to `functional` or layout `include_in_beamforming` flags.
 - Spectra retain all native channels with no rebinning or normalization.
   Native channel centres are `500 - k*125/4096` MHz, descending: 500 through
   375.030518 MHz. The shared plot axis runs **374.9–500.1 MHz** left-to-right,
@@ -69,6 +79,23 @@ have nonzero cached visibility data no older than 15 minutes. This is timestampe
 downstream evidence, not a live transmit-counter measurement or antenna-quality
 assessment. Old/missing/zero input data must not turn green.
 
+Beamforming selection uses `/api/snap-workspace/beamforming`, polled every 30 s.
+The cached nonzero-weight inspection must match the product, path and file
+identity associated with all six streams' latest registry events. This is
+recorded deployment evidence, not new runtime payload readback. GETs do not open
+the large weights payload. The existing figure worker refreshes its membership
+cache; an explicit offline preview-only refresh is also available:
+
+```bash
+PYTHONPATH=. /home/casm/software/dev/casm_venvs/casm_offline_env/bin/python \
+  scripts/check_beam_membership.py \
+  --output-root /home/casm/scratch/casm-observation-preview
+```
+
+This reads at most 400 MiB in chunks and writes only a small `membership.json`.
+It does not generate/deploy weights, alter the layout CSV or contact hardware.
+A new unmatched deployment stays Unknown until its payload inspection exists.
+
 PPS period checks use the existing 0.1% tolerance around the board clock.
 Period/count snapshots alone cannot prove cross-board sample alignment or
 continued pulse arrival. The explicit read-only check below records two stable
@@ -114,6 +141,12 @@ read. The PPS-only check is manual, not a new scheduler. Hourly collector
 activation remains a separate rollout. On September 25 02:43:53 UTC, SNAPs 0/2
 matched to zero ticks over advancing PPS; SNAPs 1/3 had unreadable control
 registers. No firmware, EQ, gains, synchronization or observing state changed.
+At 03:01 UTC, direct read-only TFTP packets exposed the actual .51/.73 error:
+**Only one connection at a time is supported**. The Python TFTP library hides
+that message behind “Access violation”. Canonical 0→2→3→1 ping/read order did
+not change the failure. An active owner versus stale firmware session remains
+unresolved; no session was aborted or recovered. Evidence is recorded in
+`casm-wiki/evidence/2026-09-25/snap-monitor-checks.md`.
 
 **Ping now · get spectra** explicitly submits the existing `snap_read` job
 through the protected loopback bridge. It is a diagnostic read, not an ICMP

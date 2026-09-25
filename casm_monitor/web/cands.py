@@ -251,6 +251,22 @@ def _row_to_event(row: dict[str, Any], labels: dict[str, str], outcomes: dict[st
     }
 
 
+def saved_plots(root: Path, name: str) -> list[str]:
+    """Small filename inventory only; never read/render image or trigger metadata."""
+    if not NAME_RE.fullmatch(name):
+        return []
+    root = root.resolve()
+    directory = (root / name).resolve()
+    if not directory.is_relative_to(root):
+        return []
+    try:
+        return sorted(p.name for p in directory.glob('*.png')
+                      if FNAME_RE.fullmatch(p.name) and p.is_file()
+                      and p.resolve().is_relative_to(directory))[:64]
+    except OSError:
+        return []
+
+
 def funnel_dir(settings: Settings) -> Path:
     """``store_root/figures/cands`` -- the job's output, this router's input."""
     return ensure_contained(
@@ -332,6 +348,7 @@ def build_router(settings: Settings) -> APIRouter:
         view: str = "candidates",
         limit: int = Query(default=EVENTS_DEFAULT_LIMIT, ge=1, le=EVENTS_MAX_LIMIT),
         since: str | None = None,
+        include_plots: bool = False,
     ) -> dict[str, Any]:
         _mint_csrf_cookie(request, response)
         where, args = ["name IS NOT NULL"], []
@@ -365,7 +382,11 @@ def build_router(settings: Settings) -> APIRouter:
             )
             labels = latest_labels(rows)
             _actions, outcomes = actions_and_held(rows)
-        return {"events": [_row_to_event(dict(r), labels, outcomes) for r in rows]}
+        result = [_row_to_event(dict(r), labels, outcomes) for r in rows]
+        if include_plots:
+            for item in result:
+                item['plots'] = saved_plots(Path(settings.candidates_dir), item['name'])
+        return {"events": result}
 
     # -- one event ----------------------------------------------------------
     @router.get("/events/{name}")

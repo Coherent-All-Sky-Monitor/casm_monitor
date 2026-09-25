@@ -11,12 +11,16 @@ orders and an upper-triangle pair view. Search (T1) shows stream activity and
 candidate distributions. Source history defaults to B0329 PDMP folds; Sun,
 Cyg A, Cas A and Tau A show fixed-beam transit spectra and power curves.
 SNAPs shows all 4096 board channels in compact SNAP/station layouts, with
-all-12-ADC mode, saved historical overlays and per-input power trends.
+deployed beamforming inputs selected by default, green membership borders,
+all-wired/all-12-ADC modes, saved overlays and per-input power trends.
+Candidates shows a configurable recent-plot grid with a compact right-hand
+selector: click a row to show/hide it, or an image to zoom.
 
 - [Resources, storage paths and retention](docs/resources-and-storage.md)
 - [Visibility views](docs/api-science.md) and [source history](docs/api-commissioning.md#sun-cyg-a-cas-a-and-tau-a-visibility-history)
 - [Frontend build and checks](frontend/README.md)
 - [SNAP spectra, stored history and acquisition status](docs/snap-spectra.md)
+- [Candidate gallery and API](docs/api-cands.md)
 
 ## Run
 
@@ -63,6 +67,11 @@ These updated SNAP captures are September 25 UTC (September 24 OVRO local).
 [Expanded spectrum and drift history](docs/screenshots/2026-09-25/snaps-history-expanded.png).
 [Independent streaming and PPS status](docs/screenshots/2026-09-25/snaps-health.png)
 also appears in the main Overview; unverified alignment is marked Unknown.
+
+September 25 UTC additions: [deployed beamforming layout](docs/screenshots/2026-09-25/overview-beamforming-layout.png)
+and [candidate gallery](docs/screenshots/2026-09-25/candidates-grid.png).
+These captures use recorded weights and real saved candidate PNGs, without
+hardware contact, candidate labelling or production changes.
 
 Source history: B0329 detection dates and saved PDMP folds.
 

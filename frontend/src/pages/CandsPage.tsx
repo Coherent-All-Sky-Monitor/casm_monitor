@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Panel from "../components/Panel";
 import Segmented from "../components/Segmented";
+import { CandidateGallery } from "../components/CandidateGallery";
 import { useUrlParam } from "../lib/useUrlParam";
 import { formatUtcStamp } from "../lib/statusSentence";
 import { eventsSentence, nowSentence, statsSentence } from "../lib/candsText";
@@ -73,14 +74,20 @@ export default function CandsPage() {
 
   // --- events -----------------------------------------------------------
   const [events, setEvents] = useState<CandEventRow[]>([]);
+  const [eventsError,setEventsError]=useState(''),[eventsLoaded,setEventsLoaded]=useState(false);
   useEffect(() => {
     if (section !== "events") return;
     let cancelled = false;
+    let busy = false;
+    setEvents([]);setEventsLoaded(false);setEventsError('');
     function load() {
+      if(busy)return;
+      busy=true;
       api
-        .events({ tier: tier || undefined, tag: label || undefined, view: cview as "candidates" | "all" })
-        .then((r) => !cancelled && setEvents(r.events))
-        .catch(() => undefined);
+        .events({ tier: tier || undefined, tag: label || undefined, view: cview as "candidates" | "all", include_plots:true })
+        .then((r) => {if(!cancelled){setEvents(r.events);setEventsLoaded(true);setEventsError('');}})
+        .catch(() => {if(!cancelled)setEventsError('Candidate refresh failed. Previously loaded events may be stale.');})
+        .finally(()=>{busy=false;});
     }
     load();
     const timer = setInterval(load, REFRESH_MS);
@@ -191,44 +198,9 @@ export default function CandsPage() {
           <p className="note" style={{ marginBottom: "var(--section-gap)" }}>
             {eventsSentence(events)}
           </p>
-          {events.length === 0 ? (
-            <p className="note">No events match this filter.</p>
-          ) : (
-            <table className="events">
-              <thead>
-                <tr>
-                  <th>time UTC</th>
-                  <th>name</th>
-                  <th>SNR</th>
-                  <th>DM</th>
-                  <th>width</th>
-                  <th>beam</th>
-                  <th>tier</th>
-                  <th>tags</th>
-                  <th>label</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.map((e) => (
-                  <tr
-                    key={e.name}
-                    className="clickable"
-                    onClick={() => navigate(`/cands/${e.name}${mockSuffix}`)}
-                  >
-                    <td>{formatUtcStamp(`${e.event_utc}Z`)}</td>
-                    <td className="ink">{e.name}</td>
-                    <td>{e.snr.toFixed(1)}</td>
-                    <td>{e.dm.toFixed(1)}</td>
-                    <td>{e.width}</td>
-                    <td>{e.beam}</td>
-                    <td>{e.tier}</td>
-                    <td>{e.tags.join(", ")}</td>
-                    <td>{e.label ?? (e.outcome ?? "")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          {eventsError&&<p role="status" className="workspace-notice">{eventsError}</p>}
+          {!eventsLoaded&&!eventsError?<p className="note">Loading candidates…</p>:
+            <CandidateGallery key={`${cview}/${tier}/${label}/${useMock}`} events={events} useMock={useMock}/>}
         </div>
       )}
 

@@ -57,7 +57,7 @@ export function mockGetCandEvents(query: CandEventsQuery = {}): Promise<CandEven
   if (query.view !== "all") rows = rows.filter((r) => !r.outcome.startsWith("S/N below"));
   if (query.tier) rows = rows.filter((r) => r.tier === query.tier);
   if (query.tag) rows = rows.filter((r) => r.label === query.tag);
-  return delay({ events: rows });
+  return delay({ events: rows.map(r=>query.include_plots?{...r,plots:r.name===NAMES[0]?[`${r.name}.png`]:[]}:r) });
 }
 
 export function mockGetCandEvent(name: string): Promise<CandEventDetailResponse> {

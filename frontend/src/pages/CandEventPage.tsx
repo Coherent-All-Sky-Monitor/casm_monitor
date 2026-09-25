@@ -4,6 +4,7 @@ import { formatUtcStamp } from "../lib/statusSentence";
 import { candPlotUrl, getCandEvent, postCandLabel } from "../lib/api";
 import { mockCandPlotUrl, mockGetCandEvent, mockPostCandLabel } from "../lib/mockCands";
 import type { CandEventDetailResponse, CandLabel } from "../lib/types";
+import { CandidateImage } from "../components/CandidateGallery";
 
 const POLL_MS = 15_000;
 
@@ -102,7 +103,7 @@ export default function CandEventPage() {
         <section className="cal-section">
           {detail.plots.map((fname) => (
             <div key={fname} className="vis-figure">
-              <img className="vis-figure__img" src={api.plotUrl(name, fname)} alt={fname} loading="lazy" />
+              <CandidateImage key={`${name}/${fname}`} url={api.plotUrl(name, fname)} name={name} filename={fname}/>
             </div>
           ))}
         </section>

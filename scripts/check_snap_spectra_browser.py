@@ -32,10 +32,15 @@ def main():
         page.goto(URL+'/snaps')
         page.locator('.snap-spectrum-card').first.wait_for()
         page.wait_for_timeout(400)
+        membership=page.request.get(URL+'/api/snap-workspace/beamforming').json()
+        assert membership['status']=='complete'
+        members={f"{i['ip']}/{i['adc']}" for i in membership['inputs'] if i['beamforming']}
         initial = page.locator('.snap-spectrum-card').count()
-        assert initial == 24, initial  # Current wiring, not the visibility/cal display preset.
+        assert initial == len(members), initial
+        assert set(page.locator('.snap-spectrum-card').evaluate_all('es=>es.map(e=>e.dataset.inputKey)'))==members
+        assert page.locator('.snap-station-map button.in-beamforming').count()==len(members)
         assert page.get_by_role('button', name='Compact · SNAP order', exact=True).get_attribute('aria-pressed') == 'true'
-        assert page.locator('.snap-spectrum-card').first.inner_text().startswith('N01E1')
+        assert page.locator('.snap-spectrum-card').first.inner_text().startswith('N21E1')
         assert page.locator('.snap-spectrum-card').first.locator('svg').get_attribute('aria-label').endswith('4096 channels')
         assert page.locator('.snap-spectrum-card').first.locator('.snap-trace').get_attribute('d').count('L') == 4095
         assert page.locator('.diagnostic-nav').count() == 0
@@ -43,6 +48,8 @@ def main():
         page.locator('.snap-health-board').first.wait_for()
         assert page.locator('.snap-health-box').count()==8
         assert page.locator('.snap-health-box').filter(has_text='PPS alignment').count()==4
+        assert set(page.locator('.snap-board-ip').all_text_contents())=={i['ip'] for i in membership['inputs']}
+        assert all('192.168.120.' in text for text in page.locator('.snap-board-errors summary').all_text_contents())
         plot=page.locator('.snap-spectrum-card').first.locator('svg')
         assert plot.get_attribute('data-x-min')=='374.9'
         assert plot.get_attribute('data-x-max')=='500.1'
@@ -56,17 +63,21 @@ def main():
         assert float(plot.get_attribute('data-y-min'))==lower-100
         assert page.locator('.snap-spectrum-card').first.locator('.snap-trace').get_attribute('d')==positive_path
         page.get_by_label('Power reference',exact=True).select_option('1e-10')
-        page.screenshot(path=str(OUT/'snaps-latest.png'), full_page=True)
+        page.screenshot(path=str(OUT/'snaps-latest.png'), timeout=60000)
         page.locator('.snap-health-section').screenshot(path=str(OUT/'snaps-health.png'))
         page.locator('.snap-panel-group').first.screenshot(path=str(OUT/'snaps-compact.png'))
         page.get_by_label('All 12 ADCs per SNAP').check()
         assert page.locator('.snap-spectrum-card').count() == 48
+        assert set(page.locator('.snap-spectrum-card.in-beamforming').evaluate_all('es=>es.map(e=>e.dataset.inputKey)'))==members
         assert page.locator('.snap-panel-group').first.locator('.snap-spectrum-card').count() == 12
         page.get_by_role('button', name='Compact · station order', exact=True).click()
         assert page.locator('.snap-spectrum-card').count() == 48
         assert page.locator('.snap-panel-group').first.locator('h3').inner_text() == 'N21'
         page.get_by_label('All 12 ADCs per SNAP').uncheck()
+        assert page.locator('.snap-spectrum-card').count() == initial
+        page.get_by_role('button',name='All wired · 24',exact=True).click()
         assert page.locator('.snap-spectrum-card').count() == 24
+        shared_limits=limits()  # Changing selection scope intentionally refits its shared limits.
         page.get_by_role('button', name='Station grid', exact=True).click()
         assert page.locator('.snap-empty').count() > 0
         page.get_by_role('button', name='Compact · SNAP order', exact=True).click()
@@ -90,7 +101,7 @@ def main():
         page.get_by_label('Overlay first saved snapshot').uncheck()
         page.get_by_role('button',name='Hide SNAP 0 ADC 0',exact=True).click()
         assert page.locator('.snap-spectrum-card').count()==23
-        page.get_by_role('button',name='Show all stations',exact=True).click()
+        page.get_by_role('button',name='Reset selection',exact=True).click()
         assert page.locator('.snap-spectrum-card').count()==24
         for width in [1500,1024,700,390,320]:
             page.set_viewport_size({'width':width,'height':1100})
@@ -115,7 +126,7 @@ def main():
         page.screenshot(path=str(OUT/'overview-snaps-status.png'))
         assert not errors,errors
         browser.close()
-    print(json.dumps({'wired_panels':initial,'all_adcs':48,'history_snapshots':len(opts),
+    print(json.dumps({'beamforming_panels':initial,'wired_panels':24,'all_adcs':48,'history_snapshots':len(opts),
                       'manual_acquisition':'intercepted, no hardware contact','screenshots':str(OUT)}))
 
 

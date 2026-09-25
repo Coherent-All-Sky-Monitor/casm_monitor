@@ -590,6 +590,7 @@ export interface CandEventsQuery {
   view?: CandView;
   limit?: number;
   since?: string;
+  include_plots?: boolean;
 }
 
 export function getCandEvents(query: CandEventsQuery = {}): Promise<CandEventsResponse> {
@@ -599,6 +600,7 @@ export function getCandEvents(query: CandEventsQuery = {}): Promise<CandEventsRe
   if (query.view) params.set("view", query.view);
   if (query.limit !== undefined) params.set("limit", String(query.limit));
   if (query.since) params.set("since", query.since);
+  if (query.include_plots) params.set("include_plots", "true");
   const qs = params.toString();
   return request<CandEventsResponse>(`/api/cands/events${qs ? `?${qs}` : ""}`);
 }

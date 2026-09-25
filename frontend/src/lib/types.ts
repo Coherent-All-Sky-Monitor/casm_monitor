@@ -633,6 +633,7 @@ export interface CandEventRow {
   az_deg: number | null;
   label: CandLabel | null;
   outcome: string | null;
+  plots?: string[];
 }
 
 export interface CandEventsResponse {

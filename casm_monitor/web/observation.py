@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException, Request
 
 from ..collectors.rowmap import read_layout
-from ..observation import cache_dir, file_identity, read_json, recorded_product
+from ..observation import cache_dir, inspected_deployment, read_json
 from ..store.shards import ensure_contained
 from ..util import iso, parse_iso
 from .figures import _png_response
@@ -44,15 +44,8 @@ def build_observation(settings, reader, *, now=None):
         return {"value": row.get("value"), "observed_at": iso(ts),
                 "age_s": max(0, now - ts) if ts is not None else None}
     clock, location = clock_and_location(now)
-    product = recorded_product(settings, latest)
-    cached = read_json(cache_dir(settings) / "membership.json")
-    try:
-        identity_matches = bool(product.get("path")) and file_identity(product["path"]) == cached.get("identity")
-    except OSError:
-        identity_matches = False
-    matching = (product.get("path") and cached.get("product_id") == product.get("product_id")
-                and cached.get("path") == product.get("path") and cached.get("inspection_state") == "complete" and identity_matches)
-    deployment = {**cached, **product} if matching else {**product, "inspection_state": "pending", "beams": [], "antennas": []}
+    deployment = inspected_deployment(settings, latest)
+    matching = deployment.get("inspection_state") == "complete"
     members = set(deployment.get("antennas", [])) if matching else set()
     positions = {p["antenna"]: p for p in deployment.get("positions", [])} if matching else {}
     points = []

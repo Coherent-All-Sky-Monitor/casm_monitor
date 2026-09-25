@@ -50,6 +50,11 @@ status bands. History shares one interval; live cards remain marked Now.
 `/vis` opens the array inspector with the saved antenna set selected;
 `/snaps` opens white full-band spectrum panels in compact SNAP order, with
 station order/grid, all 12 ADCs, historical overlays and expanded power trends.
+Its default and green borders follow inspected nonzero slots in the latest
+recorded deployed CB weights, not layout intent. All wired inputs remain in
+the nearby layout and Overview map. SNAP status/read-details include board IPs.
+`/cands` shows 12 recent saved plots by default (6/12/24/48 selectable), a compact
+searchable right sidebar with show/hide toggles, and the shared image zoom.
 All spectrum panels share 374.9–500.1 MHz and a pinned power scale. The default
 display is dB re 10⁻¹⁰ native power units, with the original reference selectable.
 SNAPs and Overview show independent Streaming/PPS boxes from saved evidence.

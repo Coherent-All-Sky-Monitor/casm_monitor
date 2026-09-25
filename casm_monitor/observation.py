@@ -85,3 +85,20 @@ def file_identity(path):
     p = Path(path).resolve()
     stat = p.stat()
     return {"path": str(p), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def inspected_deployment(settings, latest):
+    """Small cached payload inspection, valid only for the current association."""
+    product = recorded_product(settings, latest)
+    cached = read_json(cache_dir(settings) / "membership.json")
+    try:
+        matching = (bool(product.get("path"))
+                    and cached.get("identity") == file_identity(product["path"])
+                    and cached.get("product_id") == product.get("product_id")
+                    and cached.get("path") == product.get("path")
+                    and cached.get("inspection_state") == "complete"
+                    and not product.get("registry_mismatch"))
+    except OSError:
+        matching = False
+    return ({**cached, **product} if matching else
+            {**product, "inspection_state": "pending", "beams": [], "antennas": []})

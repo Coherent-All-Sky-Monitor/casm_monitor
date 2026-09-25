@@ -23,7 +23,26 @@ through the plot route match `^[A-Za-z0-9_.-]+\.(png|json)$`; anything else,
 or a filename that resolves outside `candidates_dir/<name>/`, is a
 400/404.
 
-## `GET /api/cands/events?tier=&tag=&view=candidates&limit=500&since=`
+## Candidate gallery
+
+The `/cands` Events view shows the latest 12 candidates with saved plots by
+default, with a 6/12/24/48 grid-size selector. A compact, collapsible right-hand
+sidebar lists up to 500 filtered events and searches their names, UTC dates,
+beams, labels and outcomes. Outlined rows marked **Shown** identify the grid.
+Clicking a candidate brings it into the grid, replacing the last card if full;
+clicking one already shown hides it. **Latest N** restores rolling selection.
+Manual selections remain stable while the event list refreshes every 15 seconds.
+Filter or count changes reset to the newest saved plots in that selection.
+
+Cards use original saved PNGs on white backgrounds, without re-rendering data.
+Click any image for the same zoom/pan dialog used elsewhere; Event details
+retains trigger/label information and also supports image zoom. Multiple PNGs
+have a per-card selector. Missing plots remain labelled with their outcome,
+including when selected from the sidebar. No plot is not a non-detection.
+The sidebar moves above the grid on narrow screens; no candidate label/write,
+dump, pipeline or production service action occurs through gallery browsing.
+
+## `GET /api/cands/events?tier=&tag=&view=candidates&limit=500&since=&include_plots=false`
 
 The events table. Mints the `casm_monitor_csrf` cookie if the browser does
 not already hold one (same double-submit scheme as `docs/api-cal.md`'s
@@ -42,6 +61,11 @@ upload route; see `casm_monitor/web/cal.py`).
   these as text and `' ' < 'T'`, so a space-form bound would otherwise select
   the wrong same-day rows. A value that is not a timestamp is a 400.
 - `limit`: 1-5000, default 500.
+- `include_plots=true`: adds `plots`, a sorted list of up to 64 safe PNG
+  filenames per returned event. The gallery opts in. Only file existence/names
+  are inspected, not PNG bytes or trigger JSON. Escaping symlinks are excluded;
+  absent directories return an empty list. The legacy response is unchanged
+  when omitted. Plot availability is bounded by the loaded event list.
 
 ```json
 {

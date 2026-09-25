@@ -17,6 +17,7 @@ export function SnapHealth({data,error}:{data:Json|null;error:string}) {
     {!data&&!error&&<p>Reading saved status…</p>}
     <div className="snap-health-grid">{(data?.boards??[]).map((b:Json)=><article className="snap-health-board" key={b.ip}>
       <h4>SNAP {b.feng_id} <span>SLOT {b.slot}</span></h4>
+      <p className="snap-board-ip">{b.ip}</p>
       <StatusBox title="Streaming" status={error?{state:'unknown',detail:'Status refresh failed'}:b.streaming}/>
       <StatusBox title="PPS alignment" status={error?{state:'unknown',detail:'Status refresh failed'}:b.pps_status}/>
       <p className="snap-control-note">Control: {b.control_status==='ok'?'last read succeeded':b.control_status==='unavailable'?'read unavailable':b.control_status==='partial'?'partial read':'not verified'} · {stamp(b.latest_attempt)}</p>

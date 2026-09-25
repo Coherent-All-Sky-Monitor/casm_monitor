@@ -154,6 +154,20 @@ def test_events_tier_filter(seeded_db: Settings) -> None:
 
 # ---------------------------------------------------------------------------
 # event detail + plots
+
+def test_event_plot_inventory_opt_in_and_containment(seeded_db):
+    event_dir = seeded_db.candidates_dir / NAME_DUMPED
+    other = seeded_db.candidates_dir / NAME_HELD
+    other.mkdir()
+    (other/'private.png').write_bytes(b'not this event')
+    (event_dir/'leak.png').symlink_to(other/'private.png')
+    (event_dir/'bad name.png').write_bytes(b'invalid route name')
+    with TestClient(create_app(seeded_db)) as client:
+        assert 'plots' not in client.get('/api/cands/events').json()['events'][0]
+        rows=client.get('/api/cands/events',params={'view':'all','include_plots':True}).json()['events']
+        by_name={r['name']:r for r in rows}
+        assert by_name[NAME_DUMPED]['plots']==[f'{NAME_DUMPED}.png']
+        assert by_name[NAME_HELD]['plots']==['private.png']
 # ---------------------------------------------------------------------------
 
 

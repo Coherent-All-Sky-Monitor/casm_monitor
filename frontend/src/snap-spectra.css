@@ -17,3 +17,10 @@
 .snap-arrangement .snap-station-map small{font-size:9px;margin-top:1px}
 .snap-arrangement .snap-layout-key p{margin:8px 0 0;font-size:11px}
 @media(max-width:1000px){.snap-arrangement{grid-template-columns:1fr}.snap-arrangement .snap-layout-key{max-width:none}}
+.snap-spectrum-card.in-beamforming{border:3px solid #17824e}
+.snap-spectrum-card .snap-bf-badge{display:inline-block;vertical-align:middle;margin-left:5px;padding:3px 6px;border-radius:4px;background:#dff4e7;color:#12663d;font-size:10px;font-weight:750}
+.snap-station-map button.in-beamforming.shown,.snap-station-map button.in-beamforming.panel-hidden{border:2px solid #52d891;background:#164e36;color:#eafff2}
+.snap-station-map button.panel-hidden{opacity:.55}
+.snap-station-map button:not(.in-beamforming):not(:disabled){background:#264b81;color:#edf4ff;border:1px solid #6e9fdf}
+.snap-map-legend{color:#aab8ce;font-size:11px;line-height:1.6}.snap-map-legend span{color:#8ceab4}
+.snap-membership-evidence{font-size:12px;color:#adbbd0;margin:14px 0;overflow-wrap:anywhere}.snap-membership-evidence summary{cursor:pointer}
