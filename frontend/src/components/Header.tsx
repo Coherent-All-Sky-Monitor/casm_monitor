@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 
 export default function Header() {
   const {pathname}=useLocation();
-  const plots=pathname==='/vis'||pathname==='/snaps';
+  const plots=pathname==='/vis'||pathname==='/snaps'||pathname.startsWith('/cal');
   return (
     <header className={`header${plots?' header--plots':''}`}>
       <div className="header__identity">

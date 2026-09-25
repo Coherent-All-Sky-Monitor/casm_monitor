@@ -1,8 +1,8 @@
 # casm_monitor
 
 Monitoring workspace for the **Coherent All Sky Monitor (CASM)** at
-Owens Valley Radio Observatory, Big Pine, California. The preview runs on corr1
-at `http://localhost:8061`; the separate production monitor remains on 8060.
+Owens Valley Radio Observatory, Big Pine, California. The workspace runs on corr1
+at `http://localhost:8061`.
 Observation pages read existing array data and write local display products.
 
 Rolling 24-hour plots, injection recovery, search activity, visibility spectra,
@@ -15,6 +15,10 @@ Click plots to enlarge and zoom.
 - [Frontend build and checks](frontend/README.md)
 - [SNAP spectra, stored history and acquisition status](docs/snap-spectra.md)
 - [Candidate gallery and API](docs/api-cands.md)
+
+The [Calibration workspace](docs/calibration-workspace.md) provides saved solar
+solves, phase and transit checks, and 512-beam CB/IB generation with an ellipse
+sky view. Upload testing is local dry run only; deployed weights stay unchanged.
 
 ## Run
 

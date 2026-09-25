@@ -189,7 +189,11 @@ Procedure and dated history: `casm-wiki/snap-control-path.md` and
 `casm-wiki/evidence/2026-09-25/snap-control-frequency-followup.md`.
 
 **Ping now · get spectra** explicitly submits the existing `snap_read` job
-through the protected loopback bridge. It is a diagnostic read, not an ICMP
+directly to the existing store after same-origin, CSRF and confirmation checks.
+The fixed 8060 HTTP bridge was removed when that web service was retired on
+September 25. This route alone opens a short-lived production write handle for
+the fixed `snap_read` kind; general operational POSTs remain blocked.
+It is a diagnostic read, not an ICMP
 ping. The existing lease, sequential board reads, timeouts and five-minute
 manual cooldown remain authoritative. No new hardware reader is introduced.
 The getter selects the autocorrelation diagnostic mux and arms its readout.

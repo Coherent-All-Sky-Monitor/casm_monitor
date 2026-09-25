@@ -7,7 +7,7 @@ import SciencePage from "./pages/SciencePage";
 import CalibrationComparisonPage from "./pages/CalibrationComparisonPage";
 import ReviewPage from "./pages/ReviewPage";
 import T1Page from "./pages/T1Page";
-import CommissioningPage from "./pages/CommissioningPage";
+import CalibrationWorkspacePage from "./pages/CalibrationWorkspacePage";
 import SourceHistoryPage from "./pages/SourceHistoryPage";
 import SnapWorkspacePage from "./pages/SnapWorkspacePage";
 import SnapSpectraPage from "./pages/SnapSpectraPage";
@@ -34,10 +34,10 @@ export default function App() {
           <Route path="/search" element={<T1Page />} />
           <Route path="/review" element={<ReviewPage />} />
           <Route path="/sources" element={<SourceHistoryPage />} />
-          <Route path="/cal" element={<CommissioningPage />} />
+          <Route path="/cal" element={<CalibrationWorkspacePage />} />
           <Route path="/cal/compare" element={<CalibrationComparisonPage />} />
           <Route path="/cal/transit" element={<TransitPage />} />
-          <Route path="/cal/:tag" element={<CommissioningPage />} />
+          <Route path="/cal/:tag" element={<CalibrationWorkspacePage />} />
           <Route path="/cands" element={<CandsPage />} />
           <Route path="/cands/:name" element={<CandEventPage />} />
           <Route path="/events" element={<EventsPage />} />

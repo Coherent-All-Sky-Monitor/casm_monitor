@@ -40,6 +40,18 @@ LEDGER_NOTES = (
 )
 
 
+def test_workspace_stage_requires_512_payload_and_pointing_rows(tmp_path):
+    path = write_cb_h5(tmp_path / 'weights.h5')
+    rows = dep._checks(str(path), None, ANTENNAS, expected_beams=512)
+    assert not next(row for row in rows if row['name'] == 'cb_beam_count')['ok']
+    rows = dep._checks(str(path), None, ANTENNAS, expected_beams=4)
+    assert next(row for row in rows if row['name'] == 'cb_beam_count')['ok']
+    with h5py.File(path, 'r+') as handle:
+        handle.attrs['n_beams'] = 512
+    rows = dep._checks(str(path), None, ANTENNAS, expected_beams=512)
+    assert not next(row for row in rows if row['name'] == 'cb_beam_count')['ok']
+
+
 # ---------------------------------------------------------------------------
 # fixtures
 # ---------------------------------------------------------------------------
@@ -883,6 +895,7 @@ def test_generic_job_route_refuses_privileged_kinds(cal_settings: Settings):
     from casm_monitor.jobs.kinds import KINDS
 
     assert {k for k, v in KINDS.items() if v.privileged} == {
+        "calibration_workspace",
         "cal_build",
         "deploy_stage",
         "deploy_upload",

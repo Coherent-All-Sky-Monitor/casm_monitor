@@ -54,8 +54,8 @@ def main():
         assert page.get_by_role('button',name='Request investigation').count()>0
         page.screenshot(path=str(OUTPUT/'workspace-review.png'),full_page=False)
         page.goto(URL+'/cal',wait_until='networkidle')
-        page.get_by_role('button',name='Stage reviewed recipe').wait_for(timeout=20000)
-        assert page.get_by_role('button',name='Stage reviewed recipe').is_disabled()
+        page.get_by_role('button',name='Calibrate with the Sun').wait_for(timeout=20000)
+        assert page.get_by_role('button',name='Calibrate with the Sun').is_disabled()
         page.screenshot(path=str(OUTPUT/'workspace-calibration.png'),full_page=False)
         page.goto(URL+'/cal/compare',wait_until='networkidle')
         page.get_by_role('heading',name='Does the baseline phase still match?').wait_for()

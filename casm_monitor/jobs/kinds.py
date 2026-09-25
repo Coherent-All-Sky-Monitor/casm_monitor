@@ -107,7 +107,17 @@ def _snap_read(params: dict[str, Any]) -> dict[str, Any]:
     return run_snap_read(params)
 
 
+def _calibration_workspace(params):
+    from .calibration_workspace import run
+    return run(params)
+
+
 KINDS: dict[str, JobKind] = {
+    "calibration_workspace": JobKind(
+        name="calibration_workspace", run=_calibration_workspace, timeout_s=3600,
+        address_space_limit_bytes=64 * 1024**3, privileged=True,
+        description="Isolated, immutable calibration solve or diagnostic action",
+    ),
     "noop": JobKind(
         name="noop",
         run=_noop,

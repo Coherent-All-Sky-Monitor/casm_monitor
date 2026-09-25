@@ -104,6 +104,6 @@ export default function OperationsPage() {
       {activity&&<>{activity.activity_plot_url?<OverviewImage src={activity.activity_plot_url} title="Search activity"/>:<Notice>Search figure unavailable.</Notice>}{activity.status==='partial'&&<Notice>{activity.reason}</Notice>}</>}
       <div className="overview-panel-footer"><span>Purple: counts · red strips: cap warnings</span><Link to={'/search?'+query}>Search (T1) →</Link></div>
     </section><section className="overview-panel overview-visibility">{catalog.data?<VisibilityPreview catalog={catalog.data} t0={t0} t1={t1} zone={zone}/>:<Notice>{catalog.error||'Loading visibility context…'}</Notice>}</section></div>
-    <details className="overview-records"><summary>Observation records</summary><Evidence value={{observation:data?.observation,injection_ledger:inj?.source,history_complete:history?.counts_complete,history_start:history?.window_start_utc,history_end:history?.window_end_utc,search_ledger:search.data?.ledger}}/><a href="http://localhost:8050/" target="_blank" rel="noreferrer">T2 / T3 viewer →</a></details>
+    <details className="overview-records"><summary>Observation records</summary><Evidence value={{observation:data?.observation,injection_ledger:inj?.source,history_complete:history?.counts_complete,history_start:history?.window_start_utc,history_end:history?.window_end_utc,search_ledger:search.data?.ledger}}/><Link to="/cands">Candidates →</Link></details>
   </div>;
 }

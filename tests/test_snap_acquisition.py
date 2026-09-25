@@ -1,4 +1,4 @@
-"""The preview can bridge one guarded diagnostic request, never another job."""
+"""The workspace can queue one guarded diagnostic request, never another job."""
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -77,30 +77,35 @@ def test_upstream_cooldown_is_preserved_and_nonworkspace_refused(tmp_path, monke
     reader.close(); writer.close()
 
 
-def test_transport_is_fixed_no_proxy_no_redirect_and_bounded(monkeypatch):
-    captured = {}
+def test_local_queue_uses_existing_atomic_limits_without_http(tmp_path, monkeypatch):
+    import socket
+    settings = Settings(store_root=tmp_path / 'store', observation_cache_root=tmp_path / 'preview')
+    writer = Store(settings.db_path, store_root=settings.store_root)
+    monkeypatch.setattr(socket, 'create_connection', lambda *a, **k: (_ for _ in ()).throw(AssertionError('No HTTP or hardware')))
+    code, body = module.submit_existing(settings, None)
+    assert code == 200 and body['job_id'] > 0
+    jobs = writer.list_jobs()
+    assert len(jobs) == 1 and jobs[0]['kind'] == 'snap_read'
+    assert jobs[0]['params'] == {'ips': None, 'reason': 'manual'}
+    code, body = module.submit_existing(settings, None)
+    assert code == 429 and body['retry_after_s'] > 0
+    assert len(writer.list_jobs()) == 1
+    writer.close()
 
-    class Response:
-        code = 200
-        def __enter__(self): return self
-        def __exit__(self, *args): pass
-        def read(self, n):
-            captured["max_read"] = n
-            return b'{"job_id":8}'
 
-    class Opener:
-        def open(self, request, timeout):
-            captured.update(url=request.full_url, method=request.method, body=request.data, timeout=timeout)
-            return Response()
-
-    def opener(*handlers):
-        captured["handlers"] = handlers
-        return Opener()
-
-    monkeypatch.setattr(module.urllib.request, "build_opener", opener)
-    assert module.submit_existing(None) == (200, {"job_id": 8})
-    assert captured["url"] == module.PRODUCTION_URL
-    assert captured["method"] == "POST" and captured["body"] == b'{"ips": null}'
-    assert captured["timeout"] == 5 and captured["max_read"] == 65537
-    assert captured["handlers"][0].proxies == {}
-    assert isinstance(captured["handlers"][1], module.NoRedirect)
+def test_guarded_route_writes_only_snap_job_in_production_store(tmp_path, monkeypatch):
+    monkeypatch.setenv('CASM_MONITOR_WORKSPACE', '1')
+    settings = Settings(store_root=tmp_path / 'store', observation_cache_root=tmp_path / 'preview')
+    writer = Store(settings.db_path, store_root=settings.store_root)
+    reader = Store(settings.db_path, store_root=settings.store_root, read_only=True)
+    app = FastAPI()
+    app.include_router(module.build_router(settings, reader))
+    with TestClient(app) as client:
+        h = headers(client)
+        assert writer.list_jobs() == []
+        assert client.post('/api/snap-workspace/acquire', json={'confirm': True}).status_code == 403
+        assert writer.list_jobs() == []
+        result = client.post('/api/snap-workspace/acquire', json={'confirm': True}, headers=h)
+        assert result.status_code == 200
+        assert [job['kind'] for job in writer.list_jobs()] == ['snap_read']
+    reader.close(); writer.close()

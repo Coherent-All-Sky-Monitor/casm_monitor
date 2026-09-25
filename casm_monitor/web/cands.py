@@ -9,9 +9,9 @@ writing the same table. Instead this module IMPORTS casm_t3's own query and
 write helpers (``casm_t3.web.app.q`` / ``.q_write`` / ``.held_reason`` /
 ``.friendly_outcome`` / ``.label`` / ``casm_t2.db`` / ``casm_t3.web.nowpanel``
 / ``casm_t3.web.statsplot``) rather than reimplementing their SQL, and wraps
-them in JSON routes of our own. t3-web keeps running on :8050 until this tab
-is verified against the live store; nothing here starts, stops, or reaches
-into t3-web's process.
+them in JSON routes of our own. The legacy t3-web on :8050 was retired on
+September 25, 2026. These routes read its underlying store directly and do
+not depend on a separate web process.
 
 ``casm_t3.web.app`` addresses its database and candidates tree through two
 module-level constants (``DB_PATH``, ``CANDIDATES_DIR``) rather than an

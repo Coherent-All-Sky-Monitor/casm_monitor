@@ -2,11 +2,18 @@
 
 ## Current workspace supersedes the historical plan
 
+The September 22 Calibration-tab proposal is in
+[calibration-workflow-design.md](calibration-workflow-design.md). It describes
+the earlier design; [calibration-workspace.md](calibration-workspace.md) records
+the September 25 implementation and dry-run-only upload boundary. The legacy
+8060 and 8050 web services are retired; the current workspace is on 8061.
+
 Operator requirements were refined on 2026-09-13: dark scientific presentation,
 no Plotly, selection-driven time/frequency and baseline exploration, rolling
 24-hour injection review, per-gulp T1 evidence, calibration-day comparisons,
 independent stationary Cyg A checks, B0329 history and requested investigations.
-Observation, Readiness and Antennas remain the primary navigation groups.
+Current tabs: Overview, Search (T1), Visibilities, SNAPs, Source history,
+Candidates and Calibration.
 
 Implemented contracts: [api-science.md](api-science.md),
 [api-review.md](api-review.md) and [api-commissioning.md](api-commissioning.md).
@@ -19,8 +26,10 @@ The isolated port-8061 workspace reads production data without changing it and
 stores figures, queue evidence and manually confirmed canonical Sun builds under
 its explicit artifact root. Newly seen misses persist until human review.
 Requesting investigation records intent; no runner or Slack integration starts.
-Deployment, restart defaults, SNAP operations, injections and dumps remain
-disabled. Grafana is deferred; Fourier Space/Kafka code is outside edit authority.
+Deployment, restart defaults, injections and dumps remain disabled. The explicitly
+confirmed SNAP diagnostic button is the sole production-queue submission
+exception; it retains existing bounded acquisition and cooldown rules.
+Grafana is deferred; Fourier Space/Kafka code is outside edit authority.
 Canonical scope: casm-wiki/monitor-product-direction.md and
 casm-wiki/monitor-operator-workflow.md.
 

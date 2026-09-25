@@ -433,12 +433,18 @@ def _weights_slots(weights_h5: str, antennas: list[int]) -> dict[str, Any]:
     with h5py.File(weights_h5, "r") as f:
         fmt = str(f.attrs.get("format_type", "")).strip()
         ids = np.asarray(f["array_config/antenna_ids"][:], dtype=int)
+        beam_count = int(f['weights_int8'].shape[3])
+        beam_attr = int(f.attrs.get('n_beams', -1))
+        pointing_counts = [len(f[f'pointings/{coordinate}']) for coordinate in ('alt_deg', 'az_deg')]
         sl = np.abs(np.asarray(f["weights_int8"][:, 1500, :, :, :], dtype=np.int32))
     n_slots = sl.shape[-1]
     populated = sorted(int(i) for i in np.where(sl.max(axis=(0, 1, 2)) > 0)[0])
     expected = sorted(int(i) for i in range(n_slots) if int(ids[i]) in set(antennas))
     return {
         "format_type": fmt,
+        "n_beams": beam_count,
+        "n_beams_attr": beam_attr,
+        "pointing_counts": pointing_counts,
         "populated_slots": populated,
         "expected_slots": expected,
         "populated_antennas": [int(ids[i]) for i in populated],
@@ -467,7 +473,7 @@ def _ib_slots(ib_h5: str, antennas: list[int]) -> dict[str, Any]:
     }
 
 
-def _checks(weights_h5: str, ib_h5: str | None, antennas: list[int]) -> list[dict[str, Any]]:
+def _checks(weights_h5: str, ib_h5: str | None, antennas: list[int], *, expected_beams: int | None = None) -> list[dict[str, Any]]:
     """format_type + populated-slot checks, the ones that can run off the files.
 
     (a) of casm-wiki ``weights-verification.md`` (the cal-division pointing fit)
@@ -479,6 +485,10 @@ def _checks(weights_h5: str, ib_h5: str | None, antennas: list[int]) -> list[dic
 
     rows: list[dict[str, Any]] = []
     cb = _weights_slots(weights_h5, antennas)
+    if expected_beams is not None:
+        rows.append(dict(name='cb_beam_count',
+                         ok=cb['n_beams'] == cb['n_beams_attr'] == expected_beams and cb['pointing_counts'] == [expected_beams] * 2,
+                         detail=f"Payload: {cb['n_beams']} beams; metadata: {cb['n_beams_attr']}; pointing rows: {cb['pointing_counts']}; require {expected_beams}"))
     rows.append(
         {
             "name": "cb_format_type",
@@ -714,7 +724,8 @@ def run_stage(params: dict[str, Any]) -> dict[str, Any]:
         }
     )
     if code == 0:
-        checks += _checks(str(weights_h5), str(ib_h5) if ib_h5 else None, list(summary["antennas"]))
+        checks += _checks(str(weights_h5), str(ib_h5) if ib_h5 else None, list(summary["antennas"]),
+                          expected_beams=512 if summary.get('kind') == 'calibration_workspace' else None)
 
     layout_now = layout_info(settings.layout_csv)
     stage = {

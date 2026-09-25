@@ -298,9 +298,9 @@ def build_row(
     }
 
 
-def build_router(reader: Store, writer: Store, settings: Settings) -> APIRouter:
+def build_router(reader: Store, writer: Store, settings: Settings, *, prefix="/api/cal", review_gate=None) -> APIRouter:
     """Router over the app's existing handles (reader for GET, writer for POST)."""
-    router = APIRouter(prefix="/api/cal", tags=["cal"])
+    router = APIRouter(prefix=prefix, tags=["cal"])
 
     # -- defaults / status ----------------------------------------------
     @router.get("/defaults")
@@ -476,6 +476,8 @@ def build_router(reader: Store, writer: Store, settings: Settings) -> APIRouter:
     # -- stage / upload --------------------------------------------------
     @router.post("/builds/{tag}/stage")
     def post_stage(tag: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        if review_gate is not None:
+            review_gate(settings, tag)
         summary = _require_summary(settings, tag)
         if not summary.get("has_weights"):
             raise HTTPException(
@@ -501,6 +503,8 @@ def build_router(reader: Store, writer: Store, settings: Settings) -> APIRouter:
         tag: str, request: Request, body: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         body = dict(body or {})
+        if review_gate is not None:
+            review_gate(settings, tag)
         # CSRF double-submit BEFORE anything else: this is the one route that
         # can put bytes on the correlator nodes, and it must be reachable only
         # from something that read GET /api/cal/status first.

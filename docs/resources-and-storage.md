@@ -1,7 +1,9 @@
 # Webpage resources and data products
 
-The preview on **8061** is a separate process from production web **8060**,
-the collector and the two job workers. Opening Overview, Search, Visibilities
+The workspace on **8061** runs separately from the collector and two job
+workers. The legacy 8060 and 8050 web services were stopped and disabled on
+September 25, 2026; their data and backend services remain in place.
+Opening Overview, Search, Visibilities
 or Source history does not start acquisition, a calibration solve or a weights
 build. It does read caches and render plots. Preview-local plot/cache writes
 are allowed; the operational input stores remain read-only to these pages.
@@ -33,7 +35,7 @@ Other services are separate budgets. The capture includes their counters:
 | Service | Memory limit | CPU limit | Work |
 | --- | ---: | ---: | --- |
 | Preview web, 8061 | 4 GiB | None | Page APIs, plots, memory caches |
-| Production web, 8060 | 4 GiB | None | Production API/UI |
+| Legacy web, 8060 (retired September 25) | 4 GiB at measurement | None | Historical measurement only |
 | Collector | 8 GiB | None | Ingestion, retained shards, summaries |
 | Production jobs | 256 GiB | 16 cores | Existing offline job queue |
 | Preview calibration worker | 64 GiB | 4 cores | Explicit offline calibration jobs |

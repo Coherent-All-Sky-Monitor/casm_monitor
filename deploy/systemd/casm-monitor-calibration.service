@@ -1,0 +1,27 @@
+[Unit]
+Description=CASM offline calibration and local payload worker
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/casm/software/dev/casm_monitor
+Environment=CASM_MONITOR_OBSERVATION_ROOT=/home/casm/scratch/casm-observation-preview
+Environment=CASM_MONITOR_STORE_ROOT=/home/casm/scratch/casm-observation-preview/calibration
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=MPLBACKEND=Agg
+Environment=OPENBLAS_NUM_THREADS=2
+Environment=OMP_NUM_THREADS=2
+Environment=CASM_IO_WORKERS=1
+Environment=CASM_MONITOR_ALLOW_UPLOAD=0
+ExecStart=/home/casm/software/dev/casm_venvs/casm_offline_env/bin/python -m casm_monitor.jobs.worker
+Restart=on-failure
+RestartSec=15
+MemoryMax=64G
+CPUQuota=400%
+Nice=10
+KillMode=control-group
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

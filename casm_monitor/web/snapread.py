@@ -219,6 +219,33 @@ def board_read_payload(
     }
 
 
+def submit_manual_read(writer: Store, settings: Settings, body: dict[str, Any] | None = None) -> Any:
+    """The shared atomic submission path; no hardware access in the web process."""
+    ips = normalise_ips(body, settings)
+    params = {"ips": ips, "reason": "manual"}
+    now = time.time()
+    job_id, refusal = writer.submit_job_atomic(
+        SNAP_READ_KIND,
+        params,
+        refuse_if_pending=True,
+        lease=(LOCK_STREAM, LOCK_KEY),
+        rate_limit=(LOCK_STREAM, LAST_MANUAL_KEY, manual_min_interval_s(settings)),
+        claim_slot=("zapdos", "last_probe_ts", zapdos_interval_s(settings)),
+        require_slot=False,
+        stamp=[(LOCK_STREAM, LAST_MANUAL_KEY, now)],
+        now=now,
+    )
+    if refusal is not None:
+        return JSONResponse(status_code=429, content=refusal_body(refusal, settings))
+    writer.add_event(
+        "job_submitted",
+        severity="info",
+        subject=f"job {job_id} ({SNAP_READ_KIND})",
+        detail={"job_id": job_id, "kind": SNAP_READ_KIND, "params": params},
+    )
+    return {"job_id": job_id}
+
+
 def build_router(reader: Store, writer: Store, settings: Settings) -> APIRouter:
     """Router over the app's existing handles (reader for GET, writer for POST)."""
     router = APIRouter(prefix="/api/snaps", tags=["snaps"])
@@ -230,35 +257,6 @@ def build_router(reader: Store, writer: Store, settings: Settings) -> APIRouter:
 
     @router.post("/board-read")
     def post_board_read(body: dict[str, Any] | None = None) -> Any:
-        ips = normalise_ips(body, settings)
-        params = {"ips": ips, "reason": "manual"}
-        now = time.time()
-        # ONE transaction: the limit checks, the manual timestamp, the claim on
-        # the hourly zapdos slot and the INSERT. Two clicks racing here cannot
-        # both come out with a job.
-        job_id, refusal = writer.submit_job_atomic(
-            SNAP_READ_KIND,
-            params,
-            refuse_if_pending=True,
-            lease=(LOCK_STREAM, LOCK_KEY),
-            rate_limit=(LOCK_STREAM, LAST_MANUAL_KEY, manual_min_interval_s(settings)),
-            # A manual read IS the hour's zapdos contact when the slot is free;
-            # taking it here stops the scheduler adding a second one. It is not
-            # a precondition: an operator may click within an hour of a
-            # scheduled read (the manual rate limit is what bounds that).
-            claim_slot=("zapdos", "last_probe_ts", zapdos_interval_s(settings)),
-            require_slot=False,
-            stamp=[(LOCK_STREAM, LAST_MANUAL_KEY, now)],
-            now=now,
-        )
-        if refusal is not None:
-            return JSONResponse(status_code=429, content=refusal_body(refusal, settings))
-        writer.add_event(
-            "job_submitted",
-            severity="info",
-            subject=f"job {job_id} ({SNAP_READ_KIND})",
-            detail={"job_id": job_id, "kind": SNAP_READ_KIND, "params": params},
-        )
-        return {"job_id": job_id}
+        return submit_manual_read(writer, settings, body)
 
     return router

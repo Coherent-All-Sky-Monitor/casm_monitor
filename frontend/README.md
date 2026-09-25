@@ -18,15 +18,12 @@ npm run build
 ```
 
 This type-checks and builds the static assets. `emptyOutDir: true` replaces this
-checkout's old assets; build only in the isolated workspace, not the running
-production checkout. Commit the generated assets with the source. Do not commit
+checkout's old assets. Commit the generated assets with the source. Do not commit
 `node_modules`, including a local dependency-reuse symlink.
 
-`npm run dev` starts Vite. Its existing `/api` and `/ws` proxy targets port 8060;
-that default is **production**, not the isolated writable-evidence workspace.
-For end-to-end workspace checks use the built application on port 8061 with the
-environment flags in the [repository README](../README.md), rather than sending
-new workspace requests to production. `npm run preview` alone has no backend.
+`npm run dev` starts Vite; `/api` and `/ws` target the workspace on port 8061.
+For protected POSTs use the built application on 8061 so same-origin checks
+remain intact. `npm run preview` alone has no backend.
 
 ## Interface and routes
 
@@ -78,7 +75,9 @@ scales and the shared click-to-zoom viewer. Zoom pins the image and interval;
 it does not query or rebin data. Stream cards wrap on smaller screens.
 `/cal/compare`, `/cal/transit`,
 `/cal` and `/sources` expose their respective scientific workflows. Existing
-candidate/event routes remain available; no other service is retired. The old
+candidate/event routes remain available. The old 8060 monitor and 8050 T3 web
+services were stopped and disabled on September 25; backend workers continue.
+The old
 `/imaging` frontend route is removed; scientific code and backend artifacts remain untouched.
 
 The scientific controls select baseline pairs, quantity, reference, date/time and
@@ -108,10 +107,13 @@ evidence. The fork's clustered output count cannot measure its pre-clustering
 10k cap. Coverage and bounded log-tail limits must stay visible. Missing data,
 missing artifacts and failed requests must not become zero counts or flat spectra.
 
-Build staging shows the recipe and antenna selection. A separate confirmation
-starts only the canonical Sun calibration driver under resource bounds; it is
-not a deployment approval. **Get latest spectra** explicitly submits the existing
-SNAP diagnostic read through a narrowly protected fixed loopback bridge. The
+Calibration uses a separate persistent worker with explicit offline actions;
+solving, grid generation and scientific review are distinct. Its UTC form and
+API are documented in [Calibration workspace](../docs/calibration-workspace.md).
+Upload is dry-run-only, with live requests blocked server-side. The sky view
+uses schematic ellipses over saved beam positions and exact source tracks;
+scientific grid placement stays exact. **Get latest spectra** submits the existing
+SNAP diagnostic job through the protected atomic queue helper. The
 production worker retains serialization and cooldown; no parallel reader exists.
 Acquisition times, overdue status and job state are distinct from display refresh.
 Navigation performs no acquisition. Operational injection/dump, deployment and
@@ -164,11 +166,15 @@ hardware acquisition or Calibration actions. Images are decoded before capture.
 - `src/components/Workspace.tsx`: range controls, plot/download presentation and
   saving investigation selections.
 - `src/pages/SciencePage.tsx`, `T1Page.tsx`, `ReviewPage.tsx`,
-  `SnapWorkspacePage.tsx`, `CommissioningPage.tsx`, `TransitPage.tsx` and
+  `SnapWorkspacePage.tsx`, `CalibrationWorkspacePage.tsx`, `TransitPage.tsx` and
   `SourceHistoryPage.tsx`: operator workflow pages.
 - API contracts: [science](../docs/api-science.md),
   [search/review](../docs/api-review.md),
   [commissioning/source history](../docs/api-commissioning.md).
+
+`src/calibration.css` scopes the Calibration layout. Its acceptance script is
+`scripts/check_calibration_browser.py` (desktop/tablet/mobile overflow, disabled
+upload, recorded-reference import and no browser errors).
 
 Run the repository's `scripts/check_workspace_browser.py` against the isolated
 backend for desktop/mobile overflow, route, scientific-render and safe-request

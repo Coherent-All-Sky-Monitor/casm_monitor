@@ -35,6 +35,11 @@ def test_workspace_origin_guard_and_operational_denial(settings,store,tmp_path,m
         assert client.post('/api/science/render',json={},headers=headers).status_code==422
         for route in ['/api/jobs','/api/snaps/board-read','/api/cal/build','/api/cal/upload','/api/injections']:
             assert client.post(route,json={},headers=headers).status_code==403
+        assert client.post('/api/calibration/builds', json={}).status_code == 403
+        assert client.post('/api/calibration/builds', json={}, headers={'Origin': 'https://evil.example', 'X-CASM-Workspace': '1'}).status_code == 403
+        assert client.post('/api/calibration/builds', json={}, headers=headers).status_code == 400
+        assert client.post('/api/calibration/deployment/build', json={}, headers=headers).status_code == 403
+        assert client.post('/api/calibration/deployment/builds/test/upload', json={}, headers=headers).status_code == 403
         queue=client.get('/api/review').json()
         headers['X-CASM-Review-CSRF']=queue['csrf_token']
         item=client.post('/api/review',json={'title':'Test evidence','note':'Not a live investigation','selection':{'test':True}},headers=headers)
