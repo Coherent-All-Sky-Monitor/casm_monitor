@@ -57,7 +57,7 @@ export default function OperationsPage() {
   // Operator thresholds are recovered counts over 24 h, not recovery percentages.
   // No completed evidence is not a measured zero; stale/partial counts take priority.
   const recoveryHealth:Health=!inj||inj.status==='unavailable'?'unknown':!injFresh||!inj.counts_complete?'late':!(c.completed_fired>0||failures>0)?((c.pending??0)+(c.unknown??0)>0?'late':'unknown'):c.recovered<12?'silent':c.recovered<=17?'orange':'yellow';
-  const recoveryLabel=recoveryHealth==='yellow'?'Standard recovery':recoveryHealth==='orange'?'Reduced recovery':recoveryHealth==='silent'?'Low recovery':recoveryHealth==='late'?'Pending / incomplete / stale':'No measurement';
+  const recoveryLabel=recoveryHealth==='yellow'?'Needs attention':recoveryHealth==='orange'?'Reduced recovery':recoveryHealth==='silent'?'Low recovery':recoveryHealth==='late'?'Pending / incomplete / stale':'No measurement';
   const vis=data?.observation?.vis_age,visMeasureAge=secondsSince(vis?.observed_at,now);
   const visAge=typeof vis?.value==='number'&&visMeasureAge!=null?vis.value+visMeasureAge:null;
   const visHealth:Health=live.error?'late':visAge==null?'unknown':visAge>600?'late':'ok';

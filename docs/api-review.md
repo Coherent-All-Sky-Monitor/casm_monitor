@@ -17,7 +17,7 @@ instrument-quality test. Missing, pending and incomplete evidence remain explici
 History panels share a time-zone and interval control, default rolling 24 hours
 with two-minute refresh. Historical selections pause those panels, not live cards.
 The live recovery card uses the operator's absolute recovered-count thresholds:
-18 or more is yellow (including 24/24), fewer than 12 is red; the intermediate
+18 or more is yellow, labelled **Needs attention** (including 24/24), fewer than 12 is red; the intermediate
 12–17 band is orange. These are 24-hour display bands, not recovery percentages
 or scientific acceptance criteria. Unavailable/empty evidence stays unknown;
 stale or incomplete counts take priority over count bands. Individual trial

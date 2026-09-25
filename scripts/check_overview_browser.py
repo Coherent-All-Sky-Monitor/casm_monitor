@@ -154,7 +154,7 @@ def main():
             assert (light+.05)/(dark+.05)>=4.5,colors
             if expected=='yellow':
                 assert colors['bg']=='rgb(231, 196, 74)'
-                assert card.locator('.overview-status').inner_text()=='Standard recovery'
+                assert card.locator('.overview-status').inner_text()=='Needs attention'
         assert not errors,errors
         browser.close()
     print(json.dumps({'result':'passed','checks':['live counts','17 selection matches catalog','map wiring','two compact diagnostics','white figure zoom','trial details','amplitude/phase','shared historical bounds','Search drill-down','mobile','stale evidence','independent failures','history pause/live refresh','recovery threshold boundaries and contrast']},indent=2))
