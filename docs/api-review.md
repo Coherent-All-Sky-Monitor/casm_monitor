@@ -196,9 +196,10 @@ stream row and flags at least one capped gulp in the time bin; its vertical
 position does not identify skipped beams. Counts reflect emitted candidates
 from the beams actually processed, without correcting for skipped beams.
 Colourbar labels use two lines to fit within their panels. The same zero/missing
-colours also appear for intervals without any candidates. DM versus time uses
-a logarithmic 10–1000 axis; the bottom DM histogram uses a linear 10–1000
-axis. The saved 0–10 bucket is omitted from both DM displays and their scaling,
+colours also appear for intervals without any candidates. Both DM axes use
+logarithmic spacing from 10–1000. The bottom histogram retains linear counts,
+labelled "Candidates per bin", and the existing logarithmically spaced bins.
+The saved 0–10 bucket is omitted from both DM displays and their scaling,
 but retained in evidence JSON and the stream/beam candidate totals.
 The stored edges are unchanged, including 921.750557–1122.099537 across the
 display ceiling. Its count stays intact while the axis ends at 1000; the figure
@@ -207,13 +208,15 @@ JSON, including bins outside the displayed range for historical intervals.
 The September 25 read-only check confirmed DM_MIN 0 and DM_MAX 1000 in all
 eight corr1/corr2 `/tmp/hella_N.cfg` files. No search configuration changed.
 `/api/t1/plot.png` renders the same figure dynamically and is not a valid
-immutable evidence URL for saving. These routes use no Plotly. Width index is
-not labelled as FWHM.
+immutable evidence URL for saving. These routes use no Plotly. The width
+histogram shows indices 0–6 with integer ticks and linear counts, matching
+the current Hella trials. Spare width bins 7–8 stay in stored/API evidence,
+outside the displayed bars and their scaling. Width index is not labelled as FWHM.
 
 The figure matches the Visibilities white scientific style: dark labels and
 spines, subtle time/histogram grids, muted-blue histogram bars, explicit time zones
 and units, beam-index ticks at stream boundaries, and readable 10–1000 DM
-ticks with distinct histogram/time-view spacing. All three time panels retain their shared logarithmic
+ticks. All three time panels retain their shared logarithmic
 count palette and limits. The PNG is 1950×1875 pixels; click it to open the
 shared display-zoom viewer with Fit, +/− and pan. Zoom pins the selected PNG
 and interval, without new queries, rebinning or count normalization. Downloads,

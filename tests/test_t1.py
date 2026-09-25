@@ -170,8 +170,10 @@ def test_render_full_payload(payload, monkeypatch):
         assert axes[0].get_xlabel() == ("Time (UTC)" if zone == "UTC" else "Time (OVRO local · PDT/PST)")
         assert axes[0].get_ylabel() == "Stream ID"
         assert axes[2].get_ylabel() == "Beam index"
-        assert axes[4].get_yscale() == "log" and axes[7].get_xscale() == "linear"
+        assert axes[4].get_yscale() == axes[7].get_xscale() == "log"
+        assert axes[6].get_yscale() == axes[7].get_yscale() == "linear"
         assert axes[4].get_ylim() == axes[7].get_xlim() == (10, 1000)
+        assert axes[6].get_xlim() == (-.5, 6.5)
         assert "1 gulp ≈ 8.59 s" in axes[0].get_title()
         assert axes[1].get_ylabel() == "candidates per stream\nper 3 min (log scale)"
         assert axes[5].get_ylabel() == "candidates per DM bin\nper 3 min (log scale)"
@@ -246,8 +248,11 @@ def test_white_figure_axes_counts_and_style_isolation(payload, monkeypatch):
     assert axes[0].collections[2].cmap(0.)==to_rgba('#c53030')
     assert list(axes[2].get_yticks())==list(range(0,513,64))
     assert list(axes[4].get_yticks())==[10,30,100,300,1000]
-    assert list(axes[7].get_xticks())==[10,200,400,600,800,1000]
-    assert axes[6].get_ylabel()==axes[7].get_ylabel()=='Candidates'
+    assert list(axes[6].get_xticks())==list(range(7))
+    assert len(axes[6].patches)==7
+    assert list(axes[7].get_xticks())==[10,30,100,300,1000]
+    assert axes[6].get_ylabel()=='Candidates'
+    assert axes[7].get_ylabel()=='Candidates per bin'
     assert axes[6].get_xlabel()=='Hella width index (not FWHM)'
     assert axes[7].get_xlabel()=='DM (pc cm⁻³)'
     for index in (0,2,4):
@@ -272,6 +277,28 @@ def test_white_figure_axes_counts_and_style_isolation(payload, monkeypatch):
             if label.get_text():
                 box=label.get_window_extent(renderer)
                 assert box.x0>=0 and box.y0>=0 and box.x1<=fig.bbox.width and box.y1<=fig.bbox.height
+
+
+def test_spare_width_bins_remain_in_evidence_only(payload, monkeypatch):
+    from copy import deepcopy
+    from matplotlib.figure import Figure
+
+    data = deepcopy(payload)
+    data["width_counts"][7:] = [9999, 8888]
+    before = deepcopy(data)
+    figures = []
+    save = Figure.savefig
+
+    def inspect(fig, *args, **kwargs):
+        figures.append(fig)
+        return save(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect)
+    t1.render_t1(data)
+    axis = figures[-1].axes[6]
+    assert [p.get_height() for p in axis.patches] == data["width_counts"][:7]
+    assert axis.get_ylim()[1] < 9999
+    assert data == before
 
 
 def test_empty_ledger_and_empty_cand_bins(tmp_path):

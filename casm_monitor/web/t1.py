@@ -401,20 +401,22 @@ def render_t1(data, *, compact=False):
                       ylim=(10, 1000))
             _time_axis(dm_ax, data, mdates, zone)
 
-            width_counts = np.asarray(data["width_counts"], dtype=float)
+            # Current Hella trials use indices 0–6; spare bins stay in the API.
+            width_counts = np.asarray(data["width_counts"], dtype=float)[:7]
             width_ax.bar(np.arange(len(width_counts)), width_counts, color=HIST_COLOR, width=.82)
             width_ax.set(title="Width distribution", xlabel="Hella width index (not FWHM)",
-                         ylabel="Candidates")
-            width_ax.xaxis.set_major_locator(MaxNLocator(nbins=9, integer=True))
+                         ylabel="Candidates", xlim=(-.5, 6.5))
+            width_ax.set_xticks(np.arange(7))
             dm_counts = np.asarray(data["dm_counts"], dtype=float)[1:]
             dmhist_ax.stairs(dm_counts, edges_dm, fill=True, color=HIST_COLOR)
-            dmhist_ax.set_xscale("linear")
-            dmhist_ax.set(title="DM distribution", xlabel="DM (pc cm⁻³)", ylabel="Candidates",
+            dmhist_ax.set_xscale("log")
+            dmhist_ax.set(title="DM distribution", xlabel="DM (pc cm⁻³)", ylabel="Candidates per bin",
                           xlim=(10, 1000))
             dm_ax.set_yticks([10,30,100,300,1000])
             dm_ax.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
-            dmhist_ax.set_xticks([10,200,400,600,800,1000])
+            dmhist_ax.set_xticks([10,30,100,300,1000])
             dmhist_ax.xaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
+            dmhist_ax.minorticks_off()
             for ax in (width_ax,dmhist_ax):
                 ax.set_axisbelow(True)
                 ax.grid(axis="y", color="#d7dce2", linewidth=.5, linestyle="--")
