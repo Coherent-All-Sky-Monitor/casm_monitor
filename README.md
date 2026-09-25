@@ -10,10 +10,13 @@ plots. Visibilities opens all 17 inspection antennas, with compact station/SNAP
 orders and an upper-triangle pair view. Search (T1) shows stream activity and
 candidate distributions. Source history defaults to B0329 PDMP folds; Sun,
 Cyg A, Cas A and Tau A show fixed-beam transit spectra and power curves.
+SNAPs shows all 4096 board channels in compact SNAP/station layouts, with
+all-12-ADC mode, saved historical overlays and per-input power trends.
 
 - [Resources, storage paths and retention](docs/resources-and-storage.md)
 - [Visibility views](docs/api-science.md) and [source history](docs/api-commissioning.md#sun-cyg-a-cas-a-and-tau-a-visibility-history)
 - [Frontend build and checks](frontend/README.md)
+- [SNAP spectra, stored history and acquisition status](docs/snap-spectra.md)
 
 ## Run
 
@@ -50,6 +53,13 @@ use the same rolling window and antenna selection.
 Search (T1): stream status, candidate heatmaps and distributions.
 
 ![Search (T1)](docs/screenshots/2026-09-24/search.png)
+
+SNAPs: full-band board spectra, fixed dB scales and saved-read timestamps.
+Hourly collector activation is pending; no hardware read was made for these captures.
+
+![SNAP spectra](docs/screenshots/2026-09-24/snaps-latest.png)
+
+[Expanded spectrum and drift history](docs/screenshots/2026-09-24/snaps-history-expanded.png).
 
 Source history: B0329 detection dates and saved PDMP folds.
 

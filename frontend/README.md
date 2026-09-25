@@ -41,15 +41,18 @@ Three primary tabs group the operator workflow:
   source history and candidates. Imaging is withdrawn from this preview UI.
 - Readiness: infrastructure, investigation queue, calibration-day comparison,
   independent Cyg A transit, manually confirmed build/review and events.
-- Antennas: geometry-selected baselines and existing SNAP history.
+- SNAPs: full-band 4096-channel spectra, SNAP/station layouts and saved history.
 
 `/observation` is **Overview**: live status cards, an injection-outcome timeline,
 current array/calibration context, one stream-count heatmap and one raw
 reference-baseline dynamic spectrum. White panels use dark labels and prominent
 status bands. History shares one interval; live cards remain marked Now.
 `/vis` opens the array inspector with the saved antenna set selected;
-`/antennas` and `/snaps` open stored full-board
-spectra in the same black scientific style, with selected history available.
+`/snaps` opens white full-band spectrum panels in compact SNAP order, with
+station order/grid, all 12 ADCs, historical overlays and expanded power trends.
+`/antennas` retains the legacy saved overview and transmitted-band history.
+See [SNAP views and acquisition status](../docs/snap-spectra.md); hourly collector
+activation remains separate from the preview build.
 `/search` is **Search (T1)**, with white Matplotlib figures, labelled count
 scales and the shared click-to-zoom viewer. Zoom pins the image and interval;
 it does not query or rebin data. Stream cards wrap on smaller screens.

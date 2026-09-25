@@ -1,6 +1,6 @@
 """Schedule bounded SNAP diagnostics independently of the liveness probe.
 
-The configured interval (two hours on this host) is enforced against both the
+The configured interval (one hour by default) is enforced against both the
 last completed read and a SNAP-specific scheduling slot. An ``ssh true`` probe
 cannot consume that slot and starve spectra acquisition. Submission, guards and
 timestamps remain one existing Store transaction; queued jobs and the existing

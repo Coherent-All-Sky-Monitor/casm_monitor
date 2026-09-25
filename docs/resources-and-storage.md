@@ -59,7 +59,7 @@ every installation. `CASM_MONITOR_OBSERVATION_ROOT` selects the preview root.
 | `.../calibration/` | Separate calibration-worker queue, logs and generated artifacts |
 | `.../screenshots/` | Acceptance-test screenshots and reports, not telescope data |
 | `/mnt/nvme3/casm_monitor/monitor.sqlite` | Collector-owned state, shard manifest and candidate summaries |
-| `/mnt/nvme3/casm_monitor/shards/` | Collector-owned visibility, Kafka and SNAP cache shards |
+| `/mnt/nvme3/casm_monitor/shards/` | Collector-owned visibility, Kafka and SNAP shards; full-band `snap_read/` spectra have no expiry |
 | `/mnt/nvme3/casm_monitor/jobs/`, `cal_builds/` | Production offline-worker artifacts |
 | `/mnt/nvme4/data/casm/visibilities_64ant/` | Original native visibility files, not webpage output |
 | `/mnt/nvme4/data/casm/hella_cands/` | Existing search outputs read by the collector |

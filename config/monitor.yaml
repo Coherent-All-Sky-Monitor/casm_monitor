@@ -85,7 +85,7 @@ snap:
   # Same file the /api/snaps/boards table reads (rowmap.LAYOUT_CSV): the
   # ``current`` symlink, so casm-layout apply is picked up everywhere at once.
   layout_csv: /home/casm/software/dev/antenna_layouts/current
-  read_interval_s: 7200
+  read_interval_s: 3600
   manual_min_interval_s: 300
   per_board_timeout_s: 60
 

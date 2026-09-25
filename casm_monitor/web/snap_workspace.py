@@ -34,6 +34,8 @@ class Selection(BaseModel):
 
 def build_router(settings, reader):
     router = APIRouter()
+    from .snap_spectra import build_router as spectra_router
+    router.include_router(spectra_router(settings, reader))
     # Keep the existing history contract as the single data-loading implementation.
     history = next(r.endpoint for r in snap_router(settings, reader).routes if r.path == '/api/snaps/history')
 

@@ -10,6 +10,7 @@ import T1Page from "./pages/T1Page";
 import CommissioningPage from "./pages/CommissioningPage";
 import SourceHistoryPage from "./pages/SourceHistoryPage";
 import SnapWorkspacePage from "./pages/SnapWorkspacePage";
+import SnapSpectraPage from "./pages/SnapSpectraPage";
 import TransitPage from "./pages/TransitPage";
 import ReadinessPage from "./pages/ReadinessPage";
 import CandEventPage from "./pages/CandEventPage";
@@ -28,7 +29,7 @@ export default function App() {
           <Route path="/observation" element={<OperationsPage />} />
           <Route path="/readiness" element={<ReadinessPage />} />
           <Route path="/antennas" element={<SnapWorkspacePage />} />
-          <Route path="/snaps" element={<SnapWorkspacePage />} />
+          <Route path="/snaps" element={<SnapSpectraPage />} />
           <Route path="/vis" element={<SciencePage />} />
           <Route path="/search" element={<T1Page />} />
           <Route path="/review" element={<ReviewPage />} />

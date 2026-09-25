@@ -3,13 +3,13 @@ import { Link, useLocation } from "react-router-dom";
 const TABS: { path: string; label: string }[] = [
   { path: "/observation", label: "Observation" },
   { path: "/readiness", label: "Readiness" },
-  { path: "/antennas", label: "Antennas" },
+  { path: "/snaps", label: "SNAPs" },
 ];
 
 /** Telescope name and observatory location at left; primary navigation at right. */
 export default function Header() {
   const { pathname } = useLocation();
-  const group = /^\/(snaps|antennas)/.test(pathname) ? "/antennas" : /^\/(cal|events|readiness|review)/.test(pathname) ? "/readiness" : "/observation";
+  const group = /^\/(snaps|antennas)/.test(pathname) ? "/snaps" : /^\/(cal|events|readiness|review)/.test(pathname) ? "/readiness" : "/observation";
   return (
     <header className="header">
       <div className="header__identity">

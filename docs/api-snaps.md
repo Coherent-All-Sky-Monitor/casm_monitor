@@ -1,10 +1,12 @@
 # SNAPs tab API contract (M1)
 
-The legacy APIs remain available. The current dark preview uses the workspace
-overview and acquisition routes below; old frontend descriptions in the legacy
-sections are historical context, not its current presentation contract.
+The legacy APIs remain available. The current `/snaps` preview uses the new
+[full-band saved-spectrum routes and white panels](snap-spectra.md).
+The overview below remains on `/antennas`; legacy presentation descriptions
+are historical context.
 
-All timestamps are ISO 8601 strings (UTC, e.g. `"2026-09-08T12:00:00Z"`).
+Legacy timestamps are ISO 8601 strings unless noted otherwise (UTC, e.g.
+`"2026-09-08T12:00:00Z"`). The new full-band routes use Unix seconds.
 `age_s` fields are seconds (float ok), server-computed at response time so the
 frontend never needs client/server clock sync for staleness.
 
@@ -162,7 +164,7 @@ live boards — treat these as amendments to the shape above):
 
 ### Current workspace acquisition bridge and scheduler coordination
 
-`GET /api/snap-workspace/board-overview` is the default Antennas view. It renders
+`GET /api/snap-workspace/board-overview` serves the legacy `/antennas` view. It renders
 stored board spectra through `figures.snap_figures.render_spectra_board`, with
 black surfaces, restrained traces, scientific axes and per-input power scales.
 It returns immutable PNG and JSON evidence links under the isolated artifact
