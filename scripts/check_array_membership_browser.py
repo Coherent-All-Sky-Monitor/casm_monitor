@@ -71,6 +71,8 @@ def main():
         screenshot('vis-beamforming-default.png')
         page.goto(URL+'/observation', wait_until='domcontentloaded')
         page.wait_for_function('document.querySelectorAll(".overview-map .beamforming").length>0', polling=100, timeout=90000)
+        page.wait_for_function('document.querySelector(".overview-photo img")?.complete && document.querySelector(".overview-photo img")?.naturalWidth>0',polling=100,timeout=30000)
+        page.locator('.overview-photo img').evaluate('img=>img.decode()')
         page.wait_for_function("!document.querySelector('a.overview-stat[href=\"/snaps\"] strong')?.textContent?.includes('Unknown')",polling=100,timeout=30000)
         assert page.locator('.overview-map .beamforming').first.evaluate('e=>getComputedStyle(e).backgroundColor') == green
         for width in [1500, 1024, 700, 390, 320]:
