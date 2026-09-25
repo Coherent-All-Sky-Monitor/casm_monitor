@@ -53,6 +53,12 @@ set. The optional focused trend scale reveals drift in absolute dB. Lines break
 at gaps longer than 1.5 configured read intervals and at EQ/FFT epoch changes.
 Only saved samples are plotted. A single point is still visible.
 
+The September 25 read-only direction audit compared saved SNAP spectra with
+visibility autos 21–26 seconds away. Noncentral features at 400.665 and
+463.715 MHz aligned in the current mapping; the exact alternative
+`375+k*125/4096` fit worse. No axis reversal was made. Evidence and limitations:
+`casm-wiki/evidence/2026-09-25/snap-control-frequency-followup.md`.
+
 ## History and acquisition
 
 **Latest spectra** opens by default and refreshes saved data every minute.
@@ -147,6 +153,14 @@ that message behind “Access violation”. Canonical 0→2→3→1 ping/read or
 not change the failure. An active owner versus stale firmware session remains
 unresolved; no session was aborted or recovered. Evidence is recorded in
 `casm-wiki/evidence/2026-09-25/snap-monitor-checks.md`.
+
+The 03:46:41 UTC recheck retained that outcome: SNAPs 0/2 aligned, SNAPs 1/3
+unreadable. A timeout-wrap bug exists in the firmware repository's pinned
+upstream source, but its role in the live lockout is not established. Identifying
+an active peer versus stale session needs operator-assisted passive capture;
+repeated pings cannot certify PPS or clear the failure. The follow-up evidence
+above records source identities, historical failure windows and the capture
+command. No programming, synchronization or session recovery was attempted.
 
 **Ping now · get spectra** explicitly submits the existing `snap_read` job
 through the protected loopback bridge. It is a diagnostic read, not an ICMP
