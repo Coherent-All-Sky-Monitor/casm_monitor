@@ -12,3 +12,15 @@ AGENTS.md
 HANDOVER.md
 .claude/
 .codex/
+
+# Local credentials must never be committed.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519
+credentials.json
+secrets.yaml
+secrets.yml

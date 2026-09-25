@@ -153,6 +153,9 @@ For real documentation screenshots and a bounded service CPU/RAM sample, run
 offline Python environment from the repository root. It captures loaded live
 views, never fixture responses or calibration/acquisition jobs. See
 [resources and storage](../docs/resources-and-storage.md) for paths and limits.
+For README screenshots only, add `--screenshots-only`; this captures the
+current dashboard and a small image-hash manifest without resource sampling,
+hardware acquisition or Calibration actions. Images are decoded before capture.
 
 - `src/App.tsx`: current reachable routes; do not infer bundle use from legacy
   source files merely remaining in the tree.

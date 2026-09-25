@@ -52,11 +52,93 @@ def sample(units):
     return output
 
 
+def screenshots_only(output):
+    """Capture current public-facing views without sampling host resources."""
+    report = dict(captured_at_utc=datetime.now(timezone.utc).isoformat(),
+                  git_head=command('git', '-C', str(ROOT), 'rev-parse', 'HEAD'),
+                  method='Real saved data; no fixtures, acquisition or Calibration actions.',
+                  screenshots=[])
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True,
+                                   args=['--disable-dev-shm-usage', '--disable-gpu'])
+        page = browser.new_page(viewport=dict(width=1500, height=1100))
+        errors, denied = [], []
+        page.on('pageerror', lambda e: errors.append(str(e)))
+
+        def guard(route):
+            request = route.request
+            if request.method not in ('GET', 'HEAD', 'OPTIONS') and request.url.split('?')[0] != URL+'/api/science/render':
+                denied.append(request.url)
+                route.abort()
+            else:
+                route.continue_()
+
+        page.route('**/*', guard)
+
+        def shot(name, selector, full=True):
+            page.locator(selector).first.wait_for(timeout=60000)
+            page.evaluate("document.querySelectorAll('img').forEach(i=>i.loading='eager')")
+            page.wait_for_function("""selector => {
+                const nodes = [...document.querySelectorAll(selector)];
+                return nodes.length && nodes.every(e => e.tagName !== 'IMG' || (e.complete && e.naturalWidth > 0));
+            }""", arg=selector, timeout=60000)
+            page.locator(selector).evaluate_all("""async nodes => {
+                await Promise.all(nodes.filter(e => e.tagName === 'IMG').map(e => e.decode()));
+            }""")
+            page.evaluate('document.fonts.ready')
+            page.evaluate('window.scrollTo(0, 0)')
+            page.evaluate('new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
+            assert not errors, errors
+            assert not denied, denied
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+            dest = output/f'{name}.png'
+            page.screenshot(path=str(dest), full_page=full, animations='disabled', timeout=20000)
+            report['screenshots'].append(dict(file=dest.name, route=page.url.removeprefix(URL),
+                captured_at_utc=datetime.now(timezone.utc).isoformat(),
+                sha256=hashlib.sha256(dest.read_bytes()).hexdigest(),
+                viewport=page.viewport_size, full_page=full))
+            (output/'manifest.json').write_text(json.dumps(report, indent=2)+'\n')
+            print('Captured', name, flush=True)
+
+        page.goto(URL+'/observation', wait_until='domcontentloaded')
+        page.locator('.overview-image img').first.wait_for(timeout=60000)
+        shot('overview', '.overview-photo img, .overview-image img')
+        page.goto(URL+'/vis', wait_until='domcontentloaded')
+        page.locator('.array-results[aria-busy=false]').wait_for(timeout=60000)
+        shot('visibilities-autos', '.antenna-plot svg')
+        page.get_by_role('button', name='Cross-correlations', exact=True).click()
+        page.wait_for_function("document.querySelector('.array-results[aria-busy=false] .array-results-heading')?.textContent.includes('Baselines to ')", timeout=60000)
+        shot('visibilities-crosses', '.antenna-plot .array-dynamic > img')
+        page.goto(URL+'/search', wait_until='domcontentloaded')
+        shot('search', '.plot-surface img')
+        page.goto(URL+'/snaps', wait_until='domcontentloaded')
+        page.locator('.snap-health-badge').first.wait_for(timeout=60000)
+        shot('snaps', '.snap-spectrum-card svg')
+        page.goto(URL+'/cands', wait_until='domcontentloaded')
+        page.get_by_label('Plots in grid', exact=True).select_option('6')
+        shot('candidates', '.candidate-image img')
+        page.goto(URL+'/sources', wait_until='domcontentloaded')
+        page.set_viewport_size(dict(width=1500, height=1800))
+        shot('sources-b0329', '.history-entry > .history-image img', full=False)
+        page.set_viewport_size(dict(width=1500, height=1100))
+        page.get_by_role('button', name='Sun', exact=True).click()
+        page.locator('.transit-entry .beam-light-curve').first.wait_for(timeout=60000)
+        page.wait_for_function('!document.querySelector(".transit-entry [role=status]")', timeout=60000)
+        shot('sources-sun', '.transit-entry .array-dynamic > img')
+        browser.close()
+    print('Saved screenshot manifest:', output/'manifest.json', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--screenshots-only', action='store_true',
+                        help='Capture current dashboard views without host-resource measurements or Calibration actions.')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
+    if args.screenshots_only:
+        screenshots_only(args.output)
+        return
     units = services()
     report = dict(captured_at_utc=datetime.now(timezone.utc).isoformat(),
         base_url=URL, git_head=command('git','-C',str(ROOT),'rev-parse','HEAD'),
