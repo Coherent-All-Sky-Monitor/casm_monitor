@@ -78,6 +78,13 @@ def main():
         shared_limits=limits()
         lower=float(plot.get_attribute('data-y-min'))
         assert float(plot.get_attribute('data-y-max'))-lower<100
+        saved=page.request.get(URL+'/api/snap-workspace/spectra').json()
+        peak=max(v+100 for b in saved['boards'] for i in b['inputs']
+                 if f"{b['ip']}/{i['adc']}" in members
+                 for v in b['spectra_db'][i['adc']] if v is not None)
+        ceiling=float(plot.get_attribute('data-y-max'))
+        assert ceiling>=65 and ceiling>peak
+        assert ceiling<=max(65,peak+3.5)
         assert page.get_by_label('Power reference',exact=True).count()==0
         assert page.get_by_label('Y-axis scale',exact=True).count()==0
         screenshot(page,'snaps-latest.png')

@@ -49,6 +49,11 @@ timeline opens the shared Fit/zoom/pan viewer; trial details remain selectable
 inside it. All displayed data figures on reachable routes use that viewer,
 including candidate statistics, saved review evidence and Calibration galleries.
 Array maps retain their selection actions rather than opening image zoom.
+Every zoom viewer has **Download** beside Fit. Saved PNGs/photos download their
+original bytes; browser-rendered figures export a white-background PNG with
+the full axes, colourbars and companion panels, not just the visible viewport.
+Downloads are generated locally from the displayed figure, without new science
+jobs or hardware reads. Export failures are shown in the viewer.
 `/vis` opens the array inspector with the current recorded beamforming set
 selected, using the same inspected payload membership as Overview and SNAPs.
 Green identifies beamforming inputs, blue other wired inputs; dashed map
@@ -66,6 +71,8 @@ display is dB re 10⁻¹⁰ native power units. Scale/reference/history controls
 removed; collection and the saved-history API are unchanged. Power limits cover
 every finite displayed channel with padding, including narrow peaks. They update
 with each saved spectrum or selection change; compact and expanded views match.
+The preferred ceiling is 65 dB, expanding above real peaks with 1 dB of
+headroom rounded up to a 2.5 dB step. No channel is hidden to meet that ceiling.
 SNAPs and Overview show independent Streaming/PPS boxes from saved evidence.
 `/antennas` retains the legacy URL but no longer appears as a SNAP submenu.
 See [SNAP views and acquisition status](../docs/snap-spectra.md); hourly collector

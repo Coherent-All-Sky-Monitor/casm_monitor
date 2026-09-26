@@ -40,13 +40,19 @@ spectra. Opening the page or browsing history never contacts hardware.
   are not clipped to an invented noise floor: the line breaks and counts are
   displayed. Zero power has no finite dB value.
 - All panels share one power scale spanning **every finite displayed channel**,
-  with padding. There is no percentile clipping. Limits update with each saved
+  with padding. The preferred upper limit is 65 dB; higher peaks expand it to
+  the next 2.5 dB step above the peak plus 1 dB. This replaces the larger 8%
+  upper padding. The September 26 01:43 UTC saved read peaks at 73.52 dB on
+  N16E1, requiring 75 dB; a hard 65 dB cap would clip five beamforming channels.
+  There is no percentile clipping. Limits update with each saved
   spectrum or selection change, including all-ADC and individually shown inputs.
   Expanded spectra use the same limits. Scale/refit controls are removed.
   This supersedes the earlier pinned percentile scale and its orange clipping
   markers; data values and the fixed dB reference are unchanged.
 
-Click any spectrum to expand it and see full-band power versus time. The trend
+Click any spectrum to expand it and see full-band power versus time. **Download**
+in the shared zoom toolbar saves both panels, axes and timestamps as one PNG.
+The trend
 is `10 log10(mean(linear power))` over all 4096 channels, including true zeros.
 An incomplete band gives a missing point, not a mean over a changing channel
 set. The automatically focused trend scale reveals drift in absolute dB. Lines break

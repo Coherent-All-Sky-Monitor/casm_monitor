@@ -10,6 +10,7 @@
 .figure-zoom-controls { margin: 12px 0; color: #454b52; font-size: 12px; }
 .figure-zoom-controls output { min-width: 40px; text-align: center; }
 .figure-zoom-controls span { margin-left: auto; }
+.figure-download-error { color: #a32b22; font-size: 13px; }
 .figure-zoom-viewport { overflow: auto; max-height: calc(100dvh - 245px); background: white; overscroll-behavior: contain; }
 .figure-zoom-viewport.zoomed { cursor: grab; touch-action: none; user-select: none; }
 .figure-zoom-viewport.zoomed:active { cursor: grabbing; }
