@@ -61,6 +61,8 @@ borders identify hidden panels. Manual selections survive refresh, while the
 Beamforming preset follows membership updates. Unknown membership stays unknown.
 `/snaps` opens white full-band spectrum panels in compact SNAP order, with
 station order/grid, a prominent all-12-ADC switch and expanded 30-day power trends.
+Spectrum panels share the visibility autos' 324:192 aspect ratio at every width
+and zoom level; the companion history trend retains its compact strip layout.
 Its default and green borders follow inspected nonzero slots in the latest
 recorded deployed CB weights, not layout intent. All wired inputs remain in
 the nearby layout and Overview map. SNAP status/read-details include board IPs.

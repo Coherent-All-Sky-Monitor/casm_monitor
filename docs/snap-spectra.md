@@ -52,6 +52,8 @@ spectra. Opening the page or browsing history never contacts hardware.
 
 Click any spectrum to expand it and see full-band power versus time. **Download**
 in the shared zoom toolbar saves both panels, axes and timestamps as one PNG.
+Spectrum frames use the same 324:192 aspect ratio as visibility autos, including
+expanded views. The separate power-history plot retains its compact height.
 The trend
 is `10 log10(mean(linear power))` over all 4096 channels, including true zeros.
 An incomplete band gives a missing point, not a mean over a changing channel

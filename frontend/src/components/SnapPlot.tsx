@@ -10,7 +10,9 @@ export function SnapPlot({freq, values, reference, range, trend, powerReference=
   const host=useRef<HTMLDivElement>(null), clip=useId().replace(/:/g,'');
   const [width,setWidth]=useState(350),[hover,setHover]=useState('');
   useEffect(()=>{const o=new ResizeObserver(([e])=>setWidth(Math.max(250,e.contentRect.width)));if(host.current)o.observe(host.current);return()=>o.disconnect();},[]);
-  const [lo,hi]=range, left=57,right=width-16,top=16,bottom=171,height=219;
+  // Match the visibility autos' 324:192 frame; trends retain their compact strip.
+  const height=trend?219:width*192/324;
+  const [lo,hi]=range, left=57,right=width-16,top=16,bottom=height-48;
   const t0=trend?.start??SNAP_FREQ_LIMITS[0],t1=trend?.end??SNAP_FREQ_LIMITS[1];
   const x=(v:number)=>left+(v-t0)/(t1-t0)*(right-left), y=(v:number)=>top+(hi-v)/(hi-lo)*(bottom-top);
   const trace=(axis:number[],line:Value[],epochs?:(string|null)[])=>{
@@ -28,7 +30,7 @@ export function SnapPlot({freq, values, reference, range, trend, powerReference=
   const tickCount=Math.max(2,Math.min(6,Math.floor((right-left)/110)));
   const ticks=trend?Array.from({length:tickCount},(_,i)=>t0+(t1-t0)*i/(tickCount-1)):niceTicks(t0,t1,Math.min(14,(right-left)/42));
   const date=(t:number)=>new Date(t*1000).toISOString().slice(5,16).replace('T',' ');
-  return <div className="snap-plot" ref={host}>
+  return <div className={`snap-plot${trend?' snap-trend':''}`} ref={host}>
     <svg viewBox={`0 0 ${width} ${height}`} role="img" data-power-reference={powerReference} data-x-min={t0} data-x-max={t1} data-y-min={lo} data-y-max={hi} aria-label={trend?'Full-band power (dB) versus time (UTC)':'Power (dB) versus frequency (MHz), 4096 channels'}
       onMouseLeave={()=>setHover('')} onMouseMove={e=>{
         const r=e.currentTarget.getBoundingClientRect(),v=t0+((e.clientX-r.left)/r.width*width-left)/(right-left)*(t1-t0);
@@ -47,7 +49,7 @@ export function SnapPlot({freq, values, reference, range, trend, powerReference=
         {trend&&trend.points.map(p=>p.power_db===null?null:<circle key={p.ts} cx={x(p.ts)} cy={y(p.power_db+shift)} r="3" fill="#194fa3"><title>{date(p.ts)} UTC · {(p.power_db+shift).toFixed(2)} dB · EQ {p.eq_epoch??'unknown'}</title></circle>)}
       </g>
       {!trend&&line.map((v,i)=>v===null||v>=lo&&v<=hi?null:<path key={i} fill="#b9540b" d={v>hi?`M${x(axis[i])-2},${top+5}l2,-4l2,4Z`:`M${x(axis[i])-2},${bottom-5}l2,4l2,-4Z`}/>)}
-      {!finite.length&&<text x={(left+right)/2} y="93" textAnchor="middle">{values===null&&!trend?'No saved spectrum':'No positive power samples'}</text>}
+      {!finite.length&&<text x={(left+right)/2} y={(top+bottom)/2} textAnchor="middle">{values===null&&!trend?'No saved spectrum':'No positive power samples'}</text>}
     </svg>
     <div className="snap-readout">{hover|| (clipped?`${clipped} points outside displayed limits · orange edge markers`:'\u00a0')}</div>
   </div>;

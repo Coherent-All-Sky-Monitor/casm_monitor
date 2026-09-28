@@ -17,6 +17,8 @@
 .figure-zoom-content { min-width: 100%; }
 .figure-zoom-content > img { display: block; width: 100%; height: auto; }
 .figure-zoom-content .array-spectrum { max-width: none; }
+.figure-zoom-content .snap-expanded, .figure-zoom-content .snap-expanded .snap-plot { max-width: none; }
+.figure-zoom-content .snap-expanded .snap-plot:not(.snap-trend) svg { max-height: none; }
 .figure-zoom-content .array-dynamic { grid-template-rows: calc(360px * var(--figure-zoom)) auto auto; }
 .figure-zoom-content .array-dynamic > img { height: calc(360px * var(--figure-zoom)); }
 .figure-zoom-actions { padding-top: 12px; font-size: 12px; }

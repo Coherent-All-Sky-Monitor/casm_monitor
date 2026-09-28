@@ -68,6 +68,10 @@ def main():
         plot=page.locator('.snap-spectrum-card').first.locator('svg')
         assert plot.get_attribute('data-x-min')=='374.9'
         assert plot.get_attribute('data-x-max')=='500.1'
+        def same_aspect(plot):
+            rect=plot.bounding_box()
+            assert abs(rect['width']/rect['height']-324/192)<.01,rect
+        same_aspect(plot)
         limits=lambda:page.locator('.snap-spectrum-card svg').evaluate_all("es=>[...new Set(es.map(e=>e.dataset.yMin+','+e.dataset.yMax))]")
         def no_clipping():
             assert len(limits())==1
@@ -112,6 +116,13 @@ def main():
         page.get_by_role('button',name='Expand SNAP 0 ADC 0',exact=True).click()
         page.get_by_role('dialog').wait_for()
         page.get_by_role('dialog').get_by_role('img', name='Full-band power (dB) versus time (UTC)').wait_for(timeout=60000)
+        enlarged=page.get_by_role('dialog').locator('.snap-plot:not(.snap-trend) svg')
+        same_aspect(enlarged)
+        original_width=enlarged.bounding_box()['width']
+        page.get_by_role('button',name='Zoom in',exact=True).click()
+        page.wait_for_timeout(200)
+        same_aspect(enlarged)
+        assert enlarged.bounding_box()['width']>1.4*original_width
         screenshot(page,'snaps-history-expanded.png')
         page.keyboard.press('Escape')
         page.get_by_role('button',name='Hide SNAP 0 ADC 0',exact=True).click()
@@ -125,6 +136,7 @@ def main():
             plot=page.locator('.snap-spectrum-card').first
             assert plot.locator('svg').evaluate('e=>getComputedStyle(e.parentElement).backgroundColor')=='rgb(255, 255, 255)'
             assert plot.locator('svg').bounding_box()['width']>=250
+            same_aspect(plot.locator('svg'))
             if width==390:
                 screenshot(plot,'snaps-mobile-panel.png')
         page.set_viewport_size({'width':1500,'height':1100})
