@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import struct
 import threading
 import time
 from collections import OrderedDict
@@ -15,6 +16,7 @@ from datetime import date, datetime, timezone
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 
 from ..collectors.snapread import snap_read_interval_s
 from ..collectors.vis import auto_indices, read_latest_vis
@@ -164,6 +166,7 @@ def build_router(settings, reader):
     shards = ShardReader(reader)
     cache = OrderedDict()
     change_cache = OrderedDict()
+    playback_cache = OrderedDict()
     lock = threading.Lock()
 
     def boards():
@@ -287,6 +290,7 @@ def build_router(settings, reader):
             item = dict(board, ts=row['t0'] if row else None,
                         shard_id=row['id'] if row else None,
                         eq_epoch=row['eq_epoch'] if row else None,
+                        fft_shift=row['fft_shift'] if row else None,
                         stale=bool(selected is None and at is None and row and now-row['t0'] > interval*1.5),
                         historical=selected is not None or at is not None,
                         latest_attempt=latest.get(ip, {}).get('ts'),
@@ -319,6 +323,22 @@ def build_router(settings, reader):
             ','.join('?' for _ in ips) + ") GROUP BY day ORDER BY day DESC", ips)
         return dict(days=[dict(r) for r in rows], timezone='UTC')
 
+    def snapshot_groups(rows):
+        ips = {b['ip'] for b in boards()}
+        groups = []
+        for row in rows:
+            if row['ip'] not in ips:
+                continue
+            # Match the dated catalogue when a multi-day movie crosses midnight.
+            if (not groups or row['t0'] - groups[-1]['start'] > 600
+                    or row['ip'] in groups[-1]['boards']
+                    or int(row['t0']//86400) != int(groups[-1]['start']//86400)):
+                groups.append(dict(start=row['t0'], at=row['t0'], boards=[], ids=[]))
+            groups[-1]['at'] = row['t0']
+            groups[-1]['ids'].append(row['id'])
+            groups[-1]['boards'].append(row['ip'])
+        return groups
+
     @router.get('/spectra-catalog')
     def catalog(days: int = Query(30, ge=1, le=365), archive: bool = False, day: str | None = None):
         end = time.time()
@@ -336,21 +356,121 @@ def build_router(settings, reader):
             # Explicit dates can retrieve any retained day, without a 365-day ceiling.
             archive = True
         rows = records(start=start, end=end)
-        ips = {b['ip'] for b in boards()}
-        groups = []
-        for row in rows:
-            if row['ip'] not in ips:
-                continue
-            # A sequential board pass can take seven minutes. Keep its real
-            # per-board times in spectra(); group only this timeline control.
-            if not groups or row['t0'] - groups[-1]['start'] > 600 or row['ip'] in groups[-1]['boards']:
-                groups.append(dict(start=row['t0'], at=row['t0'], boards=[], ids=[]))
-            groups[-1]['at'] = row['t0']
-            groups[-1]['ids'].append(row['id'])
-            if row['ip'] not in groups[-1]['boards']:
-                groups[-1]['boards'].append(row['ip'])
+        groups = snapshot_groups(rows)
         return dict(days=days, day=day, start=start, end=end, snapshots=groups, history_start=epoch, archive=archive,
                     reads=sum(len(g['boards']) for g in groups))
+
+    @router.get('/spectra-playback')
+    def playback(day: str, span_days: int = Query(1, ge=1, le=7)):
+        """Pin up to a week's reads and per-input extrema for fixed movie axes.
+
+        No resampling, normalization, disk products or acquisition. The small
+        manifest is cached; native frame arrays are fetched separately by ID.
+        """
+        if span_days not in (1, 2, 7):
+            raise HTTPException(400, 'Choose a day, 48 hours or a week')
+        timeline = catalog(day=day, days=1, archive=True)
+        if span_days > 1:
+            # Rolling now for today; historical selections end at that UTC
+            # day's end. The explicit returned endpoints are part of the UI.
+            timeline['end'] = min(timeline['end'], time.time())
+            timeline['start'] = timeline['end'] - span_days*86400
+            timeline['snapshots'] = snapshot_groups(records(start=timeline['start'], end=timeline['end']))
+        ids = {key for group in timeline['snapshots'] for key in group['ids']}
+        if len(ids) > 1024:
+            raise HTTPException(400, 'Playback exceeds 1024 board reads; select a shorter interval')
+        rows = [r for r in records(start=timeline['start'], end=timeline['end']) if r['id'] in ids]
+        if sum(preflight(row) for row in rows) > READ_BUDGET:
+            raise HTTPException(400, 'Playback exceeds the 512 MiB read budget; select a shorter interval')
+        key = tuple(sorted(ids))
+        with lock:
+            if key in playback_cache:
+                summary = playback_cache.pop(key)
+            else:
+                limits, unavailable = {}, []
+                for row in rows:
+                    try:
+                        data = power_db(load(row))
+                    except Exception:
+                        unavailable.append(row['id'])
+                        continue
+                    for adc, line in enumerate(data):
+                        finite = line[np.isfinite(line)]
+                        if not len(finite):
+                            continue
+                        ident = f"{row['ip']}/{adc}"
+                        lo, hi = limits.get(ident, [math.inf, -math.inf])
+                        limits[ident] = [min(lo, float(finite.min())), max(hi, float(finite.max()))]
+                summary = dict(limits_db=limits, unavailable_ids=unavailable)
+            playback_cache[key] = summary
+            while len(playback_cache) > 4:
+                playback_cache.popitem(last=False)
+        return dict(day=day, span_days=span_days, start=timeline['start'], end=timeline['end'], snapshots=timeline['snapshots'], **summary,
+                    configured_interval_s=snap_read_interval_s(settings),
+                    units='dB re 1 native power unit (not dBm)',
+                    note='Pinned saved reads; per-input extrema cover every finite native channel of this interval.')
+
+    @router.get('/spectra-playback-frames')
+    def playback_frames(frames: str, inputs: str):
+        """Up to twelve pinned frames, requested ADCs only, packed float32 dB.
+
+        Four-byte little-endian JSON-header length, padded UTF-8 JSON header,
+        then C-order little-endian float32 [frame,input,4096]. NaN is missing
+        or nonpositive power, not an invented floor. No current status reads.
+        """
+        configured = {b['ip']: b for b in boards()}
+        try:
+            groups = [[int(v) for v in group.split(',')] for group in frames.split(';')]
+            requested = [tuple(v.rsplit('/', 1)) for v in inputs.split(',')]
+            requested = [(ip, int(adc)) for ip, adc in requested]
+            if (not 1 <= len(groups) <= 12 or any(not 1 <= len(g) <= 4 or len(set(g)) != len(g) or min(g)<1 for g in groups)
+                    or not 1 <= len(requested) <= 48 or len(set(requested)) != len(requested)
+                    or any(ip not in configured or not 0 <= adc < 12 for ip, adc in requested)):
+                raise ValueError()
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, 'Select up to 12 frames and 48 distinct configured ADCs') from exc
+        keys = sorted({key for group in groups for key in group})
+        rows = {r['id']:dict(r) for r in reader.query("SELECT id,t0,path,shape,dtype,"
+            "json_extract(meta,'$.ip') ip,json_extract(meta,'$.eq_epoch') eq_epoch,"
+            "json_extract(meta,'$.fft_shift') fft_shift FROM shards WHERE stream='snap_read' AND id IN ("
+            + ','.join('?' for _ in keys) + ')', keys)}
+        if len(rows) != len(keys) or any(r['ip'] not in configured for r in rows.values()):
+            raise HTTPException(404, 'A pinned SNAP read is no longer available')
+        for group in groups:
+            if len({rows[key]['ip'] for key in group}) != len(group):
+                raise HTTPException(400, 'Select only one read per board in each frame')
+        if sum(preflight(row) for row in rows.values()) > 64*1024**2:
+            raise HTTPException(400, 'Playback batch exceeds its read budget')
+        array = np.full((len(groups),len(requested),4096), np.nan, dtype='<f4')
+        metadata = []
+        # No batch-wide raw-array cache: one small board array at a time.
+        for frame_index, group in enumerate(groups):
+            by_ip = {rows[key]['ip']:rows[key] for key in group}
+            frame_boards = []
+            for ip in dict.fromkeys(ip for ip, _ in requested):
+                row = by_ip.get(ip)
+                item = dict(ip=ip, feng_id=configured[ip]['feng_id'], ts=row['t0'] if row else None, shard_id=row['id'] if row else None,
+                            eq_epoch=row['eq_epoch'] if row else None, fft_shift=row['fft_shift'] if row else None,
+                            error=None, zero_channels={}, invalid_channels={})
+                if row:
+                    try:
+                        data=load(row)
+                        for input_index,(wanted,adc) in enumerate(requested):
+                            if wanted != ip:
+                                continue
+                            array[frame_index,input_index]=power_db(data[adc])
+                            item['zero_channels'][adc]=int(np.sum(data[adc]==0))
+                            item['invalid_channels'][adc]=int(np.sum(~np.isfinite(data[adc])|(data[adc]<0)))
+                    except Exception:
+                        item['error']='Saved spectrum unavailable'
+                frame_boards.append(item)
+            metadata.append(dict(ids=group,boards=frame_boards))
+        header=json.dumps(dict(version=1,encoding='f32le',shape=list(array.shape),
+                               inputs=[f'{ip}/{adc}' for ip,adc in requested],frames=metadata,
+                               freq_mhz=freq_mhz())).encode()
+        header += b' '*(-len(header)%4)
+        return Response(struct.pack('<I',len(header))+header+array.tobytes(),media_type='application/octet-stream',
+                        headers={'Cache-Control':'no-store'})
 
     @router.get('/spectra-trend')
     def trend(ip: str, adc: int = Query(..., ge=0, le=11), days: int = Query(30, ge=1, le=365), archive: bool = False, at: float | None = None):

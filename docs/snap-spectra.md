@@ -76,6 +76,11 @@ retained dates; choosing an empty date explicitly shows no data. Missing boards 
 read stay blank; they never borrow another read. Per-board timestamps remain
 visible: a board pass is sequential, not a simultaneous measurement.
 
+**Play day** in History opens all selected spectra in a compact playback grid.
+Day is the default, with 48-hour/week presets, UTC/local clock, speed, seek and
+loop controls. Frames are buffered ahead in selected-input batches; axes stay
+fixed across the chosen interval. See [playback](snap-history.md#playback).
+
 **Compare with…** opens an optional date/time navigator, initially the preceding
 saved read. It overlays that independently selected saved read in orange
 against blue selected/live spectra. Shared limits include every finite value in
@@ -259,6 +264,8 @@ New read-only routes, with Unix-second timestamps:
 | `GET /api/snap-workspace/spectra[?at=<unix>]` | Current layout, frequency axis, per-board dB spectra, timestamps, errors and zero/invalid counts. Omitted time means latest saved success. `ids=1,2,3,4` selects exact saved shards (at most one per configured board); absent boards stay blank. Historical age alone is not stale. |
 | `GET /api/snap-workspace/spectra-days` | All retained UTC dates and counts, using manifest metadata only. |
 | `GET /api/snap-workspace/spectra-catalog?day=YYYY-MM-DD` | Exact day's sequential read groups, IDs and board coverage, including archive. Legacy `days=30` remains supported. |
+| `GET /api/snap-workspace/spectra-playback?day=YYYY-MM-DD&span_days=1` | Pinned saved-read groups and exact per-input dB extrema for fixed axes. Span is 1, 2 or 7 days, at most 1024 board reads within 512 MiB. Four small manifest summaries are cached. |
+| `GET /api/snap-workspace/spectra-playback-frames?frames=<id,id;id,id>&inputs=<ip/adc,ip/adc>` | Up to 12 pinned frames and 48 distinct selected inputs. Binary response: little-endian uint32 padded-JSON-header length, UTF-8 JSON padded to four-byte alignment, then little-endian float32 dB `[frame,input,4096]`. Header includes IDs, ordered input keys, frequency axis and per-board timestamps/settings/errors/counts. NaN means missing/nonpositive power; no floor or live-status loading. |
 | `GET /api/snap-workspace/spectra-trend?ip=<configured-ip>&adc=0&days=30` | Full-band mean power, timestamps, shard IDs, EQ/FFT tags and missing samples. Optional `at=<unix>&archive=true` anchors historical views. |
 | `GET /api/snap-workspace/changes` | Bounded live saved-spectrum change summaries, reference IDs and method thresholds; no acquisition or storage writes. |
 | `GET /api/snap-workspace/change-detail?ids=<sample_ids>&adc=0` | Exact pinned single-board check, current/median/difference arrays and measurements. At most 128 reads in 28 hours; no hardware access or storage writes. |

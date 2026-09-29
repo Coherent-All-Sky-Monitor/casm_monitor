@@ -46,6 +46,36 @@ active child jobs: use the whole cgroup for its budget. No worker limits were
 changed for this audit. The supplied telescope JPEG is 4.9 MB, cached by the
 browser; its decode and plot images add browser memory beyond the server totals.
 
+## SNAP playback sample, September 29, 2026
+
+Saved-history playback uses existing shards, not fresh SNAP reads. The original
+full-board JSON path took about 0.6 seconds and 1.80 MB for one frame, too slow
+for 4× playback's 250 ms target. Selected-input packed batches measured
+**1.16–1.47 seconds and 3.21 MB for 12 frames of 16 inputs**, versus roughly
+21.6 MB for twelve full-board JSON responses. One batch supplies three seconds
+at 4×; the browser prefetches the next. Every native channel remains present.
+
+Fixed-axis manifests took about 0.75 seconds for a day and 2 seconds for 48 hours.
+A first week request took 7.7–11.1 seconds, scanning the retained reads once;
+repeat requests reuse small extrema summaries. The two runs' sampled web RSS
+stayed below 0.5 GiB. These were local shared-host GETs after web restarts, with
+warm filesystem caches. The second run overlapped browser acceptance requests;
+CPU and memory therefore include that traffic. They are not isolated load tests,
+browser-memory measurements or guarantees for many simultaneous viewers.
+
+Evidence is under `/home/casm/scratch/casm-observation-preview/`:
+`snaps-playback-measurements.json` and
+`snaps-playback-buffered-measurements.json`. Reproduce with
+the offline environment and `PYTHONPATH=. python scripts/measure_snap_playback.py --output <private-path>`.
+This does not contact hardware, clear filesystem caches or change service limits.
+The browser retains two batches of up to 12 frames, plus the displayed frame
+while seeking. No movie files or server-side frame cache are created.
+
+Visibilities and Search playback have **not** been implemented or load-tested.
+Their first-time scientific/Matplotlib renders can be more expensive than these
+stored spectra. Any extension should reuse cached products, limit frame counts
+and prefetch, and measure the cold path before enabling it.
+
 ## Where products live
 
 Paths below are the current corr1 configuration, not portable defaults for

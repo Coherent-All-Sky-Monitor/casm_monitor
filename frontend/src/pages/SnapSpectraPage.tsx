@@ -4,6 +4,7 @@ import { FigureZoom } from '../components/FigureZoom';
 import { SnapPlot, SnapTrend } from '../components/SnapPlot';
 import { dbOffset, snapRange, SNAP_REFERENCE_POWER } from '../components/snapPower';
 import { SnapHealth } from '../components/SnapHealth';
+import { SnapPlayback, PlaybackInput } from '../components/SnapPlayback';
 import {ChangeEvidence, previousSnapshot, SavedReadPicker, SnapChanges, SnapSnapshot, snapshotForRead, snapshotUrl, useSnapResource} from '../components/SnapHistory';
 import '../snap-spectra.css';
 
@@ -33,6 +34,7 @@ export default function SnapSpectraPage() {
   const [mode,setMode]=useState<'live'|'history'>('live'),[selected,setSelected]=useState<SnapSnapshot|null>(null);
   const [comparing,setComparing]=useState(false),[comparison,setComparison]=useState<SnapSnapshot|null>(null);
   const [comparisonLoading,setComparisonLoading]=useState(false),[changeEvidence,setChangeEvidence]=useState<Json|null>(null);
+  const [playback,setPlayback]=useState<{day:string;inputs:PlaybackInput[]}|null>(null);
   const allAdcs=scope==='all';
   const [reading,setReading]=useState(false),[receipt,setReceipt]=useState(''),[error,setError]=useState('');
   const {data:acquisition,error:statusError}=useResource('/api/snap-workspace/acquisition',10000);
@@ -95,11 +97,18 @@ export default function SnapSpectraPage() {
     </article>;
   };
   const expandedInput=inputs.find(i=>i.key===expanded);
+  const playDay=()=>{
+    if(!selected)return;
+    const ordered=[...visible];
+    if(layout!=='snap')ordered.sort((a,b)=>location(b).row-location(a).row||location(a).col-location(b).col);
+    setPlayback({day:selected.day,inputs:ordered.map(({key,ip,adc,snap,slot,station,antenna,beamforming})=>({key,ip,adc,snap,slot,station,antenna,beamforming}))});
+  };
   return <div className="workspace-page snap-spectra-page">
     <div className="page-heading"><h2>SNAPs</h2><p className="muted">375–500 MHz · 4096 channels · {mode==='live'?'latest spectra':'saved spectra'}</p></div>
     <section className="snap-history-bar control-surface" aria-label="Spectrum history controls">
       <div className="field-row"><div className="choice-row" aria-label="Spectrum mode">{(['live','history'] as const).map(m=><button key={m} className={mode===m?'active':''} aria-pressed={mode===m} onClick={()=>setMode(m)}>{m==='live'?'Live':'History'}</button>)}</div>
       <span className="muted">{mode==='live'?'Latest saved spectra · updated hourly':selected?`${selected.day} · ${stamp(selected.at).slice(11,16)} UTC`:'Choose a date, then slide through saved times'}</span>
+      {mode==='history'&&<button className="primary snap-play-day" disabled={!selected||!visible.length} onClick={playDay}>Play day</button>}
       <button className={`snap-compare-toggle${comparing?' active':''}`} aria-pressed={comparing} disabled={comparisonLoading||(!frame&&!comparing)} onClick={()=>void toggleCompare()}>{comparing?'Close comparison':'Compare with…'}</button></div>
       {mode==='history'&&<SavedReadPicker label="Spectrum" value={selected} onChange={setSelected}/>}
       {comparing&&<div className="snap-comparison-disclosure">{comparisonLoading?<p>Finding the previous saved read…</p>:<SavedReadPicker label="Comparison" value={comparison} onChange={setComparison}/>}<p className="snap-comparison-caption">Blue: {mode==='live'?'latest':'selected'} read · orange dashed: comparison</p>{compare.error&&<Notice>{compare.error}</Notice>}</div>}
@@ -130,5 +139,6 @@ export default function SnapSpectraPage() {
     <details className="snap-membership-evidence"><summary>Beamforming & plot details</summary><p>{membership.data?.note}</p><p>{membership.data?.path}</p><p>Deployment event: {membership.data?.live_event_utc??'unknown'} · payload inspected: {membership.data?.inspected_at??'not available'}</p><p>{membership.data?.evidence}</p><p>Shared axes: 374.9–500.1 MHz · {sharedRange[0]} to {sharedRange[1]} dB. Full data range, updated with the saved spectra and selection. Fixed reference: 10⁻¹⁰ native power, not dBm. History uses saved reads only.</p></details>
     {expandedInput&&frame&&<Expanded input={expandedInput} frame={frame} reference={referenceFor(expandedInput.ip)} days={days} range={sharedRange} powerReference={powerReference} historical={mode==='history'} onPick={(id,ts)=>void pick(id,ts)} onClose={()=>setExpanded(null)}/>}
     {changeEvidence&&<ChangeEvidence item={changeEvidence} onClose={()=>setChangeEvidence(null)}/>}
+    {playback&&<SnapPlayback {...playback} onClose={()=>setPlayback(null)} onSelect={s=>{setSelected(s);setMode('history');}}/>}
   </div>;
 }

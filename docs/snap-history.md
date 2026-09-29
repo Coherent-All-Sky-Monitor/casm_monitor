@@ -11,6 +11,44 @@ are blank, and archive age alone is not a stale-read warning. Click a full-band
 power trend point to open its saved spectrum. Zoom and PNG download remain
 available. Station and beamforming labels always describe the current mapping.
 
+## Playback
+
+In History, **Play day** opens the selected inputs together in a full-window
+grid. Live remains the page default; opening History alone does not play.
+The default interval is the selected UTC day. **Last 48 hours** and **Last week**
+end now when today's date is selected, or at the selected past UTC day's end.
+The date selector covers all retained dates. The clock switches between UTC and
+OVRO local time, including the date and PDT/PST abbreviation.
+
+Play/pause, previous/next read, the time slider, 0.5/1/2/4× speed and optional
+Loop control saved-read playback. At 1× each read gets one second; 4× targets
+250 ms. Playback stops at the end unless Loop is enabled and pauses when the
+browser tab is hidden, a request fails or a plot is enlarged. **Open this read**
+returns to the ordinary History view at that exact snapshot. Closing leaves
+the previous selection unchanged. The zoom viewer retains PNG download.
+
+Frequency and power axes stay fixed throughout an interval. Power limits cover
+every finite native channel of the selected inputs across that interval, with
+padding; no percentile clipping or per-frame normalization. The player fits a
+compact grid to the viewport; dense/all-ADC and small-screen views scroll inside
+the grid rather than making labels illegible. The usual History/zoom spectrum
+proportions are unchanged.
+
+Reads are pinned when playback opens. Each frame groups a sequential board pass,
+not simultaneous acquisitions. Missing boards remain blank, gaps are labelled,
+and timestamps always describe the displayed frame, including during buffering.
+EQ/FFT changes are labelled against the first setting encountered. No samples
+or missing hours are interpolated. Selection, wiring and beamforming membership
+are captured from the page when playback opens, not reconstructed historically.
+
+The browser fetches up to 12 frames at a time, only for displayed inputs, and
+prefetches the next batch. It retains two batches plus the displayed frame while
+seeking, not the full week. Steps within a loaded batch make no HTTP request.
+Every spectrum still contains 4096 separate channels; float32 transport replaces
+large JSON arrays, not the scientific data's frequency resolution. Initial
+buffering or an unusually slow connection can still delay playback; no reads are
+silently skipped. Failed batches can be retried. Closing cancels pending frame fetches.
+
 ## Change badges
 
 The Latest spectrum check covers all currently wired inputs, independently of which
@@ -89,8 +127,13 @@ The change endpoint scans at most 28 hours and 128 reads per board, loading one
 board at a time. Extra reads produce Unknown. Small summary caches expire after
 120 seconds and hold four entries. Existing path/shape checks still apply.
 Trend reads retain their 512 MiB budget and eight small summary-cache entries.
-The browser keeps at most eight response objects in memory, not the entire
-archive. Today's catalogue refreshes; the chosen spectrum remains pinned.
+The ordinary history browser keeps at most eight response objects in memory,
+not the entire archive. Today's catalogue refreshes; the chosen spectrum remains
+pinned. Playback separately keeps the bounded two-batch buffer described above.
+Its fixed-axis manifest reads at most 1024 board shards within 512 MiB, one board
+at a time, and caches four small extrema summaries. Each packed batch is limited
+to 12 frames, 48 selected inputs and 64 MiB of raw reads. No movie files or new
+server-side spectrum cache are written.
 
 ## Validation
 
@@ -102,6 +145,11 @@ archive dates, missing boards, anchored trends and no jobs/watermark writes.
 `scripts/check_snap_history_browser.py` exercises saved dates, comparisons,
 trend-point navigation, badge expansion, downloads and phone widths against the
 local preview; it blocks every non-GET API request.
+`scripts/check_snap_playback_browser.py` checks the player, fixed axes, intervals,
+seeking and 4× progression across a batch boundary. `--dom-only` explicitly
+excludes native painting, hit-target and PNG-download validation.
+`scripts/measure_snap_playback.py --output <private-path>` measures saved-data
+manifest/batch requests and the web service's CPU/RAM without contacting hardware.
 `scripts/audit_snap_changes.py --output <private-path> --backtest-hours 24`
 checks stored arrays only. Run with `PYTHONPATH=.` in this checkout and the
 offline Python environment. This is a bounded retrospective threshold check,

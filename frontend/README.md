@@ -71,6 +71,15 @@ searchable right sidebar with show/hide toggles, and the shared image zoom.
 All spectrum panels share 374.9–500.1 MHz and a full-data power scale. The default
 display is dB re 10⁻¹⁰ native power units. Scale/reference controls are removed.
 Live/History uses a UTC calendar, within-day time slider and day/read arrows.
+Live is the default. History's **Play day** opens a full-window grid with
+day/48-hour/week presets, UTC/local timestamps, play/pause, speed, seek and Loop.
+`SnapPlayback.tsx` pins the sequence and shared full-data axes, prefetching
+selected inputs in 12-frame packed batches. Two batches are retained; closing
+cancels requests. `snapPlaybackModel.ts` validates/decodes float32 transport and
+implements time/grid helpers. All 4096 channels remain separate. Memoized
+`SnapPlot` traces avoid rebuilding on prefetch completion; the playback clock
+includes render time in its frame interval. Compact playback panels fit the
+viewport, while ordinary/expanded spectra retain the autos aspect ratio.
 Optional **Compare with…** defaults to the preceding saved read and adds an
 orange comparison overlay. Trend points open saved
 spectra. Missing boards stay blank, and current wiring labels remain explicit.

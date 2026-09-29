@@ -1,5 +1,6 @@
 """Stored 4096-channel views: no hardware, Kafka, writes or gap fabrication."""
 import json
+import struct
 
 import numpy as np
 import pytest
@@ -341,3 +342,136 @@ def test_change_detail_uses_pinned_exact_median_and_is_read_only(fixture):
     assert client.get(path,params={'ids':str(ids[0]),'adc':12}).status_code==422
     assert store.query('SELECT count(*) n FROM jobs')[0]['n']==0
     assert store.query('SELECT count(*) n FROM watermarks')[0]['n']==0
+
+
+def test_playback_day_exact_extrema_ids_and_readonly(fixture):
+    from datetime import datetime, timezone
+    client,store,shards,_=fixture
+    day=datetime.fromtimestamp(NOW,timezone.utc).date().isoformat()
+    start=NOW//86400*86400
+    values=np.full((12,4096),1e-8,dtype='float64')
+    values[6,0]=1e-3  # Include a single edge-channel peak, no percentile limits.
+    values[6,4095]=1e-20
+    values[5,0]=0;values[5,1]=np.nan
+    first=save(shards,start+100,values)
+    second=save(shards,start+7300)
+    foreign=save(shards,start+7400,ip='not-configured')
+    path=f'/api/snap-workspace/spectra-playback?day={day}'
+    out=client.get(path).json()
+    assert out['span_days']==1 and out['start']==start
+    assert [s['ids'] for s in out['snapshots']]==[[first['id']],[second['id']]]
+    assert out['limits_db'][f'{IP}/6']==[-200.,-30.]
+    assert out['limits_db'][f'{IP}/5'][0]==pytest.approx(-80.)
+    assert not out['unavailable_ids']
+    newer=save(shards,start+10000,np.full((12,4096),100,dtype='float32'))
+    updated=client.get(path).json()
+    assert updated['snapshots'][-1]['ids']==[newer['id']]
+    assert updated['limits_db'][f'{IP}/6']==[-200.,20.]
+    # A pinned frame's arrays do not change when later acquisition arrives.
+    pinned=client.get(f'/api/snap-workspace/spectra?ids={first["id"]}').json()
+    assert pinned['boards'][0]['spectra_db'][6][0]==-30.
+    assert store.query('SELECT count(*) n FROM jobs')[0]['n']==0
+    assert store.query('SELECT count(*) n FROM watermarks')[0]['n']==0
+
+
+def test_playback_window_bounds_archive_gaps_empty_and_errors(fixture,monkeypatch):
+    from datetime import datetime, timezone
+    client,store,shards,settings=fixture
+    day=datetime.fromtimestamp(NOW,timezone.utc).date().isoformat()
+    older=save(shards,NOW-6*86400)
+    recent=save(shards,NOW-47*3600)
+    latest=save(shards,NOW-100)
+    path='/api/snap-workspace/spectra-playback'
+    for span,expected in [(2,[recent['id'],latest['id']]),(7,[older['id'],recent['id'],latest['id']])]:
+        out=client.get(path,params={'day':day,'span_days':span}).json()
+        assert out['end']==NOW and out['start']==NOW-span*86400
+        assert [s['ids'][0] for s in out['snapshots']]==expected
+    assert client.get(path,params={'day':'2000-01-01'}).json()['snapshots']==[]
+    for invalid in ['nonsense','2026-02-30']:
+        assert client.get(path,params={'day':invalid}).status_code==400
+    assert client.get(path,params={'day':day,'span_days':3}).status_code==400
+    assert client.get(path,params={'day':day,'span_days':8}).status_code==422
+    monkeypatch.setattr(module,'READ_BUDGET',1)
+    assert client.get(path,params={'day':day}).status_code==400
+
+
+def test_playback_missing_shard_and_midnight_do_not_borrow_data(fixture):
+    from datetime import datetime,timezone
+    client,store,shards,settings=fixture
+    second='192.168.120.51'
+    with settings.snap_map_csv.open('a') as f:f.write(f'1,I,1,{second}\n')
+    midnight=NOW//86400*86400
+    before=save(shards,midnight-3)
+    after=save(shards,midnight+3,ip=second)
+    day=datetime.fromtimestamp(NOW,timezone.utc).date().isoformat()
+    store.execute("UPDATE shards SET path=? WHERE id=?",(str(settings.store_root/'gone.zarr'),after['id']))
+    out=client.get('/api/snap-workspace/spectra-playback',params={'day':day,'span_days':2}).json()
+    assert len(out['snapshots'])==2
+    assert out['snapshots'][0]['ids']==[before['id']]
+    assert out['snapshots'][1]['ids']==[after['id']]
+    assert out['unavailable_ids']==[after['id']]
+    pinned=client.get(f'/api/snap-workspace/spectra?ids={after["id"]}').json()
+    assert all(b['spectra_db'] is None for b in pinned['boards'])
+
+
+def unpack_playback(response):
+    assert response.status_code==200,response.text[:200]
+    assert response.headers['content-type']=='application/octet-stream'
+    size=struct.unpack('<I',response.content[:4])[0]
+    header=json.loads(response.content[4:4+size])
+    data=np.frombuffer(response.content,dtype='<f4',offset=4+size).reshape(header['shape'])
+    return header,data
+
+
+def test_packed_playback_selected_channels_exact_ids_and_readonly(fixture,monkeypatch):
+    client,store,shards,_=fixture
+    values=np.arange(1,12*4096+1,dtype='float32').reshape(12,4096)*1e-8
+    values[6,:4]=[0,np.nan,-1,np.inf]
+    first=save(shards,NOW-1000,values)
+    second=save(shards,NOW-100,values*10,epoch='e2')
+    def forbidden(*_,**__):raise AssertionError('Playback must not load current health or contact hardware')
+    monkeypatch.setattr(module,'latest_reads',forbidden)
+    monkeypatch.setattr(module,'read_latest_vis',forbidden)
+    response=client.get('/api/snap-workspace/spectra-playback-frames',params={
+        'frames':f'{first["id"]};{second["id"]}','inputs':f'{IP}/6,{IP}/2'})
+    header,data=unpack_playback(response)
+    assert header['inputs']==[f'{IP}/6',f'{IP}/2']
+    assert header['shape']==[2,2,4096]
+    assert [f['ids'] for f in header['frames']]==[[first['id']],[second['id']]]
+    assert header['frames'][1]['boards'][0]['eq_epoch']=='e2'
+    assert header['frames'][0]['boards'][0]['feng_id']==0
+    assert header['frames'][0]['boards'][0]['zero_channels']['6']==1
+    assert header['frames'][0]['boards'][0]['invalid_channels']['6']==3
+    assert header['freq_mhz'][0]==500 and header['freq_mhz'][-1]==pytest.approx(375.030517578125)
+    np.testing.assert_allclose(data[0,0],module.power_db(values[6]),atol=1e-5)
+    np.testing.assert_allclose(data[1,1],module.power_db(values[2]*10),atol=1e-5)
+    assert store.query('SELECT count(*) n FROM jobs')[0]['n']==0
+    assert store.query('SELECT count(*) n FROM watermarks')[0]['n']==0
+
+
+def test_packed_playback_missing_board_and_broken_shard_are_not_borrowed(fixture):
+    client,store,shards,settings=fixture
+    second='192.168.120.51'
+    with settings.snap_map_csv.open('a') as f:f.write(f'1,I,1,{second}\n')
+    save(shards,NOW-200,ip=second)
+    good=save(shards,NOW-100)
+    bad=save(shards,NOW-50)
+    store.execute('UPDATE shards SET path=? WHERE id=?',(str(settings.store_root/'gone.zarr'),bad['id']))
+    header,data=unpack_playback(client.get('/api/snap-workspace/spectra-playback-frames',params={
+        'frames':f'{good["id"]};{bad["id"]}','inputs':f'{IP}/0,{second}/0'}))
+    assert np.isfinite(data[0,0]).all() and np.isnan(data[0,1]).all() and np.isnan(data[1]).all()
+    assert header['frames'][0]['boards'][1]['ts'] is None
+    assert header['frames'][1]['boards'][0]['error']=='Saved spectrum unavailable'
+
+
+def test_packed_playback_rejects_invalid_or_oversized_selections(fixture):
+    client,store,shards,_=fixture
+    a=save(shards,NOW-100)['id'];b=save(shards,NOW-50)['id']
+    path='/api/snap-workspace/spectra-playback-frames'
+    for frames in ['', 'x', '0', f'{a},{a}', f'{a},{b}', ';'.join([str(a)]*13)]:
+        assert client.get(path,params={'frames':frames,'inputs':f'{IP}/0'}).status_code==400
+    for inputs in ['', f'{IP}/12', f'{IP}/-1', 'unknown/0', f'{IP}/0,{IP}/0']:
+        assert client.get(path,params={'frames':str(a),'inputs':inputs}).status_code==400
+    assert client.get(path,params={'frames':'999999','inputs':f'{IP}/0'}).status_code==404
+    store.execute('UPDATE shards SET shape=? WHERE id=?',(json.dumps([12,4096,10000]),a))
+    assert client.get(path,params={'frames':str(a),'inputs':f'{IP}/0'}).status_code==409
