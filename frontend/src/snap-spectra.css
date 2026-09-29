@@ -85,3 +85,28 @@
 @media(max-width:800px){.snap-arrangement{grid-template-columns:1fr;}.snap-spectra-page .page-heading{display:block;}}
 @media(max-width:1100px){.snap-toolbar>.field-row {display:flex;}.snap-spectrum-card>header{padding-top:8px;}}
 @media(pointer:coarse){.snap-arrangement .snap-station-map button{min-height:44px;height:44px;}}
+.snap-history-bar.control-surface{margin:0 0 12px;padding:12px 16px;border-left:3px solid #749fe4}
+.snap-arrangement>*{min-width:0}
+.snap-saved-picker{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-top:12px}
+.snap-saved-picker label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#c8d6eb}
+.snap-saved-picker select{min-height:38px;font-size:14px;max-width:100%}
+.snap-step-buttons{display:flex;gap:6px}.snap-step-buttons button{min-height:38px}
+.snap-comparison-caption{font-size:13px;margin:8px 0 0;color:#c8d6eb}
+.snap-reference-caption{display:block;color:#9a4a10}
+.snap-changes{margin:12px 0;border:1px solid #344861;border-radius:8px;background:#101b2b;padding:10px 14px}
+.snap-changes-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;color:#c8d6eb;font-size:13px}
+.snap-changes-heading strong{color:#f3f6fc;font-size:15px}.snap-changes-heading small{font-size:12px;font-weight:400;color:#a9bbd2}
+.snap-change-list{display:flex;gap:8px;overflow-x:auto;max-height:86px;padding-top:7px;scrollbar-width:thin}
+.snap-change-list:empty{padding:0}
+.snap-change-list .snap-change{flex:0 0 auto;text-align:left;border:1px solid #62728a;border-left-width:4px;border-radius:6px;padding:7px 11px;background:#233248;color:#d9e2ee;max-width:350px}
+.snap-change b,.snap-change span{display:block}.snap-change span{font-size:12px}.snap-change small{font-size:11px}
+.snap-change-list .watch,.snap-change-badge.watch{border-color:#e6ae39;background:#403218;color:#ffdf96}
+.snap-change-list .attention,.snap-change-badge.attention{border-color:#ef7777;background:#4c2028;color:#ffd9dc}
+.snap-change-list .config,.snap-change-badge.config{border-color:#9aadee;background:#242e50;color:#d3ddff}
+.snap-changes details{margin-top:5px;font-size:11px;color:#aabbd1}.snap-changes summary{cursor:pointer}.snap-changes details p{max-width:1100px;font-size:13px;line-height:1.6}
+.snap-spectrum-card .snap-change-badge{display:block;font-size:11px;border-radius:4px;padding:2px 6px;border:1px solid #a0acbc;margin-top:4px;background:#e4e8ed;color:#344054}
+.snap-spectrum-card .snap-change-badge.watch{background:#fff0ce;color:#795100;border-color:#d6a13f}
+.snap-spectrum-card .snap-change-badge.attention{background:#ffe1e3;color:#972735;border-color:#d65462}
+.snap-selected-time{stroke:#98661c;stroke-width:1;stroke-dasharray:4 3}
+.snap-trend-point{cursor:pointer;outline:none}.snap-trend-point:focus circle:first-child{stroke:#be7219;stroke-width:2}
+@media(max-width:650px){.snap-saved-picker{gap:8px}.snap-saved-picker label{width:100%;min-width:0}.snap-saved-picker select{width:100%}.snap-changes-heading{align-items:start;flex-direction:column;gap:3px}.snap-changes-heading small{display:block}.snap-history-bar .field-row{gap:8px}.snap-history-bar .field-row>.muted{font-size:12px}}

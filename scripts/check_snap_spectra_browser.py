@@ -21,7 +21,7 @@ def main():
         page = browser.new_page(viewport={'width':1500,'height':1100})
         page.add_init_script('''const original=window.setInterval;
             window.setInterval=(fn,ms,...args)=>{
-                if(ms===60000)window.snapRefreshForTest=fn;
+                if(ms===60000)(window.snapRefreshForTest??=[]).push(fn);
                 return original(fn,ms,...args);
             };''')
         errors, submitted, unexpected = [], [], []
@@ -111,7 +111,8 @@ def main():
         page.get_by_role('button', name='Station grid', exact=True).click()
         assert page.locator('.snap-empty').count() > 0
         page.get_by_role('button', name='Compact · SNAP order', exact=True).click()
-        assert page.get_by_role('button',name='History',exact=True).count()==0
+        assert page.get_by_role('button',name='History',exact=True).count()==1
+        assert page.get_by_role('button',name='Live',exact=True).get_attribute('aria-pressed')=='true'
         assert limits()==shared_limits
         page.get_by_role('button',name='Expand SNAP 0 ADC 0',exact=True).click()
         page.get_by_role('dialog').wait_for()
@@ -162,7 +163,7 @@ def main():
         target['spectra_db'][adc][1]=150
         page.route('**/api/snap-workspace/spectra?*',lambda r:r.fulfill(json=frame))
         with page.expect_response(lambda r:'/api/snap-workspace/spectra?' in r.url):
-            page.evaluate('window.snapRefreshForTest()')
+            page.evaluate('window.snapRefreshForTest.forEach(fn=>fn())')
         page.wait_for_function('Number(document.querySelector(".snap-spectrum-card svg")?.dataset.yMax)>250')
         plot=page.locator('.snap-spectrum-card svg').first
         assert float(plot.get_attribute('data-y-min')) < -300

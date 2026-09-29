@@ -250,3 +250,67 @@ def test_streaming_not_green_for_stale_missing_zero_or_future_data(fixture,monke
     monkeypatch.setattr(module, 'read_latest_vis', lambda _: dict(ts=NOW-age,inputs=inputs,vis=np.full((1,3072),values)))
     out=client.get('/api/snap-workspace/health').json()
     assert out['streaming']['state']=='attention'
+
+
+def test_exact_ids_pin_reads_without_age_limit_or_borrowing(fixture):
+    client, store, shards, _ = fixture
+    old=save(shards,NOW-400*86400, np.ones((12,4096),dtype='float32'))
+    save(shards,NOW-100,np.full((12,4096),100,dtype='float32'))
+    result=client.get(f'/api/snap-workspace/spectra?ids={old["id"]}').json()
+    board=result['boards'][0]
+    assert board['spectra_db'][0][0]==0 and board['historical'] and not board['stale']
+    assert board['shard_id']==old['id']
+    assert result['selected_ids']==str(old['id'])
+    for ids in ('x','0','1,2,3,4,5',f'{old["id"]},{old["id"]}'):
+        assert client.get('/api/snap-workspace/spectra',params={'ids':ids}).status_code==400
+    other=save(shards,NOW-50)
+    assert client.get(f'/api/snap-workspace/spectra?ids={old["id"]},{other["id"]}').status_code==400
+    assert client.get('/api/snap-workspace/spectra?ids=999999').status_code==404
+    foreign=shards.write('other',np.ones((12,4096)),t0=NOW)
+    assert client.get(f'/api/snap-workspace/spectra?ids={foreign["id"]}').status_code==404
+    assert store.query('SELECT count(*) n FROM jobs')[0]['n']==0
+
+
+def test_dated_catalog_all_archive_and_trend_anchoring(fixture):
+    from datetime import datetime, timezone
+    client, _, shards, _ = fixture
+    past=NOW-400*86400
+    row=save(shards,past)
+    save(shards,NOW-100)
+    day=datetime.fromtimestamp(past,timezone.utc).strftime('%Y-%m-%d')
+    dates=client.get('/api/snap-workspace/spectra-days').json()['days']
+    assert len(dates)==2 and dates[-1]['day']==day
+    out=client.get('/api/snap-workspace/spectra-catalog',params={'day':day}).json()
+    assert out['archive'] and out['day']==day
+    assert out['snapshots'][0]['ids']==[row['id']]
+    assert out['reads']==1
+    assert client.get('/api/snap-workspace/spectra-catalog?day=2026-02-30').status_code==400
+    out=client.get('/api/snap-workspace/spectra-trend',params={'ip':IP,'adc':0,'archive':True,'at':past+100}).json()
+    assert [p['shard_id'] for p in out['points']]==[row['id']]
+
+
+def test_changes_current_saved_evidence_only_no_writes(fixture, monkeypatch):
+    client,store,shards,_=fixture
+    for k in range(12):
+        a=np.ones((12,4096),dtype='float32')
+        if k>=10: a[6]*=10
+        save(shards,NOW-100-(11-k)*3600,a)
+    out=client.get('/api/snap-workspace/changes').json()
+    assert out['inputs'][6]['state']=='attention'
+    assert out['inputs'][0]['state']=='stable'
+    assert store.query('SELECT count(*) n FROM jobs')[0]['n']==0
+    assert store.query('SELECT count(*) n FROM watermarks')[0]['n']==0
+    monkeypatch.setattr(module,'latest_reads',lambda _: {IP:dict(ts=NOW-1,errors={'autocorr':'failed'})})
+    out=client.get('/api/snap-workspace/changes').json()
+    assert out['inputs'][6]['state']=='unknown' and out['inputs'][6]['label']=='Latest read failed'
+
+
+def test_selected_missing_board_is_blank(fixture):
+    client,_,shards,settings=fixture
+    second='192.168.120.51'
+    with settings.snap_map_csv.open('a') as f: f.write(f'1,I,1,{second}\n')
+    old=save(shards,NOW-1000,ip=second)
+    current=save(shards,NOW-100)
+    out=client.get(f'/api/snap-workspace/spectra?ids={current["id"]}').json()
+    b=next(b for b in out['boards'] if b['ip']==second)
+    assert b['spectra_db'] is None and b['ts'] is None and b['shard_id'] is None

@@ -69,11 +69,24 @@ visibility autos 21–26 seconds away. Noncentral features at 400.665 and
 
 ## History and acquisition
 
-The latest spectra refresh from saved data every minute; acquisition status
-polls every ten seconds. History/overlay selectors are removed from the page.
-Click a spectrum for its saved 30-day power trend. The history API remains
-available, including dated spectra and catalogue queries. Per-board timestamps
-remain visible: a board pass is sequential, not a simultaneous measurement.
+**Live** shows the latest saved spectra, refreshed every minute; acquisition
+status polls every ten seconds. **History** pins exact saved read IDs. Select a
+UTC date and saved time, or use Previous/Next across reads and dates. Dates list
+all retained history, including the older archive. Missing boards in a selected
+read stay blank; they never borrow another read. Per-board timestamps remain
+visible: a board pass is sequential, not a simultaneous measurement.
+
+**Compare spectra** overlays an independently selected saved read in orange
+against blue selected/live spectra. Shared limits include every finite value in
+both reads. Current wiring and beamforming labels apply to both; EQ/FFT
+differences are labelled. Click a spectrum for its 30-day power trend, then click
+or keyboard-activate a trend point to open that saved spectrum. In History the
+trend ends at the selected UTC day's end and includes archived reads.
+
+The **Changes** strip always checks the newest stored reads, separately from
+the historical selection, Streaming/PPS status and green beamforming borders.
+Click a badge for saved before/after spectra. Thresholds, interpretation and
+bounded resource use are in [Saved history and change checks](snap-history.md).
 
 The latest view can show an older successful spectrum after a failed attempt;
 its stale timestamp and the latest attempt's errors remain visible separately.
@@ -86,7 +99,8 @@ all-four successful read. Earlier shards and database rows are retained, not
 deleted. `snap_history_epoch.json` under `observation_cache_root` holds a
 version-1 `start` timestamp; missing/invalid configuration leaves all history
 available. `archive=true` on spectra/catalog/trend includes earlier records.
-The default trend and catalogue queries use the same epoch.
+Default live trend and undated catalogue queries use the same epoch. Explicit
+dates and read IDs bypass it without deleting or rewriting any history.
 
 ## Live status
 
@@ -234,9 +248,11 @@ New read-only routes, with Unix-second timestamps:
 | Route | Result |
 | --- | --- |
 | `GET /api/snap-workspace/health` | Small per-board and aggregate live-status response from existing cached visibilities and latest stored board attempts. No spectrum-shard loading or hardware contact. |
-| `GET /api/snap-workspace/spectra[?at=<unix>]` | Current layout, shared frequency axis, per-board spectra in dB, acquisition time, stale flag, errors and zero/invalid channel counts. `at` omitted means latest saved success. |
-| `GET /api/snap-workspace/spectra-catalog?days=30` | Bounded saved-read timeline and board coverage; no array data. |
-| `GET /api/snap-workspace/spectra-trend?ip=<configured-ip>&adc=0&days=30` | Full-band mean power, real timestamps, EQ/FFT epoch tags and missing samples. |
+| `GET /api/snap-workspace/spectra[?at=<unix>]` | Current layout, frequency axis, per-board dB spectra, timestamps, errors and zero/invalid counts. Omitted time means latest saved success. `ids=1,2,3,4` selects exact saved shards (at most one per configured board); absent boards stay blank. Historical age alone is not stale. |
+| `GET /api/snap-workspace/spectra-days` | All retained UTC dates and counts, using manifest metadata only. |
+| `GET /api/snap-workspace/spectra-catalog?day=YYYY-MM-DD` | Exact day's sequential read groups, IDs and board coverage, including archive. Legacy `days=30` remains supported. |
+| `GET /api/snap-workspace/spectra-trend?ip=<configured-ip>&adc=0&days=30` | Full-band mean power, timestamps, shard IDs, EQ/FFT tags and missing samples. Optional `at=<unix>&archive=true` anchors historical views. |
+| `GET /api/snap-workspace/changes` | Bounded live saved-spectrum change summaries, reference IDs and method thresholds; no acquisition or storage writes. |
 
 Catalog queries stop at 20,000 records. Trends preflight shapes, dtypes and
 path containment, with a 512 MiB decoded read budget; shorten the period if

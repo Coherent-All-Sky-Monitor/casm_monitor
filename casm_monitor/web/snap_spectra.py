@@ -11,6 +11,7 @@ import math
 import threading
 import time
 from collections import OrderedDict
+from datetime import date, datetime, timezone
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
@@ -153,6 +154,7 @@ def build_router(settings, reader):
     router = APIRouter(prefix='/api/snap-workspace', tags=['snap-spectra'])
     shards = ShardReader(reader)
     cache = OrderedDict()
+    change_cache = OrderedDict()
     lock = threading.Lock()
 
     def boards():
@@ -238,9 +240,28 @@ def build_router(settings, reader):
         return np.asarray(data, dtype=float)
 
     @router.get('/spectra')
-    def spectra(at: float | None = None, archive: bool = False):
+    def spectra(at: float | None = None, archive: bool = False, ids: str | None = None):
         if at is not None and not math.isfinite(at):
             raise HTTPException(400, 'Select a finite acquisition time')
+        selected = None
+        if ids is not None:
+            try:
+                keys = [int(v) for v in ids.split(',')]
+                if not 1 <= len(keys) <= 4 or len(set(keys)) != len(keys) or min(keys) < 1:
+                    raise ValueError()
+            except ValueError as exc:
+                raise HTTPException(400, 'Select one saved read per board, at most four') from exc
+            selected = {}
+            for key in keys:
+                matches = reader.query("SELECT id,t0,path,shape,dtype,json_extract(meta,'$.ip') ip, "
+                    "json_extract(meta,'$.eq_epoch') eq_epoch,json_extract(meta,'$.fft_shift') fft_shift "
+                    "FROM shards WHERE stream='snap_read' AND id=?", (key,))
+                if not matches or matches[0]['ip'] not in {b['ip'] for b in boards()}:
+                    raise HTTPException(404, 'Saved SNAP read not found')
+                row = dict(matches[0])
+                if row['ip'] in selected:
+                    raise HTTPException(400, 'Only one saved read per board may be selected')
+                selected[row['ip']] = row
         now, interval = time.time(), snap_read_interval_s(settings)
         latest = latest_reads(reader)
         # Independent, already-stored production evidence. Never a replacement
@@ -249,15 +270,16 @@ def build_router(settings, reader):
         result = []
         for board in boards():
             ip = board['ip']
-            rows = records(ip, start=None if archive else history_start(settings), end=at, last=True)
+            rows = ([selected[ip]] if ip in selected else []) if selected is not None else records(ip, start=None if archive else history_start(settings), end=at, last=True)
             row = rows[0] if rows else None
             # An historical selection is a bounded snapshot, not last-value fill.
-            if row and at is not None and at - row['t0'] > interval * 1.5:
+            if selected is None and row and at is not None and at - row['t0'] > interval * 1.5:
                 row = None
             item = dict(board, ts=row['t0'] if row else None,
                         shard_id=row['id'] if row else None,
                         eq_epoch=row['eq_epoch'] if row else None,
-                        stale=bool(row and now-row['t0'] > interval*1.5),
+                        stale=bool(selected is None and at is None and row and now-row['t0'] > interval*1.5),
+                        historical=selected is not None or at is not None,
                         latest_attempt=latest.get(ip, {}).get('ts'),
                         latest_errors=latest.get(ip, {}).get('errors', {}),
                         control_status=control_status(latest.get(ip, {})),
@@ -275,13 +297,35 @@ def build_router(settings, reader):
         apply_timing(result, timing_evidence(settings), now)
         return dict(boards=result, freq_mhz=freq_mhz(), channels=4096,
                     units='dB re 1 native power unit (not dBm)',
-                    configured_interval_s=interval, selected_at=at)
+                    configured_interval_s=interval, selected_at=at, selected_ids=ids)
+
+    @router.get('/spectra-days')
+    def saved_days():
+        """All retained UTC dates, including the pre-epoch archive; metadata only."""
+        ips = [b['ip'] for b in boards()]
+        if not ips:
+            return dict(days=[])
+        rows = reader.query("SELECT date(t0,'unixepoch') day,COUNT(*) reads,MIN(t0) first,MAX(t0) last "
+            "FROM shards WHERE stream='snap_read' AND json_extract(meta,'$.ip') IN (" +
+            ','.join('?' for _ in ips) + ") GROUP BY day ORDER BY day DESC", ips)
+        return dict(days=[dict(r) for r in rows], timezone='UTC')
 
     @router.get('/spectra-catalog')
-    def catalog(days: int = Query(30, ge=1, le=365), archive: bool = False):
+    def catalog(days: int = Query(30, ge=1, le=365), archive: bool = False, day: str | None = None):
         end = time.time()
         epoch = history_start(settings)
         start = max(end-days*86400, epoch or 0) if not archive else end-days*86400
+        if day is not None:
+            try:
+                parsed = date.fromisoformat(day)
+                if parsed.isoformat() != day:
+                    raise ValueError()
+                start = datetime.combine(parsed, datetime.min.time(), tzinfo=timezone.utc).timestamp()
+                end = start + 86400 - .000001
+            except ValueError as exc:
+                raise HTTPException(400, 'Select a UTC date: YYYY-MM-DD') from exc
+            # Explicit dates can retrieve any retained day, without a 365-day ceiling.
+            archive = True
         rows = records(start=start, end=end)
         ips = {b['ip'] for b in boards()}
         groups = []
@@ -291,18 +335,21 @@ def build_router(settings, reader):
             # A sequential board pass can take seven minutes. Keep its real
             # per-board times in spectra(); group only this timeline control.
             if not groups or row['t0'] - groups[-1]['start'] > 600 or row['ip'] in groups[-1]['boards']:
-                groups.append(dict(start=row['t0'], at=row['t0'], boards=[]))
+                groups.append(dict(start=row['t0'], at=row['t0'], boards=[], ids=[]))
             groups[-1]['at'] = row['t0']
+            groups[-1]['ids'].append(row['id'])
             if row['ip'] not in groups[-1]['boards']:
                 groups[-1]['boards'].append(row['ip'])
-        return dict(days=days, start=start, end=end, snapshots=groups, history_start=epoch, archive=archive,
+        return dict(days=days, day=day, start=start, end=end, snapshots=groups, history_start=epoch, archive=archive,
                     reads=sum(len(g['boards']) for g in groups))
 
     @router.get('/spectra-trend')
-    def trend(ip: str, adc: int = Query(..., ge=0, le=11), days: int = Query(30, ge=1, le=365), archive: bool = False):
+    def trend(ip: str, adc: int = Query(..., ge=0, le=11), days: int = Query(30, ge=1, le=365), archive: bool = False, at: float | None = None):
         if ip not in {b['ip'] for b in boards()}:
             raise HTTPException(404, 'Unknown antenna SNAP')
-        end = time.time()
+        if at is not None and not math.isfinite(at):
+            raise HTTPException(400, 'Select a finite acquisition time')
+        end = time.time() if at is None else at
         epoch = history_start(settings)
         start = max(end-days*86400, epoch or 0) if not archive else end-days*86400
         rows = records(ip, start=start, end=end)
@@ -317,7 +364,7 @@ def build_router(settings, reader):
             else:
                 points = []
                 for row in rows:
-                    point = dict(ts=row['t0'], power_db=None, zero_channels=None,
+                    point = dict(ts=row['t0'], shard_id=row['id'], power_db=None, zero_channels=None,
                                  eq_epoch=row['eq_epoch'], error=None)
                     try:
                         values = load(row)[adc]
@@ -338,5 +385,47 @@ def build_router(settings, reader):
         return dict(ip=ip, adc=adc, days=days, start=start, end=end, history_start=epoch, archive=archive,
                     points=points, gap_s=snap_read_interval_s(settings)*1.5,
                     units='dB re 1 native power unit', channels=4096)
+
+    @router.get('/changes')
+    def changes():
+        """Bounded saved-spectrum change checks; no acquisition or new DB writes."""
+        from .snap_changes import METHOD, assess
+        now, interval = time.time(), snap_read_interval_s(settings)
+        attempts = latest_reads(reader)
+        output = []
+        with lock:
+            for board in boards():
+                # 128 board reads is <26 MiB on disk. Do not scan the archive.
+                rows = records(board['ip'], start=now-28*3600, end=now)
+                limited = len(rows) > 128
+                rows = rows[-128:]
+                key = (board['ip'], interval, tuple(r['id'] for r in rows))
+                entry = change_cache.get(key)
+                if entry and time.monotonic()-entry[0] < 120:
+                    assessed = entry[1]
+                else:
+                    samples = []
+                    for row in rows:
+                        try:
+                            samples.append({**row, 'data':load(row)})
+                        except Exception:
+                            samples.append({**row, 'data':None})
+                    assessed = [assess(samples, adc, interval=interval) for adc in range(12)]
+                    change_cache[key] = (time.monotonic(), assessed)
+                    while len(change_cache) > 4:
+                        change_cache.popitem(last=False)
+                for inp, result in zip(board['inputs'], assessed):
+                    item = {**result, 'ip':board['ip'], 'snap':board['feng_id'],
+                            'station':inp['station'], 'functional':inp['functional']}
+                    attempt = attempts.get(board['ip'], {})
+                    if not rows or now-rows[-1]['t0'] > interval*1.5:
+                        item.update(state='unknown', label='Missing / overdue spectrum')
+                    elif attempt.get('ts',0) > rows[-1]['t0'] and attempt.get('errors'):
+                        item.update(state='unknown', label='Latest read failed')
+                    elif limited:
+                        item.update(state='unknown', label='Too many reads for bounded change check')
+                    output.append(item)
+        return dict(checked_at=now, method=METHOD, inputs=output,
+                    note='Live saved-data checks, independent of the selected historical view. Current wiring labels.')
 
     return router

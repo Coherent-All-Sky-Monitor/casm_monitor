@@ -69,8 +69,13 @@ the nearby layout and Overview map. SNAP status/read-details include board IPs.
 `/cands` shows 12 recent saved plots by default (6/12/24/48 selectable), a compact
 searchable right sidebar with show/hide toggles, and the shared image zoom.
 All spectrum panels share 374.9–500.1 MHz and a full-data power scale. The default
-display is dB re 10⁻¹⁰ native power units. Scale/reference/history controls are
-removed; collection and the saved-history API are unchanged. Power limits cover
+display is dB re 10⁻¹⁰ native power units. Scale/reference controls are removed.
+Live/History selects retained UTC dates and exact saved reads, with Previous/Next
+navigation and an optional orange comparison overlay. Trend points open saved
+spectra. Missing boards stay blank, and current wiring labels remain explicit.
+The separate Changes strip checks recent stored data for persistent level/shape/
+peak/zero changes; missing evidence stays unknown. See
+[history and change rules](../docs/snap-history.md). Collection is unchanged. Power limits cover
 every finite displayed channel with padding, including narrow peaks. They update
 with each saved spectrum or selection change; compact and expanded views match.
 The preferred ceiling is 65 dB, expanding above real peaks with 1 dB of

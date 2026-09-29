@@ -3,10 +3,10 @@ import { niceTicks } from './vis/PlotTicks';
 import { dbOffset, SNAP_FREQ_LIMITS, SNAP_REFERENCE_POWER } from './snapPower';
 
 type Value = number | null;
-export type SnapTrend = {start:number; end:number; gap_s:number; points:{ts:number;power_db:Value;eq_epoch:string|null;zero_channels:number|null;error:string|null}[]};
+export type SnapTrend = {start:number; end:number; gap_s:number; points:{ts:number;shard_id:number;power_db:Value;eq_epoch:string|null;zero_channels:number|null;error:string|null}[]};
 
 /** Native-channel trace: no rebinning or normalization. Missing values break it. */
-export function SnapPlot({freq, values, reference, range, trend, powerReference=SNAP_REFERENCE_POWER}:{freq:number[];values:Value[]|null;reference?:Value[]|null;range:[number,number];trend?:SnapTrend;powerReference?:number}) {
+export function SnapPlot({freq, values, reference, range, trend, powerReference=SNAP_REFERENCE_POWER,onSelect,selectedAt}:{freq:number[];values:Value[]|null;reference?:Value[]|null;range:[number,number];trend?:SnapTrend;powerReference?:number;onSelect?:(id:number,ts:number)=>void;selectedAt?:number}) {
   const host=useRef<HTMLDivElement>(null), clip=useId().replace(/:/g,'');
   const [width,setWidth]=useState(350),[hover,setHover]=useState('');
   useEffect(()=>{const o=new ResizeObserver(([e])=>setWidth(Math.max(250,e.contentRect.width)));if(host.current)o.observe(host.current);return()=>o.disconnect();},[]);
@@ -46,7 +46,12 @@ export function SnapPlot({freq, values, reference, range, trend, powerReference=
       <g clipPath={`url(#${clip})`}>
         {!trend&&reference&&<path className="snap-reference" d={trace(freq,reference.map(display))}/>}
         <path className="snap-trace" d={trace(axis,line,trend?.points.map(p=>p.eq_epoch))}/>
-        {trend&&trend.points.map(p=>p.power_db===null?null:<circle key={p.ts} cx={x(p.ts)} cy={y(p.power_db+shift)} r="3" fill="#194fa3"><title>{date(p.ts)} UTC · {(p.power_db+shift).toFixed(2)} dB · EQ {p.eq_epoch??'unknown'}</title></circle>)}
+        {trend&&selectedAt!=null&&<line className="snap-selected-time" x1={x(selectedAt)} x2={x(selectedAt)} y1={top} y2={bottom}/>}
+        {trend&&trend.points.map(p=>p.power_db===null?null:<g key={p.ts} role={onSelect?'button':undefined} tabIndex={onSelect?0:undefined} aria-label={`Open spectrum ${date(p.ts)} UTC`} className={onSelect?'snap-trend-point':''}
+          onPointerDown={e=>{if(onSelect)e.stopPropagation();}} onDoubleClick={e=>e.stopPropagation()} onClick={()=>onSelect?.(p.shard_id,p.ts)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onSelect?.(p.shard_id,p.ts);}}}>
+          <circle cx={x(p.ts)} cy={y(p.power_db+shift)} r="9" fill="transparent"/>
+          <circle cx={x(p.ts)} cy={y(p.power_db+shift)} r="3" fill="#194fa3"><title>{date(p.ts)} UTC · {(p.power_db+shift).toFixed(2)} dB · EQ {p.eq_epoch??'unknown'}</title></circle>
+        </g>)}
       </g>
       {!trend&&line.map((v,i)=>v===null||v>=lo&&v<=hi?null:<path key={i} fill="#b9540b" d={v>hi?`M${x(axis[i])-2},${top+5}l2,-4l2,4Z`:`M${x(axis[i])-2},${bottom-5}l2,4l2,-4Z`}/>)}
       {!finite.length&&<text x={(left+right)/2} y={(top+bottom)/2} textAnchor="middle">{values===null&&!trend?'No saved spectrum':'No positive power samples'}</text>}

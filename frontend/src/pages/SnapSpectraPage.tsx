@@ -4,22 +4,25 @@ import { FigureZoom } from '../components/FigureZoom';
 import { SnapPlot, SnapTrend } from '../components/SnapPlot';
 import { dbOffset, snapRange, SNAP_REFERENCE_POWER } from '../components/snapPower';
 import { SnapHealth } from '../components/SnapHealth';
+import {SavedReadPicker, SnapChanges, SnapSnapshot, snapshotForRead, snapshotUrl, useSnapResource} from '../components/SnapHistory';
 import '../snap-spectra.css';
 
 type Input = {key:string;ip:string;snap:number;slot:string;adc:number;station:string|null;antenna:number|null;functional:boolean;packet_idx:number|null;board:Json;beamforming:boolean|null};
 const location=(i:Input)=>{const m=/N(\d+)E(\d+)/.exec(i.station??'');return {row:m?Number(m[1]):-1,col:m?Number(m[2]):-1};};
 
-function Expanded({input,frame,days,range,powerReference,onClose}:{input:Input;frame:Json;days:number;range:[number,number];powerReference:number;onClose:()=>void}) {
-  const {data:loadedTrend,error}=useResource(`/api/snap-workspace/spectra-trend?ip=${encodeURIComponent(input.ip)}&adc=${input.adc}&days=${days}`);
+function Expanded({input,frame,reference,days,range,powerReference,onClose,onPick,historical}:{input:Input;frame:Json;reference:Json|null;days:number;range:[number,number];powerReference:number;onClose:()=>void;onPick:(id:number,ts:number)=>void;historical:boolean}) {
+  const end=historical&&input.board.ts?`&at=${(Math.floor(input.board.ts/86400)+1)*86400-1}&archive=true`:'';
+  const {data:loadedTrend,error}=useSnapResource(`/api/snap-workspace/spectra-trend?ip=${encodeURIComponent(input.ip)}&adc=${input.adc}&days=${days}${end}`,historical?0:60000);
   const data=loadedTrend?.days===days&&loadedTrend?.ip===input.ip&&loadedTrend?.adc===input.adc?loadedTrend:null;
   const powers:number[]=(data?.points??[]).map((p:Json)=>p.power_db).filter((v:number|null)=>v!==null).map((v:number)=>v+dbOffset(powerReference));
   const trendRange:[number,number]=powers.length?[Math.floor(Math.min(...powers)/5)*5-2.5,Math.ceil(Math.max(...powers)/5)*5+2.5]:range;
   return <FigureZoom title={`${input.station??'Unwired input'} · SNAP ${input.snap} SLOT ${input.slot} ADC ${input.adc}`} onClose={onClose}>
     <div className="snap-expanded"><p>{stamp(input.board.ts)} · 4096 native channels</p>
-      <SnapPlot freq={frame.freq_mhz} values={input.board.spectra_db?.[input.adc]??null} range={range} powerReference={powerReference}/>
-      <h4>Full-band power · past {days} days</h4><p>Mean power across all 4096 channels · dB</p>
+      {reference&&<p className="snap-comparison-caption">Blue: {stamp(input.board.ts)} · orange dashed: {reference.ts?stamp(reference.ts):'No comparison read for this board'}{reference.eq_epoch!==input.board.eq_epoch?' · EQ/FFT settings differ':''}</p>}
+      <SnapPlot freq={frame.freq_mhz} values={input.board.spectra_db?.[input.adc]??null} reference={reference?.spectra_db?.[input.adc]} range={range} powerReference={powerReference}/>
+      <h4>Full-band power · {days}-day history</h4><p>Mean power across all 4096 channels · dB · click a point to open its spectrum</p>
       {data?.history_start&&<p className="muted">History since {stamp(data.history_start)}</p>}
-      {error?<Notice>{error}</Notice>:data?<><SnapPlot freq={[]} values={null} trend={data as SnapTrend} range={trendRange} powerReference={powerReference}/><p>{data.points.length} saved reads · {data.points.filter((p:Json)=>p.power_db===null).length} incomplete / zero-power samples</p></>:<p>Reading saved history…</p>}
+      {error?<Notice>{error}</Notice>:data?<><SnapPlot freq={[]} values={null} trend={data as SnapTrend} range={trendRange} powerReference={powerReference} selectedAt={input.board.ts} onSelect={onPick}/><p>{data.points.length} saved reads · {data.points.filter((p:Json)=>p.power_db===null).length} incomplete / zero-power samples</p></>:<p>Reading saved history…</p>}
     </div>
   </FigureZoom>;
 }
@@ -27,6 +30,8 @@ function Expanded({input,frame,days,range,powerReference,onClose}:{input:Input;f
 export default function SnapSpectraPage() {
   const [layout,setLayout]=useState('snap'),[scope,setScope]=useState('beamforming'),[overrides,setOverrides]=useState<Record<string,boolean>>({}),[expanded,setExpanded]=useState<string|null>(null);
   const days=30,powerReference=SNAP_REFERENCE_POWER;
+  const [mode,setMode]=useState<'live'|'history'>('live'),[selected,setSelected]=useState<SnapSnapshot|null>(null);
+  const [comparing,setComparing]=useState(false),[comparison,setComparison]=useState<SnapSnapshot|null>(null);
   const allAdcs=scope==='all';
   const [reading,setReading]=useState(false),[receipt,setReceipt]=useState(''),[error,setError]=useState('');
   const {data:acquisition,error:statusError}=useResource('/api/snap-workspace/acquisition',10000);
@@ -35,7 +40,10 @@ export default function SnapSpectraPage() {
   const membershipKnown=!membership.error&&membership.data?.status==='complete';
   const beamformingKeys=useMemo(()=>new Set<string>(membershipKnown?(membership.data?.inputs??[]).filter((i:Json)=>i.beamforming===true).map((i:Json)=>`${i.ip}/${i.adc}`):[]),[membershipKnown,membership.data]);
   const revision=acquisition?.latest_job?.finished??'';
-  const {data:frame,error:frameError}=useResource(`/api/snap-workspace/spectra?v=${revision}`,60000);
+  const {data:frame,error:frameError}=useSnapResource(mode==='live'?`/api/snap-workspace/spectra?v=${revision}`:selected?snapshotUrl(selected):null,mode==='live'?60000:0);
+  const compare=useSnapResource(comparing&&comparison?snapshotUrl(comparison):null);
+  const referenceFor=(ip:string)=>comparing?compare.data?.boards?.find((b:Json)=>b.ip===ip)??null:null;
+  const changes=useSnapResource('/api/snap-workspace/changes',60000);
   const inputs:Input[]=useMemo(()=>(frame?.boards??[]).flatMap((board:Json)=>board.inputs.map((i:Json)=>({...i,key:`${board.ip}/${i.adc}`,ip:board.ip,snap:board.feng_id,slot:board.slot,board,beamforming:membershipKnown?beamformingKeys.has(`${board.ip}/${i.adc}`):null}))),[frame,membershipKnown,beamformingKeys]);
   const wired=inputs.filter(i=>i.functional&&i.station);
   const isVisible=(i:Input)=>overrides[i.key]??(allAdcs||(scope==='wired'?i.functional:i.beamforming===true));
@@ -43,9 +51,16 @@ export default function SnapSpectraPage() {
   const rows=[...new Set(wired.map(i=>location(i).row))].sort((a,b)=>b-a);
   const sharedRange=useMemo(()=>{
     const values:(number|null)[]=[];
-    for(const input of visible)values.push(...(input.board.spectra_db?.[input.adc]??[]));
+    for(const input of visible){values.push(...(input.board.spectra_db?.[input.adc]??[]));values.push(...(referenceFor(input.ip)?.spectra_db?.[input.adc]??[]));}
     return snapRange(values,powerReference);
-  },[visible,powerReference]);
+  },[visible,powerReference,compare.data,comparing]);
+  const pick=async(id:number,ts:number)=>{setError('');try{const snapshot=await snapshotForRead(id,ts);setSelected(snapshot);setMode('history');}catch(e){setError((e as Error).message);}};
+  const inspectChange=async(item:Json)=>{setError('');try{
+    const snapshot=await snapshotForRead(item.current_id,item.ts);
+    const reference=item.reference_id?await snapshotForRead(item.reference_id,item.reference_ts):null;
+    setSelected(snapshot);setMode('history');setComparison(reference);setComparing(!!reference);
+    setOverrides(v=>({...v,[`${item.ip}/${item.adc}`]:true}));setExpanded(`${item.ip}/${item.adc}`);
+  }catch(e){setError((e as Error).message);}};
   const toggle=(key:string)=>{const i=inputs.find(i=>i.key===key);if(i)setOverrides(v=>({...v,[key]:!isVisible(i)}));};
   const selectScope=(value:string)=>{setScope(value);setOverrides({});};
   const acquire=async()=>{setReading(true);setError('');try{
@@ -56,21 +71,32 @@ export default function SnapSpectraPage() {
   }catch(e){setError((e as Error).message);}finally{setReading(false);}};
   const card=(input:Input)=>{
     const b=input.board;
+    const reference=referenceFor(input.ip);
+    const change=mode==='live'?changes.data?.inputs?.find((i:Json)=>i.ip===input.ip&&i.adc===input.adc):null;
     return <article className={`snap-spectrum-card${input.beamforming?' in-beamforming':''}`} data-input-key={input.key} key={input.key}>
       <header><div><h4>{input.station??`ADC ${input.adc}`} {input.beamforming&&<span className="snap-bf-badge">Beamforming</span>}</h4><span>{input.antenna?`Ant ${input.antenna}`:'No wired antenna'} · SNAP {input.snap} SLOT {input.slot} ADC {input.adc}</span></div><button title="Hide this input" aria-label={`Hide SNAP ${input.snap} ADC ${input.adc}`} onClick={()=>toggle(input.key)}>−</button></header>
       <button className="snap-plot-trigger" aria-label={`Expand SNAP ${input.snap} ADC ${input.adc}`} onClick={()=>setExpanded(input.key)}>
-        <SnapPlot freq={frame?.freq_mhz??[]} values={b.spectra_db?.[input.adc]??null} range={sharedRange} powerReference={powerReference}/>
+        <SnapPlot freq={frame?.freq_mhz??[]} values={b.spectra_db?.[input.adc]??null} reference={reference?.spectra_db?.[input.adc]} range={sharedRange} powerReference={powerReference}/>
       </button>
       <footer className={b.ts===null||b.error||b.stale?'snap-warning':''}>{b.ts===null?'No read in this snapshot':`${stamp(b.ts)}${b.stale?' · STALE':''}`}
         {!!b.zero_channels?.[input.adc]&&<span> · {b.zero_channels[input.adc]} zero-power channels</span>}
         {!!b.invalid_channels?.[input.adc]&&<span> · {b.invalid_channels[input.adc]} invalid channels</span>}
         {b.error&&<span> · Saved spectrum unavailable</span>}
+        {comparing&&<span className="snap-reference-caption">Orange: {reference?.ts?stamp(reference.ts):'no comparison read'}{reference?.ts&&reference.eq_epoch!==b.eq_epoch?' · EQ/FFT differs':''}</span>}
+        {change&&input.functional&&change.state!=='stable'&&<button className={`snap-change-badge ${change.state}`} onClick={()=>void inspectChange(change)}>{change.state==='attention'?'Needs attention':change.state==='watch'?'Watch':change.label}</button>}
       </footer>
     </article>;
   };
   const expandedInput=inputs.find(i=>i.key===expanded);
   return <div className="workspace-page snap-spectra-page">
-    <div className="page-heading"><h2>SNAPs</h2><p className="muted">375–500 MHz · 4096 channels · latest spectra</p></div>
+    <div className="page-heading"><h2>SNAPs</h2><p className="muted">375–500 MHz · 4096 channels · {mode==='live'?'latest spectra':'saved spectra'}</p></div>
+    <section className="snap-history-bar control-surface" aria-label="Spectrum history controls">
+      <div className="field-row"><div className="choice-row" aria-label="Spectrum mode">{(['live','history'] as const).map(m=><button key={m} className={mode===m?'active':''} aria-pressed={mode===m} onClick={()=>setMode(m)}>{m==='live'?'Live':'History'}</button>)}</div>
+      <button className={comparing?'active':''} aria-pressed={comparing} onClick={()=>setComparing(!comparing)}>Compare spectra</button>
+      <span className="muted">{mode==='live'?'Latest saved read · hourly acquisition':'Pinned saved reads · current wiring and beamforming labels'}</span></div>
+      {mode==='history'&&<SavedReadPicker label="Spectrum" value={selected} onChange={setSelected}/>}
+      {comparing&&<><SavedReadPicker label="Comparison" value={comparison} onChange={setComparison} preferPrevious/><p className="snap-comparison-caption">Blue: selected read · orange dashed: comparison · shared axes</p>{compare.error&&<Notice>{compare.error}</Notice>}</>}
+    </section>
     {acquisition?.due&&<Notice>Read is due or overdue. Saved timestamps below show what was actually acquired.</Notice>}
     {[error,statusError,frameError].filter(Boolean).map((e,i)=><Notice key={i}>{e}</Notice>)}
     <SnapHealth data={health.data} error={health.error}/>
@@ -83,6 +109,7 @@ export default function SnapSpectraPage() {
       <button className={`snap-adc-toggle${allAdcs?' active':''}`} role="switch" aria-checked={allAdcs} onClick={()=>selectScope(allAdcs?'beamforming':'all')}><span className="snap-switch-track" aria-hidden="true"/><span>All 12 ADCs per SNAP<small>Include every input, wired or unwired</small></span><b>{allAdcs?'ON':'OFF'}</b></button>
       {Object.keys(overrides).length>0&&<button onClick={()=>setOverrides({})}>Reset selection</button>}
     </div>
+    <SnapChanges data={changes.data} error={changes.error} onInspect={item=>void inspectChange(item)}/>
     <p className="muted">{visible.length} panels · click a plot to enlarge and see its power trend.</p>
     </div>
     <details className="snap-layout-key" open><summary>Array layout <span>· {wired.length} wired · {membershipKnown?beamformingKeys.size:'?'} beamforming</span></summary><div className="snap-station-map"><div className="snap-map-columns"><strong>N ↑</strong>{[1,2,3,4,5,6].map(col=><span key={col}>E{col}</span>)}</div>{rows.map(row=><div key={row}><strong>N{String(row).padStart(2,'0')}</strong>{[1,2,3,4,5,6].map(col=>{const i=wired.find(a=>location(a).row===row&&location(a).col===col);return <button key={col} disabled={!i} aria-label={i?`${i.station} · Ant ${i.antenna}`:`N${row}E${col} · no antenna`} aria-pressed={!!i&&isVisible(i)} className={i?`${isVisible(i)?'shown':'panel-hidden'}${i.beamforming?' in-beamforming':''}`:''} onClick={()=>i&&toggle(i.key)} title={i?`${i.station} · Ant ${i.antenna} · SNAP ${i.snap} SLOT ${i.slot} ADC ${i.adc} · ${i.ip} · ${i.beamforming===null?'Beamforming unknown':i.beamforming?'In deployed CB weights':'Wired, outside deployed CB weights'}`:'No wired antenna'}>{i?i.antenna:'×'}</button>;})}</div>)}</div><p className="snap-map-legend"><span>Green: beamforming</span> · blue: other wired · faded: hidden · × empty</p></details>
@@ -94,6 +121,6 @@ export default function SnapSpectraPage() {
       {layout!=='snap'&&allAdcs&&<section className="snap-panel-group"><header><h3>Unwired ADCs · SNAP order</h3></header><div className="snap-panel-grid">{visible.filter(i=>!i.functional||!i.station).map(card)}</div></section>}
     </>}
     <details className="snap-membership-evidence"><summary>Beamforming & plot details</summary><p>{membership.data?.note}</p><p>{membership.data?.path}</p><p>Deployment event: {membership.data?.live_event_utc??'unknown'} · payload inspected: {membership.data?.inspected_at??'not available'}</p><p>{membership.data?.evidence}</p><p>Shared axes: 374.9–500.1 MHz · {sharedRange[0]} to {sharedRange[1]} dB. Full data range, updated with the saved spectra and selection. Fixed reference: 10⁻¹⁰ native power, not dBm. History uses saved reads only.</p></details>
-    {expandedInput&&frame&&<Expanded input={expandedInput} frame={frame} days={days} range={sharedRange} powerReference={powerReference} onClose={()=>setExpanded(null)}/>}
+    {expandedInput&&frame&&<Expanded input={expandedInput} frame={frame} reference={referenceFor(expandedInput.ip)} days={days} range={sharedRange} powerReference={powerReference} historical={mode==='history'} onPick={(id,ts)=>void pick(id,ts)} onClose={()=>setExpanded(null)}/>}
   </div>;
 }
