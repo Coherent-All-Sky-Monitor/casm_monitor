@@ -4,7 +4,7 @@ import {FigureZoom} from './FigureZoom';
 import {SnapPlot} from './SnapPlot';
 import {snapRange, SNAP_REFERENCE_POWER} from './snapPower';
 
-export type SnapSnapshot = {day:string; ids:number[]; at:number; start:number; boards:string[]};
+export type SnapSnapshot = {day:string; ids:number[]; at:number; start:number; boards:string[];lst?:string|null};
 export const snapDay=(ts:number)=>new Date(ts*1000).toISOString().slice(0,10);
 export const snapshotUrl=(s:SnapSnapshot)=>`/api/snap-workspace/spectra?ids=${s.ids.join(',')}`;
 const cache=new Map<string,Json>();

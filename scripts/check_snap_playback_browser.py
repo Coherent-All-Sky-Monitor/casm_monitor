@@ -42,7 +42,7 @@ def main():
         page.goto('http://127.0.0.1:8061/snaps')
         wait("document.querySelectorAll('.snap-spectrum-card').length===16")
         assert page.get_by_role('button',name='Live',exact=True).get_attribute('aria-pressed')=='true'
-        assert not page.get_by_role('button',name='Play day',exact=True).count()
+        assert not page.get_by_role('button',name='Video playback',exact=True).count()
         assert not any('/spectra-playback?' in u for u in requests)
         count=48 if args.all_adcs else 16
         suffix='-all-adcs' if args.all_adcs else ''
@@ -52,8 +52,18 @@ def main():
             wait("document.querySelectorAll('.snap-spectrum-card').length===48")
         click('History')
         wait(f"document.querySelectorAll('.snap-spectrum-card').length==={count}")
-        click('Play day')
+        click('Video playback')
         wait(f"document.querySelectorAll('.snap-movie-card').length==={count}")
+        def check_clocks(selector):
+            values=page.locator(selector).evaluate('''e=>({at:Number(e.dataset.timestamp),
+                utc:e.querySelector('[data-clock=utc]').dateTime,local:e.querySelector('[data-clock=local]').dateTime,
+                lst:e.querySelector('[data-clock=lst]').textContent,
+                tops:Array.from(e.children).map(v=>v.getBoundingClientRect().top)})''')
+            assert values['utc']==values['local']
+            assert len(values['lst'].split(':'))==3 and values['lst']!='Unavailable',values
+            return values
+        clocks=check_clocks('.snap-movie-clock .snap-clock-row')
+        assert max(clocks['tops'])-min(clocks['tops'])<3,clocks
         wait("document.querySelector('[aria-label=\"Playback saved time\"]').value!=='0'")
         click('Pause playback')
         old=page.get_by_label('Playback saved time').input_value()
@@ -107,6 +117,7 @@ def main():
         if not args.dom_only:page.screenshot(path=str(args.output/f'snaps-playback{suffix}.png'),timeout=15000)
         page.locator('.snap-movie-card .snap-plot-trigger').first.evaluate('e=>e.click()') if args.dom_only else page.locator('.snap-movie-card .snap-plot-trigger').first.click()
         wait("document.querySelector('.figure-modal')!==null")
+        check_clocks('.figure-modal .snap-clock-row')
         assert page.get_by_role('button',name='Download',exact=True).count()==1
         if not args.dom_only:
             with page.expect_download():click('Download')
@@ -135,6 +146,13 @@ def main():
         click('Open this read')
         wait("document.querySelector('.snap-movie')===null")
         assert page.get_by_role('button',name='History',exact=True).get_attribute('aria-pressed')=='true'
+        wait("document.querySelector('.snap-history-bar .snap-clock-row')!==null")
+        check_clocks('.snap-history-bar .snap-clock-row')
+        page.locator('.snap-spectrum-card .snap-plot-trigger').first.evaluate('e=>e.click()')
+        wait("document.querySelector('.figure-modal .snap-clock-row')!==null")
+        check_clocks('.figure-modal .snap-clock-row')
+        page.keyboard.press('Escape')
+        wait("document.querySelector('.figure-modal')===null")
         # A failed saved-data request pauses and can be retried, not filled with
         # a stale frame carrying the requested timestamp.
         failed=[False]
@@ -142,7 +160,7 @@ def main():
             if failed[0]:route.fallback()
             else:failed[0]=True;route.fulfill(status=503,body='Test: saved read temporarily unavailable')
         page.route('**/spectra-playback-frames?**',fail_once)
-        click('Play day')
+        click('Video playback')
         wait("document.querySelector('.snap-movie-error')!==null")
         assert page.get_by_role('button',name='Play playback',exact=True).count()==1
         click('Retry saved read')
@@ -158,6 +176,7 @@ def main():
                     mobile_bounds=True,zoom=True,download_verified=not args.dom_only,
                     playback_4x=timing,
                     loop=True,error_retry=True,
+                    simultaneous_utc_local_lst=True,historical_zoom_clocks=True,
                     page_errors=errors,mutations=mutations,paint_verified=not args.dom_only)
         (args.output/f'snaps-playback{suffix}-check.json').write_text(json.dumps(result,indent=2)+'\n')
         print(json.dumps(result));b.close()

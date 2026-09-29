@@ -13,12 +13,23 @@ available. Station and beamforming labels always describe the current mapping.
 
 ## Playback
 
-In History, **Play day** opens the selected inputs together in a full-window
+In History, **Video playback** opens the selected inputs together in a full-window
 grid. Live remains the page default; opening History alone does not play.
 The default interval is the selected UTC day. **Last 48 hours** and **Last week**
 end now when today's date is selected, or at the selected past UTC day's end.
-The date selector covers all retained dates. The clock switches between UTC and
-OVRO local time, including the date and PDT/PST abbreviation.
+The date selector covers all retained dates. The top-right line shows **UTC,
+OVRO local time and LST together**, wrapping on small screens. UTC and local each
+include their calendar date; local includes PDT/PST. All three describe the
+displayed saved frame, including while buffering, not the current wall clock.
+The Plot timestamps selector changes the per-board captions and timeline labels.
+
+Opened historical frames and enlarged spectra also show all three clocks.
+The frame header uses the latest board timestamp in that sequential pass; an
+individual enlarged spectrum uses its own board timestamp. LST is mean local
+sidereal time at OVRO, using the same offline Astropy/observatory constants as
+Overview. Results are cached for up to 2048 saved timestamps and travel with
+existing responses; playback makes no per-frame clock request. If the offline
+calculation is unavailable, LST says Unavailable rather than substituting UTC.
 
 Play/pause, previous/next read, the time slider, 0.5/1/2/4× speed and optional
 Loop control saved-read playback. At 1× each read gets one second; 4× targets

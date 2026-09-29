@@ -475,3 +475,45 @@ def test_packed_playback_rejects_invalid_or_oversized_selections(fixture):
     assert client.get(path,params={'frames':'999999','inputs':f'{IP}/0'}).status_code==404
     store.execute('UPDATE shards SET shape=? WHERE id=?',(json.dumps([12,4096,10000]),a))
     assert client.get(path,params={'frames':str(a),'inputs':f'{IP}/0'}).status_code==409
+
+
+def test_saved_clocks_follow_exact_frame_and_board_times(fixture):
+    from datetime import datetime,timezone
+    from casm_monitor.web.observation import clock_and_location
+    client,_,shards,settings=fixture
+    second='192.168.120.51'
+    with settings.snap_map_csv.open('a') as f:f.write(f'1,I,1,{second}\n')
+    # Historical UTC/local calendar dates differ; board pass is sequential.
+    ts=datetime(2026,9,28,1,23,45,tzinfo=timezone.utc).timestamp()
+    a=save(shards,ts);b=save(shards,ts+30,ip=second)
+    save(shards,NOW-1)  # A newer read must not relabel an opened old frame.
+    ids=f'{a["id"]},{b["id"]}'
+    result=client.get('/api/snap-workspace/spectra',params={'ids':ids}).json()
+    assert result['at']==ts+30
+    expected=clock_and_location(ts+30)[0]['lst']
+    assert expected is not None and result['lst']==expected
+    for board in result['boards']:
+        assert board['lst']==clock_and_location(board['ts'])[0]['lst']
+    manifest=client.get('/api/snap-workspace/spectra-playback?day=2026-09-28').json()
+    assert manifest['snapshots'][0]['at']==ts+30
+    assert manifest['snapshots'][0]['lst']==expected
+    header,_=unpack_playback(client.get('/api/snap-workspace/spectra-playback-frames',params={
+        'frames':ids,'inputs':f'{IP}/0,{second}/0'}))
+    assert [board['lst'] for board in header['frames'][0]['boards']]==[
+        clock_and_location(ts)[0]['lst'],expected]
+
+
+def test_missing_clock_never_falls_back_to_now(fixture,monkeypatch):
+    from casm_monitor.web import observation
+    client,_,shards,_=fixture
+    def unavailable(_):raise RuntimeError('Offline clock unavailable')
+    monkeypatch.setattr(observation,'clock_and_location',unavailable)
+    module.saved_lst.cache_clear()
+    try:
+        row=save(shards,NOW-12345)
+        result=client.get('/api/snap-workspace/spectra',params={'ids':row['id']}).json()
+        assert result['at']==NOW-12345 and result['lst'] is None
+        assert result['boards'][0]['ts']==NOW-12345 and result['boards'][0]['lst'] is None
+        assert module.saved_lst(None) is None
+    finally:
+        module.saved_lst.cache_clear()

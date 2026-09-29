@@ -1,0 +1,11 @@
+.snap-clock-row{--clock-ink:#263349;--clock-label:#52637a;display:flex;align-items:baseline;flex-wrap:wrap;gap:7px 22px;min-width:0}
+.snap-clock-row.snap-clock-dark{--clock-ink:#f4f8ff;--clock-label:#a9bdd7}
+.snap-clock-row>div{display:flex;align-items:baseline;gap:7px;white-space:nowrap}
+.snap-clock-row>div>span{font-size:11px;line-height:1.4;font-weight:600;color:var(--clock-label)}
+.snap-clock-row time{font-size:18px;line-height:1.4;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.025em;color:var(--clock-ink)}
+.snap-movie-clock .snap-clock-row{justify-content:flex-end}
+.snap-movie-clock .snap-clock-row time{font-size:clamp(18px,1.55vw,25px)}
+.snap-expanded>.snap-clock-row{margin:6px 0 14px}
+.snap-history-bar>.snap-clock-row{margin-top:10px}
+.snap-clock-missing{font-size:13px;color:#718096}
+@media(max-width:750px){.snap-movie-clock .snap-clock-row{justify-content:flex-start}.snap-clock-row{gap:5px 16px}.snap-clock-row time,.snap-movie-clock .snap-clock-row time{font-size:17px}.snap-clock-row>div>span{font-size:10px}}

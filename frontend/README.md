@@ -71,8 +71,12 @@ searchable right sidebar with show/hide toggles, and the shared image zoom.
 All spectrum panels share 374.9–500.1 MHz and a full-data power scale. The default
 display is dB re 10⁻¹⁰ native power units. Scale/reference controls are removed.
 Live/History uses a UTC calendar, within-day time slider and day/read arrows.
-Live is the default. History's **Play day** opens a full-window grid with
-day/48-hour/week presets, UTC/local timestamps, play/pause, speed, seek and Loop.
+Live is the default. History's **Video playback** opens a full-window grid with
+day/48-hour/week presets, play/pause, speed, seek and Loop. `SpectrumClocks`
+shows UTC, OVRO local and mean LST together in the playback header, historical
+frame header and spectrum zooms. All use saved timestamps; LST is supplied by
+the backend's existing offline Overview clock, not calculated or fetched per
+animation step. The Plot timestamps selector affects captions/timeline labels.
 `SnapPlayback.tsx` pins the sequence and shared full-data axes, prefetching
 selected inputs in 12-frame packed batches. Two batches are retained; closing
 cancels requests. `snapPlaybackModel.ts` validates/decodes float32 transport and

@@ -76,10 +76,14 @@ retained dates; choosing an empty date explicitly shows no data. Missing boards 
 read stay blank; they never borrow another read. Per-board timestamps remain
 visible: a board pass is sequential, not a simultaneous measurement.
 
-**Play day** in History opens all selected spectra in a compact playback grid.
-Day is the default, with 48-hour/week presets, UTC/local clock, speed, seek and
+**Video playback** in History opens all selected spectra in a compact playback grid.
+Day is the default, with 48-hour/week presets, simultaneous UTC/local/LST, speed, seek and
 loop controls. Frames are buffered ahead in selected-input batches; axes stay
 fixed across the chosen interval. See [playback](snap-history.md#playback).
+Historical-frame headers and spectrum zooms also show UTC, OVRO local date/time
+and mean OVRO LST for the saved data. The API includes `at`/`lst` on spectrum
+responses, `lst` alongside each board's `ts`, and `lst` on playback snapshots.
+Missing timestamps/LST remain unavailable. No live clock is substituted.
 
 **Compare with…** opens an optional date/time navigator, initially the preceding
 saved read. It overlays that independently selected saved read in orange

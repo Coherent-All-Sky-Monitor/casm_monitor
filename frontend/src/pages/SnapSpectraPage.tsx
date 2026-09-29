@@ -5,6 +5,7 @@ import { SnapPlot, SnapTrend } from '../components/SnapPlot';
 import { dbOffset, snapRange, SNAP_REFERENCE_POWER } from '../components/snapPower';
 import { SnapHealth } from '../components/SnapHealth';
 import { SnapPlayback, PlaybackInput } from '../components/SnapPlayback';
+import { SpectrumClocks } from '../components/SpectrumClocks';
 import {ChangeEvidence, previousSnapshot, SavedReadPicker, SnapChanges, SnapSnapshot, snapshotForRead, snapshotUrl, useSnapResource} from '../components/SnapHistory';
 import '../snap-spectra.css';
 
@@ -18,7 +19,7 @@ function Expanded({input,frame,reference,days,range,powerReference,onClose,onPic
   const powers:number[]=(data?.points??[]).map((p:Json)=>p.power_db).filter((v:number|null)=>v!==null).map((v:number)=>v+dbOffset(powerReference));
   const trendRange:[number,number]=powers.length?[Math.floor(Math.min(...powers)/5)*5-2.5,Math.ceil(Math.max(...powers)/5)*5+2.5]:range;
   return <FigureZoom title={`${input.station??'Unwired input'} · SNAP ${input.snap} SLOT ${input.slot} ADC ${input.adc}`} onClose={onClose}>
-    <div className="snap-expanded"><p>{stamp(input.board.ts)} · 4096 native channels</p>
+    <div className="snap-expanded"><SpectrumClocks at={input.board.ts} lst={input.board.lst}/>
       {reference&&<p className="snap-comparison-caption">Blue: {stamp(input.board.ts)} · orange dashed: {reference.ts?stamp(reference.ts):'No comparison read for this board'}{reference.ts&&input.board.ts&&reference.eq_epoch!==input.board.eq_epoch?' · EQ/FFT settings differ':''}</p>}
       <SnapPlot freq={frame.freq_mhz} values={input.board.spectra_db?.[input.adc]??null} reference={reference?.spectra_db?.[input.adc]} range={range} powerReference={powerReference}/>
       <h4>Full-band power · {days}-day history</h4><p>Mean power across all 4096 channels · dB · click a point to open its spectrum</p>
@@ -97,7 +98,7 @@ export default function SnapSpectraPage() {
     </article>;
   };
   const expandedInput=inputs.find(i=>i.key===expanded);
-  const playDay=()=>{
+  const openPlayback=()=>{
     if(!selected)return;
     const ordered=[...visible];
     if(layout!=='snap')ordered.sort((a,b)=>location(b).row-location(a).row||location(a).col-location(b).col);
@@ -108,8 +109,9 @@ export default function SnapSpectraPage() {
     <section className="snap-history-bar control-surface" aria-label="Spectrum history controls">
       <div className="field-row"><div className="choice-row" aria-label="Spectrum mode">{(['live','history'] as const).map(m=><button key={m} className={mode===m?'active':''} aria-pressed={mode===m} onClick={()=>setMode(m)}>{m==='live'?'Live':'History'}</button>)}</div>
       <span className="muted">{mode==='live'?'Latest saved spectra · updated hourly':selected?`${selected.day} · ${stamp(selected.at).slice(11,16)} UTC`:'Choose a date, then slide through saved times'}</span>
-      {mode==='history'&&<button className="primary snap-play-day" disabled={!selected||!visible.length} onClick={playDay}>Play day</button>}
+      {mode==='history'&&<button className="primary snap-open-playback" title="Play saved spectra: a day, the last 48 hours or the last week" disabled={!selected||!visible.length} onClick={openPlayback}>Video playback</button>}
       <button className={`snap-compare-toggle${comparing?' active':''}`} aria-pressed={comparing} disabled={comparisonLoading||(!frame&&!comparing)} onClick={()=>void toggleCompare()}>{comparing?'Close comparison':'Compare with…'}</button></div>
+      {mode==='history'&&frame&&<SpectrumClocks at={frame.at} lst={frame.lst} dark/>}
       {mode==='history'&&<SavedReadPicker label="Spectrum" value={selected} onChange={setSelected}/>}
       {comparing&&<div className="snap-comparison-disclosure">{comparisonLoading?<p>Finding the previous saved read…</p>:<SavedReadPicker label="Comparison" value={comparison} onChange={setComparison}/>}<p className="snap-comparison-caption">Blue: {mode==='live'?'latest':'selected'} read · orange dashed: comparison</p>{compare.error&&<Notice>{compare.error}</Notice>}</div>}
     </section>

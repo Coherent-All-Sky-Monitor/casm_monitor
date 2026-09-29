@@ -13,6 +13,7 @@ import threading
 import time
 from collections import OrderedDict
 from datetime import date, datetime, timezone
+from functools import lru_cache
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
@@ -30,6 +31,18 @@ from .snap_history import history_start
 
 MAX_RECORDS = 20000
 READ_BUDGET = 512 * 1024**2
+
+
+@lru_cache(maxsize=2048)
+def saved_lst(ts):
+    """Display-only mean OVRO LST at a saved time, using the Overview clock."""
+    if ts is None:
+        return None
+    try:
+        from .observation import clock_and_location
+        return clock_and_location(ts)[0]['lst']
+    except Exception:
+        return None
 
 
 def power_db(values):
@@ -288,6 +301,7 @@ def build_router(settings, reader):
             if selected is None and row and at is not None and at - row['t0'] > interval * 1.5:
                 row = None
             item = dict(board, ts=row['t0'] if row else None,
+                        lst=saved_lst(row['t0']) if row else None,
                         shard_id=row['id'] if row else None,
                         eq_epoch=row['eq_epoch'] if row else None,
                         fft_shift=row['fft_shift'] if row else None,
@@ -308,7 +322,8 @@ def build_router(settings, reader):
                     item['error'] = f'Saved spectrum unavailable: {exc}'
             result.append(item)
         apply_timing(result, timing_evidence(settings), now)
-        return dict(boards=result, freq_mhz=freq_mhz(), channels=4096,
+        at=max((b['ts'] for b in result if b['ts'] is not None),default=None)
+        return dict(boards=result, at=at, lst=saved_lst(at), freq_mhz=freq_mhz(), channels=4096,
                     units='dB re 1 native power unit (not dBm)',
                     configured_interval_s=interval, selected_at=at, selected_ids=ids)
 
@@ -405,7 +420,8 @@ def build_router(settings, reader):
             playback_cache[key] = summary
             while len(playback_cache) > 4:
                 playback_cache.popitem(last=False)
-        return dict(day=day, span_days=span_days, start=timeline['start'], end=timeline['end'], snapshots=timeline['snapshots'], **summary,
+        snapshots=[dict(s,lst=saved_lst(s['at'])) for s in timeline['snapshots']]
+        return dict(day=day, span_days=span_days, start=timeline['start'], end=timeline['end'], snapshots=snapshots, **summary,
                     configured_interval_s=snap_read_interval_s(settings),
                     units='dB re 1 native power unit (not dBm)',
                     note='Pinned saved reads; per-input extrema cover every finite native channel of this interval.')
@@ -450,6 +466,7 @@ def build_router(settings, reader):
             for ip in dict.fromkeys(ip for ip, _ in requested):
                 row = by_ip.get(ip)
                 item = dict(ip=ip, feng_id=configured[ip]['feng_id'], ts=row['t0'] if row else None, shard_id=row['id'] if row else None,
+                            lst=saved_lst(row['t0']) if row else None,
                             eq_epoch=row['eq_epoch'] if row else None, fft_shift=row['fft_shift'] if row else None,
                             error=None, zero_channels={}, invalid_channels={})
                 if row:
