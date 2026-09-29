@@ -174,6 +174,57 @@ def test_changed_offset_red_and_baseline_never_follows_it():
     assert baseline['offsets']['b']=='-1'
 
 
+def test_operator_accepted_latest_minus_one_keeps_both_frames():
+    from casm_monitor.web.snap_spectra import apply_timing
+    from casm_monitor.web.snap_timing_status import apply_baseline
+    boards=baseline_boards()
+    for b in boards:
+        b['latest_attempt']=90
+    report=dict(ts=100,reference_ip='a',boards={
+        'a':dict(state='ok',detail='PPS advancing',period_ticks=250000000,
+                 tt_before='447674286176916822',delta_ticks='0'),
+        'b':dict(state='unknown',period_ticks=250000000,
+                 detail='Inconsistent cross-board TT delta; alignment unverified',
+                 tt_before='447674286176916820',delta_ticks='-1')})
+    apply_timing(boards,report,101)
+    apply_baseline(boards,accepted_baseline())
+    status=boards[1]['timing_status']
+    assert status['state']=='ok'
+    assert status['delta_ticks_before']=='-2'
+    assert status['delta_ticks']=='-1'
+    assert status['detail']=='PPS advancing · latest -1 ticks accepted · earlier frame -2 ticks'
+    assert boards[1]['pps_status']['state']=='unknown'  # strict result preserved
+    apply_timing(boards,report,5600)
+    apply_baseline(boards,accepted_baseline())
+    assert boards[1]['timing_status']['state']=='unknown'
+    boards[1].update(latest_attempt=102,pps_status=dict(period_ok=None))
+    apply_timing(boards,report,103)
+    apply_baseline(boards,accepted_baseline())
+    assert boards[1]['timing_status']['state']=='unknown'  # later failed read
+
+
+def test_other_two_frame_variations_still_need_attention():
+    from casm_monitor.web.snap_timing_status import apply_baseline
+    for before,after in [('-1','-2'),('-3','-1'),('0','-1'),('-2','-3')]:
+        boards=baseline_boards()
+        boards[1]['pps_status'].update(state='unknown',delta_ticks_before=before,
+            delta_ticks=after,detail='Inconsistent cross-board TT delta; alignment unverified')
+        baseline=accepted_baseline()
+        apply_baseline(boards,baseline)
+        assert boards[1]['timing_status']['state']=='attention'
+        assert baseline['offsets']['b']=='-1'
+
+
+def test_inconsistent_report_without_two_offsets_stays_unknown():
+    from casm_monitor.web.snap_timing_status import apply_baseline
+    for before in [None,'-1']:
+        boards=baseline_boards()
+        boards[1]['pps_status'].update(state='unknown',delta_ticks_before=before,
+            detail='Inconsistent cross-board TT delta; alignment unverified')
+        apply_baseline(boards,accepted_baseline())
+        assert boards[1]['timing_status']['state']=='unknown'
+
+
 def test_stale_failed_stalled_and_bad_period_never_baseline_green():
     from casm_monitor.web.snap_timing_status import apply_baseline
     for change in [dict(fresh=False,state='unknown'),dict(state='unknown'),

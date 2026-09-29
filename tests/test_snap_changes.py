@@ -15,13 +15,12 @@ def test_stable_and_warmup():
     assert assess([], 0)['state'] == 'unknown'
 
 
-@pytest.mark.parametrize('kind', ['power', 'shape', 'spike', 'loss'])
+@pytest.mark.parametrize('kind', ['power', 'shape', 'loss'])
 def test_first_change_amber_then_persistent_red(kind):
     rows=history()
     def alter(a):
         if kind=='power': a[0] *= 10
         elif kind=='shape': a[0,:1500] *= 4
-        elif kind=='spike': a[0,100] *= 100
         else: a[0,:200] = 0
     alter(rows[-1]['data'])
     out=assess(rows, 0)
@@ -32,7 +31,7 @@ def test_first_change_amber_then_persistent_red(kind):
     assert assess(rows, 1)['state']=='stable'  # No spill into other ADCs.
 
 
-def test_opposite_power_changes_and_different_spikes_are_not_persistent():
+def test_opposite_power_changes_and_narrow_peaks_do_not_become_red():
     rows=history()
     rows[-1]['data'][0] *= 10
     rows[-2]['data'][0] *= .1
@@ -40,7 +39,12 @@ def test_opposite_power_changes_and_different_spikes_are_not_persistent():
     rows=history()
     rows[-1]['data'][0,100] = 100
     rows[-2]['data'][0,200] = 100
-    assert assess(rows,0)['state']=='watch'
+    assert assess(rows,0)['state']=='info'
+    rows[-2]['data'][0,100]=100
+    out=assess(rows,0)
+    assert out['state']=='info' and not out['confirmed']
+    assert out['label']=='Fine-channel variation'
+    assert out['power_delta_db']<1
 
 
 def test_all_zero_is_loss_not_no_positive_power():
@@ -61,10 +65,24 @@ def test_shape_reversal_does_not_confirm_and_red_label_is_confirmed_change():
     for row in rows[-2:]: row['data'][0,100]=100
     rows[-1]['data'][0]*=10
     out=assess(rows,0)
-    assert out['state']=='attention'
-    assert out['label']=='New strong spectral peak'
+    assert out['state']=='watch'
+    assert out['label']=='Power increased'
     assert 'Power increased' in out['reasons']
     assert out['peaks'][0]['frequency_mhz']==round(500-100*125/4096,6)
+
+
+def test_recurring_line_is_informational_and_detail_matches_exact_reference():
+    rows=history(20)
+    for k in [2,4,6,18,19]: rows[k]['data'][0,100]=100
+    out=assess(rows,0,details=True)
+    assert out['state']=='info' and not out['reasons'] and not out['confirmed']
+    assert out['peaks'][0]['prior_reads']==3
+    assert out['peaks'][0]['difference_db']==20
+    assert out['reference_spectra_db'][100]==0
+    assert out['current_spectra_db'][100]==20
+    np.testing.assert_allclose(out['difference_db'],out['current_spectra_db']-out['reference_spectra_db'])
+    assert out['baseline_ids']==list(range(1,19))
+    assert out['sample_ids']==list(range(1,21))
 
 
 def test_nan_missing_read_and_long_gap_are_unknown():

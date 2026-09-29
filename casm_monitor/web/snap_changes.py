@@ -10,7 +10,7 @@ import warnings
 
 import numpy as np
 
-METHOD = dict(version=1, baseline_hours=24, minimum_reads=6, minimum_span_hours=4,
+METHOD = dict(version=2, baseline_hours=24, minimum_reads=6, minimum_span_hours=4,
               level_db=6, shape_db=3, shape_fraction=.10, spike_db=12,
               zero_fraction=.01, scatter_multiplier=6, confirmation_reads=2,
               note='Changes relative to recent history, not a diagnosis. Thresholds include historical scatter. '
@@ -18,6 +18,7 @@ METHOD = dict(version=1, baseline_hours=24, minimum_reads=6, minimum_span_hours=
 
 
 def db(values):
+    values = np.asarray(values, dtype=float)
     out = np.full(np.shape(values), np.nan, dtype=float)
     np.log10(values, out=out, where=np.isfinite(values) & (values > 0))
     return 10 * out
@@ -29,12 +30,13 @@ def median(values, axis=None):
         return np.nanmedian(values, axis=axis)
 
 
-def assess(samples, adc, *, interval=3600):
+def assess(samples, adc, *, interval=3600, details=False):
     """Samples are chronological {id, t0, eq_epoch, fft_shift, data, error} rows."""
     current = samples[-1] if samples else None
     out = dict(adc=adc, state='unknown', label='Not enough history', reasons=[],
                current_id=current['id'] if current else None,
-               ts=current['t0'] if current else None, reference_id=None, reference_ts=None)
+               ts=current['t0'] if current else None, reference_id=None, reference_ts=None,
+               sample_ids=[s['id'] for s in samples])
     if not current or current.get('data') is None:
         return {**out, 'label':'Saved spectrum unavailable'}
     if len(samples) < 2:
@@ -65,6 +67,7 @@ def assess(samples, adc, *, interval=3600):
     spike_limit = np.maximum(METHOD['spike_db'], 8*shape_scatter)
     ref = baseline[int(np.nanargmin(np.abs(history_power-centre_power)))]
     out.update(reference_id=ref['id'], reference_ts=ref['t0'], baseline_reads=len(baseline),
+               baseline_ids=[s['id'] for s in baseline],
                baseline_start=baseline[0]['t0'], baseline_end=baseline[-1]['t0'],
                level_threshold_db=round(level_limit, 2))
 
@@ -90,21 +93,23 @@ def assess(samples, adc, *, interval=3600):
             flags['power_up' if delta > 0 else 'power_down'] = True
         if np.count_nonzero(shape) >= 4096*METHOD['shape_fraction']:
             flags['shape'] = shape
-        if np.any(spike):
-            flags['spike'] = spike
+        # Fine-channel excursions remain measurable, but are not antenna alarms.
+        # An intermittent line need not change the band power or broad shape.
         peaks = np.flatnonzero(spike)
         peaks = sorted(peaks, key=lambda k: diff[k]-shift, reverse=True)[:8]
         return dict(flags=flags, delta=delta, shift=shift, zeros=int(zeros.sum()),
                     shape_channels=int(shape.sum()), spike_channels=int(spike.sum()),
                     shape_sign=np.sign(diff-shift),
                     peaks=[dict(channel=int(k), frequency_mhz=round(500-k*125/4096,6),
-                                excess_db=round(float(diff[k]-shift),2)) for k in peaks])
+                                excess_db=round(float(diff[k]-shift),2),
+                                difference_db=round(float(diff[k]),2),
+                                prior_reads=int(np.sum(history[:,k]-centre[k]-history_offset > spike_limit[k]))) for k in peaks])
 
     now, before = measure(current), measure(previous)
     if now is None:
         return {**out, 'label':'Incomplete spectrum'}
     labels = dict(loss='New zero-power channels', power_up='Power increased', power_down='Power decreased',
-                  shape='Spectral shape changed', spike='New strong spectral peak')
+                  shape='Broad spectral shape changed')
     confirmed = []
     spacing = current['t0'] - previous['t0']
     if before and .5*interval <= spacing <= 1.5*interval:
@@ -118,15 +123,20 @@ def assess(samples, adc, *, interval=3600):
                 if key == 'shape':
                     shared &= now['shape_sign'] == before['shape_sign']
                 overlap = int(np.count_nonzero(shared))
-                minimum = 1 if key == 'spike' else int(np.ceil(4096*(.01 if key == 'loss' else .05)))
+                minimum = int(np.ceil(4096*(.01 if key == 'loss' else .05)))
                 if overlap >= minimum:
                     confirmed.append(key)
     flags = list(now['flags'])
-    state = 'attention' if confirmed else 'watch' if flags else 'stable'
+    state = 'attention' if confirmed else 'watch' if flags else 'info' if now['spike_channels'] else 'stable'
     if not flags and (before is None or spacing > 1.5*interval):
         state = 'unknown'
+    if details:
+        out.update(reference_spectra_db=centre, current_spectra_db=db(current['data'][adc]),
+                   difference_db=db(current['data'][adc])-centre,
+                   reference_band_power_db=centre_power, shape_offset_db=now['shift'])
     return {**out, 'state':state, 'label':labels[(confirmed or flags)[0]] if flags else
-            ('Stable vs history' if state == 'stable' else 'Previous read missing'),
+            ('No large power / shape change' if state == 'stable' else
+             'Fine-channel variation' if state == 'info' else 'Previous read missing'),
             'reasons':[labels[k] for k in flags], 'confirmed':[labels[k] for k in confirmed],
             'power_delta_db':None if now['delta'] is None else round(now['delta'],2),
             'new_zero_channels':now['zeros'], 'shape_channels':now['shape_channels'],

@@ -29,7 +29,29 @@ def apply_baseline(boards, baseline):
             continue
         expected = baseline['offsets'][board['ip']]
         status.update(baseline_delta_ticks=expected, baseline_accepted_at=baseline['accepted_at'])
-        if not raw.get('fresh') or raw.get('state') == 'unknown':
+        if not raw.get('fresh'):
+            status.update(state='unknown')
+            continue
+        # The strict checker calls unequal frames "unknown" (not exact
+        # alignment). Keep the observation separate from operator acceptance.
+        # Never override read failures/expiry or automatically learn offsets.
+        before, after = raw.get('delta_ticks_before'), raw.get('delta_ticks')
+        if (raw.get('state') == 'unknown' and raw.get('period_ok') is True
+                and raw.get('reference_ip') == baseline['reference_ip']
+                and raw.get('detail') == 'Inconsistent cross-board TT delta; alignment unverified'
+                and before is not None and after is not None and before != after):
+            # September 29 operator decision: keep the checked -2 -> -1
+            # relay-board case green when the latest offset is accepted -1.
+            # This is NOT proof that both frames were equal. Other transitions,
+            # including a latest -2, remain attention; raw evidence is intact.
+            if expected == '-1' and (before, after) == ('-2', '-1'):
+                status.update(state='ok', label='OK · accepted offset',
+                              detail='PPS advancing · latest -1 ticks accepted · earlier frame -2 ticks')
+            else:
+                status.update(state='attention',
+                              detail=f'PPS offset varied: {before} → {after} ticks; accepted {expected} ticks')
+            continue
+        if raw.get('state') == 'unknown':
             status.update(state='unknown')
             continue
         if raw.get('reference_ip') != baseline['reference_ip']:

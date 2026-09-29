@@ -4,7 +4,7 @@ import { FigureZoom } from '../components/FigureZoom';
 import { SnapPlot, SnapTrend } from '../components/SnapPlot';
 import { dbOffset, snapRange, SNAP_REFERENCE_POWER } from '../components/snapPower';
 import { SnapHealth } from '../components/SnapHealth';
-import {SavedReadPicker, SnapChanges, SnapSnapshot, snapshotForRead, snapshotUrl, useSnapResource} from '../components/SnapHistory';
+import {ChangeEvidence, previousSnapshot, SavedReadPicker, SnapChanges, SnapSnapshot, snapshotForRead, snapshotUrl, useSnapResource} from '../components/SnapHistory';
 import '../snap-spectra.css';
 
 type Input = {key:string;ip:string;snap:number;slot:string;adc:number;station:string|null;antenna:number|null;functional:boolean;packet_idx:number|null;board:Json;beamforming:boolean|null};
@@ -18,7 +18,7 @@ function Expanded({input,frame,reference,days,range,powerReference,onClose,onPic
   const trendRange:[number,number]=powers.length?[Math.floor(Math.min(...powers)/5)*5-2.5,Math.ceil(Math.max(...powers)/5)*5+2.5]:range;
   return <FigureZoom title={`${input.station??'Unwired input'} · SNAP ${input.snap} SLOT ${input.slot} ADC ${input.adc}`} onClose={onClose}>
     <div className="snap-expanded"><p>{stamp(input.board.ts)} · 4096 native channels</p>
-      {reference&&<p className="snap-comparison-caption">Blue: {stamp(input.board.ts)} · orange dashed: {reference.ts?stamp(reference.ts):'No comparison read for this board'}{reference.eq_epoch!==input.board.eq_epoch?' · EQ/FFT settings differ':''}</p>}
+      {reference&&<p className="snap-comparison-caption">Blue: {stamp(input.board.ts)} · orange dashed: {reference.ts?stamp(reference.ts):'No comparison read for this board'}{reference.ts&&input.board.ts&&reference.eq_epoch!==input.board.eq_epoch?' · EQ/FFT settings differ':''}</p>}
       <SnapPlot freq={frame.freq_mhz} values={input.board.spectra_db?.[input.adc]??null} reference={reference?.spectra_db?.[input.adc]} range={range} powerReference={powerReference}/>
       <h4>Full-band power · {days}-day history</h4><p>Mean power across all 4096 channels · dB · click a point to open its spectrum</p>
       {data?.history_start&&<p className="muted">History since {stamp(data.history_start)}</p>}
@@ -32,6 +32,7 @@ export default function SnapSpectraPage() {
   const days=30,powerReference=SNAP_REFERENCE_POWER;
   const [mode,setMode]=useState<'live'|'history'>('live'),[selected,setSelected]=useState<SnapSnapshot|null>(null);
   const [comparing,setComparing]=useState(false),[comparison,setComparison]=useState<SnapSnapshot|null>(null);
+  const [comparisonLoading,setComparisonLoading]=useState(false),[changeEvidence,setChangeEvidence]=useState<Json|null>(null);
   const allAdcs=scope==='all';
   const [reading,setReading]=useState(false),[receipt,setReceipt]=useState(''),[error,setError]=useState('');
   const {data:acquisition,error:statusError}=useResource('/api/snap-workspace/acquisition',10000);
@@ -55,12 +56,18 @@ export default function SnapSpectraPage() {
     return snapRange(values,powerReference);
   },[visible,powerReference,compare.data,comparing]);
   const pick=async(id:number,ts:number)=>{setError('');try{const snapshot=await snapshotForRead(id,ts);setSelected(snapshot);setMode('history');}catch(e){setError((e as Error).message);}};
-  const inspectChange=async(item:Json)=>{setError('');try{
-    const snapshot=await snapshotForRead(item.current_id,item.ts);
-    const reference=item.reference_id?await snapshotForRead(item.reference_id,item.reference_ts):null;
-    setSelected(snapshot);setMode('history');setComparison(reference);setComparing(!!reference);
-    setOverrides(v=>({...v,[`${item.ip}/${item.adc}`]:true}));setExpanded(`${item.ip}/${item.adc}`);
-  }catch(e){setError((e as Error).message);}};
+  const inspectChange=(item:Json)=>setChangeEvidence(item);
+  const toggleCompare=async()=>{
+    if(comparing){setComparing(false);return;}
+    setComparing(true);if(comparison)return;
+    setComparisonLoading(true);setError('');
+    try{
+      const board=frame?.boards?.find((b:Json)=>b.shard_id);
+      const primary=mode==='history'&&selected?selected:board?await snapshotForRead(board.shard_id,board.ts):null;
+      const prior=primary?await previousSnapshot(primary):null;
+      if(prior)setComparison(prior);else{setComparing(false);setError('No earlier saved read is available for comparison.');}
+    }catch(e){setError((e as Error).message);setComparing(false);}finally{setComparisonLoading(false);}
+  };
   const toggle=(key:string)=>{const i=inputs.find(i=>i.key===key);if(i)setOverrides(v=>({...v,[key]:!isVisible(i)}));};
   const selectScope=(value:string)=>{setScope(value);setOverrides({});};
   const acquire=async()=>{setReading(true);setError('');try{
@@ -82,8 +89,8 @@ export default function SnapSpectraPage() {
         {!!b.zero_channels?.[input.adc]&&<span> · {b.zero_channels[input.adc]} zero-power channels</span>}
         {!!b.invalid_channels?.[input.adc]&&<span> · {b.invalid_channels[input.adc]} invalid channels</span>}
         {b.error&&<span> · Saved spectrum unavailable</span>}
-        {comparing&&<span className="snap-reference-caption">Orange: {reference?.ts?stamp(reference.ts):'no comparison read'}{reference?.ts&&reference.eq_epoch!==b.eq_epoch?' · EQ/FFT differs':''}</span>}
-        {change&&input.functional&&change.state!=='stable'&&<button className={`snap-change-badge ${change.state}`} onClick={()=>void inspectChange(change)}>{change.state==='attention'?'Needs attention':change.state==='watch'?'Watch':change.label}</button>}
+        {comparing&&<span className="snap-reference-caption">Orange: {reference?.ts?stamp(reference.ts):'no comparison read'}{reference?.ts&&b.ts&&reference.eq_epoch!==b.eq_epoch?' · EQ/FFT differs':''}</span>}
+        {change&&input.functional&&!['stable','info'].includes(change.state)&&<button className={`snap-change-badge ${change.state}`} onClick={()=>inspectChange(change)}>{change.state==='attention'?'Repeated · ':''}{change.label}</button>}
       </footer>
     </article>;
   };
@@ -92,10 +99,10 @@ export default function SnapSpectraPage() {
     <div className="page-heading"><h2>SNAPs</h2><p className="muted">375–500 MHz · 4096 channels · {mode==='live'?'latest spectra':'saved spectra'}</p></div>
     <section className="snap-history-bar control-surface" aria-label="Spectrum history controls">
       <div className="field-row"><div className="choice-row" aria-label="Spectrum mode">{(['live','history'] as const).map(m=><button key={m} className={mode===m?'active':''} aria-pressed={mode===m} onClick={()=>setMode(m)}>{m==='live'?'Live':'History'}</button>)}</div>
-      <button className={comparing?'active':''} aria-pressed={comparing} onClick={()=>setComparing(!comparing)}>Compare spectra</button>
-      <span className="muted">{mode==='live'?'Latest saved read · hourly acquisition':'Pinned saved reads · current wiring and beamforming labels'}</span></div>
+      <span className="muted">{mode==='live'?'Latest saved spectra · updated hourly':selected?`${selected.day} · ${stamp(selected.at).slice(11,16)} UTC`:'Choose a date, then slide through saved times'}</span>
+      <button className={`snap-compare-toggle${comparing?' active':''}`} aria-pressed={comparing} disabled={comparisonLoading||(!frame&&!comparing)} onClick={()=>void toggleCompare()}>{comparing?'Close comparison':'Compare with…'}</button></div>
       {mode==='history'&&<SavedReadPicker label="Spectrum" value={selected} onChange={setSelected}/>}
-      {comparing&&<><SavedReadPicker label="Comparison" value={comparison} onChange={setComparison} preferPrevious/><p className="snap-comparison-caption">Blue: selected read · orange dashed: comparison · shared axes</p>{compare.error&&<Notice>{compare.error}</Notice>}</>}
+      {comparing&&<div className="snap-comparison-disclosure">{comparisonLoading?<p>Finding the previous saved read…</p>:<SavedReadPicker label="Comparison" value={comparison} onChange={setComparison}/>}<p className="snap-comparison-caption">Blue: {mode==='live'?'latest':'selected'} read · orange dashed: comparison</p>{compare.error&&<Notice>{compare.error}</Notice>}</div>}
     </section>
     {acquisition?.due&&<Notice>Read is due or overdue. Saved timestamps below show what was actually acquired.</Notice>}
     {[error,statusError,frameError].filter(Boolean).map((e,i)=><Notice key={i}>{e}</Notice>)}
@@ -116,11 +123,12 @@ export default function SnapSpectraPage() {
     </div>
     {!membershipKnown&&<Notice>Deployed beamforming membership is unavailable. No antenna is assumed active; select All wired or All 12 ADCs to inspect spectra. {membership.error}</Notice>}
     {(frame?.boards??[]).filter((b:Json)=>Object.keys(b.latest_errors??{}).length).map((b:Json)=><details className="snap-board-errors" key={b.ip}><summary>SNAP {b.feng_id} · {b.ip} · control-read details · {stamp(b.latest_attempt)}</summary><p>A failed management read does not establish that the board is unprogrammed or has stopped sending data. Firmware and PPS alignment remain unverified when the control interface cannot be read.</p><pre>{JSON.stringify(b.latest_errors,null,2)}</pre><p>Original reader messages are preserved above. Spectra below retain their actual successful-read timestamps; no hardware recovery is attempted.</p></details>)}
-    {!frame?<Notice>Loading saved full-band spectra…</Notice>:<>
+    {!frame?<Notice>{mode==='history'&&!selected?'Choose a date with saved reads, then select a time above.':'Loading saved full-band spectra…'}</Notice>:<>
       {layout==='snap'?(frame.boards??[]).map((b:Json)=><section className="snap-panel-group" key={b.ip}><header><h3>SNAP {b.feng_id} <span>SLOT {b.slot}</span></h3><span>{b.ip} · ADC order →</span></header><div className="snap-panel-grid">{visible.filter(i=>i.ip===b.ip).map(card)}</div></section>):rows.map(row=><section className="snap-panel-group" key={row}><header><h3>N{String(row).padStart(2,'0')}</h3><span>West → east · E1–E6</span></header><div className={`snap-panel-grid ${layout==='grid'?'snap-physical-grid':''}`}>{layout==='grid'?[1,2,3,4,5,6].map(col=>{const i=visible.find(a=>location(a).row===row&&location(a).col===col);return i?card(i):<div className="snap-empty" key={col}>E{col} · {wired.some(a=>location(a).row===row&&location(a).col===col)?'Hidden':'No antenna'}</div>;}):visible.filter(i=>location(i).row===row).sort((a,b)=>location(a).col-location(b).col).map(card)}</div></section>)}
       {layout!=='snap'&&allAdcs&&<section className="snap-panel-group"><header><h3>Unwired ADCs · SNAP order</h3></header><div className="snap-panel-grid">{visible.filter(i=>!i.functional||!i.station).map(card)}</div></section>}
     </>}
     <details className="snap-membership-evidence"><summary>Beamforming & plot details</summary><p>{membership.data?.note}</p><p>{membership.data?.path}</p><p>Deployment event: {membership.data?.live_event_utc??'unknown'} · payload inspected: {membership.data?.inspected_at??'not available'}</p><p>{membership.data?.evidence}</p><p>Shared axes: 374.9–500.1 MHz · {sharedRange[0]} to {sharedRange[1]} dB. Full data range, updated with the saved spectra and selection. Fixed reference: 10⁻¹⁰ native power, not dBm. History uses saved reads only.</p></details>
     {expandedInput&&frame&&<Expanded input={expandedInput} frame={frame} reference={referenceFor(expandedInput.ip)} days={days} range={sharedRange} powerReference={powerReference} historical={mode==='history'} onPick={(id,ts)=>void pick(id,ts)} onClose={()=>setExpanded(null)}/>}
+    {changeEvidence&&<ChangeEvidence item={changeEvidence} onClose={()=>setChangeEvidence(null)}/>}
   </div>;
 }

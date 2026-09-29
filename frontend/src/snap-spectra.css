@@ -109,4 +109,19 @@
 .snap-spectrum-card .snap-change-badge.attention{background:#ffe1e3;color:#972735;border-color:#d65462}
 .snap-selected-time{stroke:#98661c;stroke-width:1;stroke-dasharray:4 3}
 .snap-trend-point{cursor:pointer;outline:none}.snap-trend-point:focus circle:first-child{stroke:#be7219;stroke-width:2}
+.snap-saved-picker{display:grid;grid-template-columns:245px minmax(0,1fr);gap:24px;align-items:center;padding-top:8px}
+.snap-day-picker>label{display:block;margin-bottom:7px;font-size:12px;color:#b9c7da}
+.snap-day-picker>div{display:flex;gap:5px;align-items:center}
+.snap-day-picker input[type=date]{min-width:0;width:175px;min-height:38px;color-scheme:dark;font-size:15px}
+.snap-day-picker button,.snap-scrubber button{padding:0;width:34px;min-height:34px;flex-shrink:0;font-size:23px;line-height:1}
+.snap-time-picker{min-width:0}.snap-time-heading{display:flex;gap:14px;align-items:baseline;justify-content:space-between;color:#e8f0fc}.snap-time-heading strong{font-size:20px;font-variant-numeric:tabular-nums}.snap-time-heading small{font-size:12px;color:#acbdd3}
+.snap-scrubber{display:flex;align-items:center;gap:10px;margin-top:3px}.snap-scrubber input[type=range]{flex:1;min-width:0;width:100%;padding:0;height:20px;accent-color:#9abce9;cursor:pointer}
+.snap-time-labels{display:flex;justify-content:space-between;margin:0 44px}.snap-time-labels button{font-size:11px;color:#afc0d8;background:none;border:0;padding:1px 0}
+.snap-compare-toggle{margin-left:auto}.snap-comparison-disclosure{border-top:1px solid #344861;margin-top:10px;padding-top:2px}.snap-comparison-disclosure .snap-time-heading strong,.snap-comparison-disclosure .snap-day-picker>label{color:#ffc28f}
+.snap-changes .snap-check-summary{margin:6px 0 0;font-size:13px;color:#c6d2e2}
+.snap-changes .snap-fine-details{margin-top:8px;font-size:12px}.snap-fine-details summary>span{color:#849cb9}.snap-fine-details p{font-size:12px!important;margin:8px 0}
+.snap-fine-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.snap-fine-list button{text-align:left;background:#18283c;border:1px solid #38516c;border-radius:5px;padding:8px;color:#cfdef1;min-width:0}.snap-fine-list b,.snap-fine-list span,.snap-fine-list small{display:block}.snap-fine-list span,.snap-fine-list small{font-size:11px;line-height:1.5}
+.snap-feature-marker{stroke:#9caabf;stroke-width:1;stroke-dasharray:3 3}
+.snap-peak-table{overflow-x:auto}.snap-change-evidence table{width:100%;border-collapse:collapse;font-size:13px}.snap-change-evidence td,.snap-change-evidence th{padding:7px;text-align:left;border-bottom:1px solid #d5dce5;color:#263247;background:#fff}
+@media(max-width:650px){.snap-saved-picker{grid-template-columns:1fr;gap:14px}.snap-day-picker>div{max-width:300px}.snap-day-picker input[type=date]{flex:1;width:auto}.snap-time-heading{gap:6px;flex-wrap:wrap}.snap-compare-toggle{margin-left:0}.snap-fine-list{grid-template-columns:1fr}}
 @media(max-width:650px){.snap-saved-picker{gap:8px}.snap-saved-picker label{width:100%;min-width:0}.snap-saved-picker select{width:100%}.snap-changes-heading{align-items:start;flex-direction:column;gap:3px}.snap-changes-heading small{display:block}.snap-history-bar .field-row{gap:8px}.snap-history-bar .field-row>.muted{font-size:12px}}

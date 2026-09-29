@@ -314,3 +314,30 @@ def test_selected_missing_board_is_blank(fixture):
     out=client.get(f'/api/snap-workspace/spectra?ids={current["id"]}').json()
     b=next(b for b in out['boards'] if b['ip']==second)
     assert b['spectra_db'] is None and b['ts'] is None and b['shard_id'] is None
+
+
+def test_change_detail_uses_pinned_exact_median_and_is_read_only(fixture):
+    client,store,shards,_=fixture
+    ids=[]
+    for k in range(12):
+        a=np.ones((12,4096),dtype='float32')
+        if k in (2,10,11): a[6,123]=100
+        ids.append(save(shards,NOW-100-(11-k)*3600,a)['id'])
+    original=client.get('/api/snap-workspace/changes').json()['inputs'][6]
+    assert original['state']=='info'
+    path='/api/snap-workspace/change-detail'
+    params={'ids':','.join(map(str,original['sample_ids'])),'adc':6}
+    out=client.get(path,params=params).json()
+    assert out['baseline_ids']==ids[:-2] and out['current_id']==ids[-1]
+    assert out['reference_spectra_db'][123]==0
+    assert out['current_spectra_db'][123]==20 and out['difference_db'][123]==20
+    assert out['peaks'][0]['prior_reads']==1
+    # New data cannot move a comparison that is already open.
+    save(shards,NOW,np.full((12,4096),10,dtype='float32'))
+    assert client.get(path,params=params).json()==out
+    for invalid in ('','x','0',f'{ids[0]},{ids[0]}',','.join(map(str,range(1,130)))):
+        assert client.get(path,params={'ids':invalid,'adc':6}).status_code==400
+    assert client.get(path,params={'ids':'999999','adc':6}).status_code==404
+    assert client.get(path,params={'ids':str(ids[0]),'adc':12}).status_code==422
+    assert store.query('SELECT count(*) n FROM jobs')[0]['n']==0
+    assert store.query('SELECT count(*) n FROM watermarks')[0]['n']==0

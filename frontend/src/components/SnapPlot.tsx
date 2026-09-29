@@ -6,7 +6,7 @@ type Value = number | null;
 export type SnapTrend = {start:number; end:number; gap_s:number; points:{ts:number;shard_id:number;power_db:Value;eq_epoch:string|null;zero_channels:number|null;error:string|null}[]};
 
 /** Native-channel trace: no rebinning or normalization. Missing values break it. */
-export function SnapPlot({freq, values, reference, range, trend, powerReference=SNAP_REFERENCE_POWER,onSelect,selectedAt}:{freq:number[];values:Value[]|null;reference?:Value[]|null;range:[number,number];trend?:SnapTrend;powerReference?:number;onSelect?:(id:number,ts:number)=>void;selectedAt?:number}) {
+export function SnapPlot({freq, values, reference, range, trend, powerReference=SNAP_REFERENCE_POWER,onSelect,selectedAt,difference=false,markers=[]}:{freq:number[];values:Value[]|null;reference?:Value[]|null;range:[number,number];trend?:SnapTrend;powerReference?:number;onSelect?:(id:number,ts:number)=>void;selectedAt?:number;difference?:boolean;markers?:number[]}) {
   const host=useRef<HTMLDivElement>(null), clip=useId().replace(/:/g,'');
   const [width,setWidth]=useState(350),[hover,setHover]=useState('');
   useEffect(()=>{const o=new ResizeObserver(([e])=>setWidth(Math.max(250,e.contentRect.width)));if(host.current)o.observe(host.current);return()=>o.disconnect();},[]);
@@ -31,7 +31,7 @@ export function SnapPlot({freq, values, reference, range, trend, powerReference=
   const ticks=trend?Array.from({length:tickCount},(_,i)=>t0+(t1-t0)*i/(tickCount-1)):niceTicks(t0,t1,Math.min(14,(right-left)/42));
   const date=(t:number)=>new Date(t*1000).toISOString().slice(5,16).replace('T',' ');
   return <div className={`snap-plot${trend?' snap-trend':''}`} ref={host}>
-    <svg viewBox={`0 0 ${width} ${height}`} role="img" data-power-reference={powerReference} data-x-min={t0} data-x-max={t1} data-y-min={lo} data-y-max={hi} aria-label={trend?'Full-band power (dB) versus time (UTC)':'Power (dB) versus frequency (MHz), 4096 channels'}
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" data-power-reference={powerReference} data-x-min={t0} data-x-max={t1} data-y-min={lo} data-y-max={hi} aria-label={trend?'Full-band power (dB) versus time (UTC)':difference?'Selected minus reference (dB) versus frequency (MHz)':'Power (dB) versus frequency (MHz), 4096 channels'}
       onMouseLeave={()=>setHover('')} onMouseMove={e=>{
         const r=e.currentTarget.getBoundingClientRect(),v=t0+((e.clientX-r.left)/r.width*width-left)/(right-left)*(t1-t0);
         let k=0;axis.forEach((a,i)=>{if(Math.abs(a-v)<Math.abs(axis[k]-v))k=i;});
@@ -42,8 +42,10 @@ export function SnapPlot({freq, values, reference, range, trend, powerReference=
       {ticks.map((v,i)=><g key={v}><line className="snap-guide" x1={x(v)} x2={x(v)} y1={top} y2={bottom}/><text x={x(v)} y={bottom+18} textAnchor={trend&&i===0?'start':trend&&i===ticks.length-1?'end':'middle'}>{trend?date(v):v}</text></g>)}
       <path className="snap-axis" d={`M${left},${top}V${bottom}H${right}`}/>
       <text x={(left+right)/2} y={height-7} textAnchor="middle">{trend?'Time (UTC)':'Frequency (MHz)'}</text>
-      <text transform={`translate(14 ${(top+bottom)/2}) rotate(-90)`} textAnchor="middle">{powerReference===1?'Power (dB re 1 native)':'Power (dB re 10⁻¹⁰ native)'}</text>
+      <text transform={`translate(14 ${(top+bottom)/2}) rotate(-90)`} textAnchor="middle">{difference?'Δ Power (dB)':powerReference===1?'Power (dB re 1 native)':'Power (dB re 10⁻¹⁰ native)'}</text>
       <g clipPath={`url(#${clip})`}>
+        {difference&&<line className="snap-axis" x1={left} x2={right} y1={y(0)} y2={y(0)}/>}
+        {markers.map(f=><line key={f} className="snap-feature-marker" x1={x(f)} x2={x(f)} y1={top} y2={bottom}><title>{f.toFixed(3)} MHz · fine-channel excursion</title></line>)}
         {!trend&&reference&&<path className="snap-reference" d={trace(freq,reference.map(display))}/>}
         <path className="snap-trace" d={trace(axis,line,trend?.points.map(p=>p.eq_epoch))}/>
         {trend&&selectedAt!=null&&<line className="snap-selected-time" x1={x(selectedAt)} x2={x(selectedAt)} y1={top} y2={bottom}/>}

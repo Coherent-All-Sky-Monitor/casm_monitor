@@ -1,11 +1,17 @@
 """Live saved-data UI acceptance; block ALL non-GET requests, no hardware reads."""
 import json
+import sys
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
 URL='http://127.0.0.1:8061'
 OUT=Path('/home/casm/scratch/casm-observation-preview/screenshots')
+
+
+def capture(page, name):
+    if '--no-screenshots' not in sys.argv:
+        page.screenshot(path=str(OUT/name),full_page=True,timeout=15000)
 
 
 def main():
@@ -24,32 +30,36 @@ def main():
         page.route('**/api/**',guard)
         page.goto(URL+'/snaps')
         page.locator('.snap-spectrum-card').first.wait_for()
-        page.wait_for_function("() => document.querySelector('.snap-changes-heading').textContent.includes('stable vs history')")
+        page.wait_for_function(r"() => /[0-9]+\/[0-9]+ checked/.test(document.querySelector('.snap-changes-heading').textContent)")
         assert page.get_by_role('button',name='Live',exact=True).get_attribute('aria-pressed')=='true'
         assert page.locator('.snap-spectrum-card').count()==16
-        page.screenshot(path=str(OUT/'snaps-live-changes.png'),full_page=True)
+        capture(page,'snaps-live-changes.png')
         page.get_by_role('button',name='History',exact=True).click()
         dates=page.get_by_label('Spectrum date (UTC)',exact=True)
-        page.wait_for_function("() => document.querySelector('[aria-label=\"Spectrum date (UTC)\"]').options.length>1")
-        options=dates.locator('option').evaluate_all('es=>es.map(e=>e.value)')
+        options=[d['day'] for d in page.request.get(URL+'/api/snap-workspace/spectra-days').json()['days']]
         assert '2026-09-09' in options
-        dates.select_option(options[-1])
+        dates.fill(options[-1])
         times=page.get_by_label('Spectrum saved time',exact=True)
-        page.wait_for_function("() => document.querySelector('[aria-label=\"Spectrum saved time\"]').value!==''")
+        page.wait_for_function("() => document.querySelector('.snap-time-heading').textContent.includes('Read')")
         page.locator('.snap-spectrum-card').first.wait_for()
         assert options[-1] in page.locator('.snap-spectrum-card').first.locator('footer').inner_text()
         assert 'STALE' not in page.locator('.snap-spectrum-card').first.locator('footer').inner_text()
-        times.select_option('0')
+        times.focus()
+        page.keyboard.press('Home')
+        page.wait_for_timeout(300)
         page.get_by_role('button',name='Spectrum next read',exact=True).click()
         page.wait_for_function("() => document.querySelector('[aria-label=\"Spectrum saved time\"]').value==='1'")
         page.get_by_role('button',name='Spectrum previous read',exact=True).click()
         page.wait_for_function("() => document.querySelector('[aria-label=\"Spectrum saved time\"]').value==='0'")
-        page.get_by_role('button',name='Compare spectra',exact=True).click()
+        page.get_by_role('button',name='Spectrum next read',exact=True).click()
+        page.wait_for_function("() => document.querySelector('[aria-label=\"Spectrum saved time\"]').value==='1'")
+        page.get_by_role('button',name='Compare with…',exact=True).click()
         page.get_by_label('Comparison saved time',exact=True).wait_for()
         page.locator('.snap-reference').first.wait_for()
+        assert page.get_by_label('Comparison saved time',exact=True).input_value()=='0'
         plots=page.locator('.snap-spectrum-card svg')
         assert len(set(plots.evaluate_all("es=>es.map(e=>e.dataset.yMin+','+e.dataset.yMax)")))==1
-        page.screenshot(path=str(OUT/'snaps-history-comparison.png'),full_page=True)
+        capture(page,'snaps-history-comparison.png')
         page.get_by_role('button',name='Expand SNAP 0 ADC 8',exact=True).click()
         dialog=page.get_by_role('dialog')
         dialog.wait_for()
@@ -65,24 +75,29 @@ def main():
         page.keyboard.press('Escape')
         page.get_by_role('button',name='Live',exact=True).click()
         page.locator('.snap-spectrum-card').first.wait_for()
-        page.get_by_role('button',name='Compare spectra',exact=True).click()
+        page.get_by_role('button',name='Close comparison',exact=True).click()
         # Exercise the change-to-comparison path when a real check is flagged.
-        change=page.locator('.snap-change-list button:not([disabled])').first
+        fine=page.locator('.snap-fine-details summary')
+        if fine.count(): fine.click()
+        change=page.locator('.snap-fine-list button').first
         inspected=False
         if change.count():
             change.click()
             page.get_by_role('dialog').wait_for()
             page.get_by_role('dialog').locator('.snap-reference').wait_for()
-            assert page.get_by_role('button',name='History',exact=True).get_attribute('aria-pressed')=='true'
-            page.screenshot(path=str(OUT/'snaps-change-comparison.png'),full_page=True)
+            page.get_by_role('dialog').get_by_role('img',name='Selected minus reference (dB) versus frequency (MHz)').wait_for()
+            assert 'exact per-channel median' in page.get_by_role('dialog').inner_text()
+            assert page.get_by_role('button',name='Live',exact=True).get_attribute('aria-pressed')=='true'
+            capture(page,'snaps-change-comparison.png')
             inspected=True
             page.keyboard.press('Escape')
+        page.get_by_role('button',name='History',exact=True).click()
         for width in [390,320]:
             page.set_viewport_size({'width':width,'height':900})
             page.wait_for_timeout(300)
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+2')
             assert page.locator('.snap-spectrum-card').first.locator('svg').bounding_box()['width']>=250
-        page.screenshot(path=str(OUT/'snaps-history-mobile.png'),full_page=True)
+        capture(page,'snaps-history-mobile.png')
         assert not errors and not mutations,(errors,mutations)
         print(json.dumps(dict(saved_days=len(options),earliest=options[-1],latest=options[0],
             historical_grid=True,comparison=True,trend_navigation=True,download=True,

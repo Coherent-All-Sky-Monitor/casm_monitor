@@ -71,21 +71,23 @@ visibility autos 21–26 seconds away. Noncentral features at 400.665 and
 
 **Live** shows the latest saved spectra, refreshed every minute; acquisition
 status polls every ten seconds. **History** pins exact saved read IDs. Select a
-UTC date and saved time, or use Previous/Next across reads and dates. Dates list
-all retained history, including the older archive. Missing boards in a selected
+UTC date and move the time slider, or use the read/day arrows. Day arrows visit
+retained dates; choosing an empty date explicitly shows no data. Missing boards in a selected
 read stay blank; they never borrow another read. Per-board timestamps remain
 visible: a board pass is sequential, not a simultaneous measurement.
 
-**Compare spectra** overlays an independently selected saved read in orange
+**Compare with…** opens an optional date/time navigator, initially the preceding
+saved read. It overlays that independently selected saved read in orange
 against blue selected/live spectra. Shared limits include every finite value in
 both reads. Current wiring and beamforming labels apply to both; EQ/FFT
 differences are labelled. Click a spectrum for its 30-day power trend, then click
 or keyboard-activate a trend point to open that saved spectrum. In History the
 trend ends at the selected UTC day's end and includes archived reads.
 
-The **Changes** strip always checks the newest stored reads, separately from
+The **Latest spectrum check** always checks the newest stored reads, separately from
 the historical selection, Streaming/PPS status and green beamforming borders.
-Click a badge for saved before/after spectra. Thresholds, interpretation and
+Fine-channel variation is collapsed neutral information, not an antenna alarm.
+Click an entry for its exact median reference and a difference plot. Thresholds, interpretation and
 bounded resource use are in [Saved history and change checks](snap-history.md).
 
 The latest view can show an older successful spectrum after a failed attempt;
@@ -139,6 +141,12 @@ reference was saved from the fresh 06:38:49 read: SNAPs 0/1/2/3 have offsets
 **0/−1/0/−1 ticks** relative to SNAP 0. Green means advancing PPS with unchanged
 offsets, not sample-exact alignment. Changed offsets/reference or stopped PPS
 are red **Needs attention**. Missing, failed or stale checks remain Unknown.
+On September 29 the operator accepted the observed **−2 → −1 tick** case:
+when the latest offset is the accepted −1, its timing box stays green and
+details retain the earlier −2 frame. This narrowly scoped display policy does
+not claim identical frames or exact alignment. Other transitions, including
+a latest −2, remain Needs attention. The strict API result and recorded
+baseline are unchanged; no hardware adjustment or automatic relearning occurs.
 Checks expire after 90 minutes; newer failures supersede older success.
 The summary requires every configured antenna board and does not grade relays.
 No source-check age or periodic native visibility analysis affects these boxes.
@@ -253,6 +261,7 @@ New read-only routes, with Unix-second timestamps:
 | `GET /api/snap-workspace/spectra-catalog?day=YYYY-MM-DD` | Exact day's sequential read groups, IDs and board coverage, including archive. Legacy `days=30` remains supported. |
 | `GET /api/snap-workspace/spectra-trend?ip=<configured-ip>&adc=0&days=30` | Full-band mean power, timestamps, shard IDs, EQ/FFT tags and missing samples. Optional `at=<unix>&archive=true` anchors historical views. |
 | `GET /api/snap-workspace/changes` | Bounded live saved-spectrum change summaries, reference IDs and method thresholds; no acquisition or storage writes. |
+| `GET /api/snap-workspace/change-detail?ids=<sample_ids>&adc=0` | Exact pinned single-board check, current/median/difference arrays and measurements. At most 128 reads in 28 hours; no hardware access or storage writes. |
 
 Catalog queries stop at 20,000 records. Trends preflight shapes, dtypes and
 path containment, with a 512 MiB decoded read budget; shorten the period if

@@ -143,8 +143,17 @@ def apply_timing(items, evidence, now):
         state = measured['state'] if fresh and not superseded else 'unknown'
         period = measured.get('period_ticks')
         period_ok = abs(period-FS_HZ) <= PPS_PERIOD_TOL*FS_HZ if isinstance(period,(int,float)) else None
+        # Keep both measured offsets. Showing only the last hides why a
+        # two-frame check is inconsistent, e.g. -2 followed by accepted -1.
+        before = None
+        reference = evidence['boards'].get(ref, {})
+        try:
+            before = str(int(measured['tt_before']) - int(reference['tt_before']))
+        except (KeyError, ValueError, TypeError):
+            pass
         b['pps_status'].update(state=state, alignment='aligned' if state=='ok' else 'unknown',
             fresh=fresh, ts=ts, reference_ip=ref, delta_ticks=measured.get('delta_ticks'),
+            delta_ticks_before=before,
             period_ticks=period, period_ok=period_ok,
             detail=str(measured.get('detail','Alignment unknown')) +
                    (' · stale check' if not fresh else ' · newer PPS read failed' if superseded else ''))
@@ -427,5 +436,37 @@ def build_router(settings, reader):
                     output.append(item)
         return dict(checked_at=now, method=METHOD, inputs=output,
                     note='Live saved-data checks, independent of the selected historical view. Current wiring labels.')
+
+    @router.get('/change-detail')
+    def change_detail(ids: str, adc: int = Query(..., ge=0, le=11)):
+        """Reproduce a check from its pinned IDs, with its exact median reference."""
+        from .snap_changes import METHOD, assess
+        try:
+            keys = [int(k) for k in ids.split(',')]
+            if not 1 <= len(keys) <= 128 or len(set(keys)) != len(keys) or min(keys) < 1:
+                raise ValueError()
+        except ValueError as exc:
+            raise HTTPException(400, 'Select at most 128 distinct saved SNAP reads') from exc
+        rows = [dict(r) for r in reader.query("SELECT id,t0,path,shape,dtype,"
+            "json_extract(meta,'$.ip') ip,json_extract(meta,'$.eq_epoch') eq_epoch,"
+            "json_extract(meta,'$.fft_shift') fft_shift FROM shards WHERE stream='snap_read' AND id IN ("
+            + ','.join('?' for _ in keys) + ') ORDER BY t0,id', keys)]
+        if len(rows) != len(keys):
+            raise HTTPException(404, 'Saved SNAP check inputs are unavailable')
+        ips = {r['ip'] for r in rows}
+        if len(ips) != 1 or not ips.issubset({b['ip'] for b in boards()}) or rows[-1]['t0']-rows[0]['t0'] > 28*3600:
+            raise HTTPException(400, 'A check must cover one configured SNAP within 28 hours')
+        with lock:
+            samples=[]
+            for row in rows:
+                try:
+                    samples.append({**row, 'data':load(row)})
+                except Exception as exc:
+                    raise HTTPException(409, 'A saved check spectrum is unavailable') from exc
+            result=assess(samples, adc, interval=snap_read_interval_s(settings), details=True)
+        for key in ('reference_spectra_db','current_spectra_db','difference_db'):
+            if key in result:
+                result[key]=json_values(result[key])
+        return dict(result, ip=rows[-1]['ip'], freq_mhz=freq_mhz(), method=METHOD)
 
     return router
