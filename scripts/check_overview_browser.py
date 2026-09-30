@@ -187,7 +187,9 @@ def main():
             (0,24,0,True,True,'silent'),(11,24,0,True,True,'silent'),
             (12,24,0,True,True,'orange'),(17,24,0,True,True,'orange'),
             (18,24,0,True,True,'yellow'),(20,24,0,True,True,'yellow'),
-            (24,24,0,True,True,'yellow'),(25,25,0,True,True,'yellow'),
+            (24,24,0,True,True,'ok'),(25,25,0,True,True,'ok'),
+            (1,1,0,True,True,'ok'),(25,25,1,True,True,'yellow'),
+            (25,25,0,False,True,'late'),(25,25,0,True,False,'late'),
             (0,0,0,True,True,'unknown'),
             (0,0,1,True,True,'silent'),(20,24,0,False,True,'late'),
             (20,24,0,True,False,'late'),
@@ -207,6 +209,8 @@ def main():
             if expected=='yellow':
                 assert colors['bg']=='rgb(231, 196, 74)'
                 assert card.locator('.overview-status').inner_text()=='Needs attention'
+            if expected=='ok':
+                assert card.locator('.overview-status').inner_text()=='All recovered'
         assert not errors,errors
         browser.close()
     print(json.dumps({'result':'passed','checks':['telescope name and separate observatory location','original CASM photo, top-right layout and keyboard zoom','aligned time-zone and rolling controls','live counts','17 selection matches catalog','map wiring','two compact diagnostics','white figure zoom','trial details','amplitude/phase','shared historical bounds','Search drill-down','mobile','stale evidence','independent failures','history pause/live refresh','recovery threshold boundaries and contrast']},indent=2))

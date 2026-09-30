@@ -16,11 +16,13 @@ age above 10 minutes is marked stale; this is a display threshold, not an
 instrument-quality test. Missing, pending and incomplete evidence remain explicit.
 History panels share a time-zone and interval control, default rolling 24 hours
 with two-minute refresh. Historical selections pause those panels, not live cards.
-The live recovery card uses the operator's absolute recovered-count thresholds:
-18 or more is yellow, labelled **Needs attention** (including 24/24), fewer than 12 is red; the intermediate
-12–17 band is orange. These are 24-hour display bands, not recovery percentages
-or scientific acceptance criteria. Unavailable/empty evidence stays unknown;
-stale or incomplete counts take priority over count bands. Individual trial
+The live recovery card is green, labelled **All recovered**, at 100% recovery
+of a nonempty completed-fired set, with no firing failures, pending trials or
+unknown outcomes. This includes 25/25 and takes priority over absolute counts.
+For partial recovery, 18 or more is yellow (**Needs attention**), fewer than 12
+is red and 12–17 is orange. These are 24-hour display bands, not scientific
+acceptance criteria. Unavailable/empty evidence stays unknown; stale or
+incomplete counts cannot turn green. Individual trial
 misses remain red; shorter historical intervals do not use these thresholds.
 
 Injection outcomes use a white click-to-zoom timeline. Trial markers open their

@@ -4,6 +4,7 @@ import { api, Evidence, initialWindow, isoInput, Json, LOCAL, Notice, TimeWindow
 import { InjectionPanel, localStamp, OverviewImage, VisibilityPreview } from "../components/OverviewPlots";
 import { FigureZoom } from "../components/FigureZoom";
 import { snapHealthLabel } from "../components/SnapHealth";
+import { injectionRecovery } from "../components/injectionRecovery";
 import { location, wiringLabel } from "../components/vis/ArrayPlots";
 import telescopePhoto from "../assets/casm-telescope.jpg";
 import "../overview.css";
@@ -58,10 +59,7 @@ export default function OperationsPage() {
   const searchFresh=!search.error&&tickAge!=null&&tickAge<=120,healthy=streams.filter(s=>s.status==='ok').length;
   const searchHealth:Health=search.error?'late':!streams.length||tickAge==null?'unknown':!searchFresh?'late':streams.some(s=>s.status==='silent')?'silent':streams.some(s=>s.status==='late')?'late':healthy===8?'ok':'unknown';
   const missed=(c.missed_t1??0)+(c.missed_t2??0),failures=c.fire_failed??0,injFresh=!live.error&&liveAge!=null&&liveAge<=120;
-  // Operator thresholds are recovered counts over 24 h, not recovery percentages.
-  // No completed evidence is not a measured zero; stale/partial counts take priority.
-  const recoveryHealth:Health=!inj||inj.status==='unavailable'?'unknown':!injFresh||!inj.counts_complete?'late':!(c.completed_fired>0||failures>0)?((c.pending??0)+(c.unknown??0)>0?'late':'unknown'):c.recovered<12?'silent':c.recovered<=17?'orange':'yellow';
-  const recoveryLabel=recoveryHealth==='yellow'?'Needs attention':recoveryHealth==='orange'?'Reduced recovery':recoveryHealth==='silent'?'Low recovery':recoveryHealth==='late'?'Pending / incomplete / stale':'No measurement';
+  const {health:recoveryHealth,label:recoveryLabel}=injectionRecovery(inj,injFresh);
   const vis=data?.observation?.vis_age,visMeasureAge=secondsSince(vis?.observed_at,now);
   const visAge=typeof vis?.value==='number'&&visMeasureAge!=null?vis.value+visMeasureAge:null;
   const visHealth:Health=live.error?'late':visAge==null?'unknown':visAge>600?'late':'ok';
