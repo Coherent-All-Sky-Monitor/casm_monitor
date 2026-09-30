@@ -33,7 +33,7 @@ function useManifest(query:string,cache:Map<string,MovieManifest>,attempt:number
 export function VisibilityPlayback({initial,inputs,onClose,onInspect}:{initial:MovieOptions;inputs:Antenna[];onClose:()=>void;onInspect:(pair:number[],t0:number,t1:number,options:MovieOptions)=>void}){
   const dialog=useRef<HTMLDialogElement>(null);
   const [options,setOptions]=useState(initial),[span,setSpan]=useState(1),[cursor,setCursor]=useState<number|null>(null);
-  const [speed,setSpeed]=useState(1),[loop,setLoop]=useState(false),[playing,setPlaying]=useState(true),[expanded,setExpanded]=useState<Expanded|null>(null);
+  const [speed,setSpeed]=useState(1),[loop,setLoop]=useState(false),[playing,setPlaying]=useState(false),[expanded,setExpanded]=useState<Expanded|null>(null);
   const [attempt,setAttempt]=useState(0),[size,setSize]=useState({width:1200,height:700});
   const cache=useMemo(()=>new MovieBuffer(),[]),manifests=useMemo(()=>new Map<string,MovieManifest>(),[]);
   const stage=useRef<HTMLDivElement>(null),deadline=useRef<number|null>(null),previousSpeed=useRef(speed);

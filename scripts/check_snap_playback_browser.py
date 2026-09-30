@@ -51,8 +51,14 @@ def main():
             switch.evaluate('e=>e.click()') if args.dom_only else switch.click()
             wait("document.querySelectorAll('.snap-spectrum-card').length===48")
         click('History')
-        wait(f"document.querySelectorAll('.snap-spectrum-card').length==={count}")
-        click('Video playback')
+        wait(f"document.querySelectorAll('.snap-movie-card').length==={count}")
+        assert not page.get_by_role('button',name='Video playback',exact=True).count()
+        assert page.get_by_role('button',name='Play playback',exact=True).count()==1
+        page.wait_for_timeout(1400)
+        assert page.get_by_label('Playback saved time').input_value()=='0'
+        click('Close playback')
+        assert page.get_by_role('button',name='Live',exact=True).get_attribute('aria-pressed')=='true'
+        click('History')
         wait(f"document.querySelectorAll('.snap-movie-card').length==={count}")
         def check_clocks(selector):
             values=page.locator(selector).evaluate('''e=>({at:Number(e.dataset.timestamp),
@@ -64,6 +70,7 @@ def main():
             return values
         clocks=check_clocks('.snap-movie-clock .snap-clock-row')
         assert max(clocks['tops'])-min(clocks['tops'])<3,clocks
+        click('Play playback')
         wait("document.querySelector('[aria-label=\"Playback saved time\"]').value!=='0'")
         click('Pause playback')
         old=page.get_by_label('Playback saved time').input_value()
@@ -82,7 +89,7 @@ def main():
         for label,span in [('Last 48 hours',2),('Last week',7)]:
             click(label)
             wait(f"document.querySelectorAll('.snap-movie-card').length==={count}")
-            click('Pause playback')
+            assert page.get_by_role('button',name='Play playback',exact=True).count()==1
             assert page.get_by_role('button',name=label,exact=True).get_attribute('aria-pressed')=='true'
             assert any(f'span_days={span}' in u for u in requests)
             assert page.get_by_label('Playback time zone').input_value()=='America/Los_Angeles'
@@ -160,7 +167,7 @@ def main():
             if failed[0]:route.fallback()
             else:failed[0]=True;route.fulfill(status=503,body='Test: saved read temporarily unavailable')
         page.route('**/spectra-playback-frames?**',fail_once)
-        click('Video playback')
+        click('History')
         wait("document.querySelector('.snap-movie-error')!==null")
         assert page.get_by_role('button',name='Play playback',exact=True).count()==1
         click('Retry saved read')
@@ -171,7 +178,7 @@ def main():
         wait("document.querySelectorAll('.snap-spectrum-card').length===16")
         assert page.get_by_role('button',name='Live',exact=True).get_attribute('aria-pressed')=='true'
         assert not errors and not mutations,(errors,mutations)
-        result=dict(mode='DOM-only' if args.dom_only else 'native-browser',live_default=True,play_pause=True,
+        result=dict(mode='DOM-only' if args.dom_only else 'native-browser',live_default=True,history_one_click=True,history_opens_paused=True,close_returns_live=True,play_pause=True,
                     day_48h_week=True,timezone=True,shared_fixed_axes=True,inputs=count,desktop_all_panels=not args.all_adcs,
                     mobile_bounds=True,zoom=True,download_verified=not args.dom_only,
                     playback_4x=timing,

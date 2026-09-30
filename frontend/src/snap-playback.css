@@ -37,5 +37,4 @@
 .snap-movie-card>footer{padding:1px 7px;background:#f0f3f8;color:#48596f;font-size:9px;line-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
 .snap-movie-empty{height:100%;display:grid;place-items:center;color:#aebed4;font-size:17px}
 .snap-movie-error{display:flex;gap:10px;align-items:center;color:#ffcdb5;flex-shrink:0}.snap-movie-error p{margin:0}
-.snap-open-playback{font-weight:650}
 @media(max-width:750px){.snap-movie-content{padding:10px;gap:8px}.snap-movie-header{gap:10px;flex-wrap:wrap}.snap-movie-header h2{font-size:19px}.snap-movie-header>div:first-child{flex:1}.snap-movie-header>button{order:1}.snap-movie-clock{order:2;text-align:left;width:100%}.snap-movie-clock strong{font-size:21px}.snap-movie-controls{gap:8px;padding:8px}.snap-movie-cadence{display:none}.snap-movie-timeline>span{width:100%}.snap-movie-controls label{font-size:11px}.snap-movie-stage{min-height:170px}}

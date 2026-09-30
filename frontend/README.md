@@ -59,8 +59,8 @@ selected, using the same inspected payload membership as Overview and SNAPs.
 Green identifies beamforming inputs, blue other wired inputs; dashed map
 borders identify hidden panels. Manual selections survive refresh, while the
 Beamforming preset follows membership updates. Unknown membership stays unknown.
-Visibility **History → Video playback** carries those selections into a full-window
-player: 24-hour/48-hour/week periods, end date, all four quantities, all layouts
+Visibility **History** opens a paused full-window viewer directly, carrying those
+selections into 24-hour/48-hour/week periods, end date, all four quantities, all layouts
 and an adjustable reference antenna. Spectra advance saved integrations;
 dynamic spectra and the upper triangle slide a separate fixed panel window.
 `VisibilityPlayback.tsx` buffers numeric chunks; `VisibilityDynamic.tsx` crops
@@ -83,8 +83,7 @@ the nearby layout and Overview map. SNAP status/read-details include board IPs.
 searchable right sidebar with show/hide toggles, and the shared image zoom.
 All spectrum panels share 374.9–500.1 MHz and a full-data power scale. The default
 display is dB re 10⁻¹⁰ native power units. Scale/reference controls are removed.
-Live/History uses a UTC calendar, within-day time slider and day/read arrows.
-Live is the default. History's **Video playback** opens a full-window grid with
+Live is the default. **History** opens a paused full-window grid directly, with
 day/48-hour/week presets, play/pause, speed, seek and Loop. `SpectrumClocks`
 shows UTC, OVRO local and mean LST together in the playback header, historical
 frame header and spectrum zooms. All use saved timestamps; LST is supplied by
@@ -97,6 +96,9 @@ implements time/grid helpers. All 4096 channels remain separate. Memoized
 `SnapPlot` traces avoid rebuilding on prefetch completion; the playback clock
 includes render time in its frame interval. Compact playback panels fit the
 viewport, while ordinary/expanded spectra retain the autos aspect ratio.
+**Open this read** opens the selected frame's comparison/trend inspector, retaining
+the UTC calendar, within-day slider and read/day arrows. Closing the viewer alone
+leaves the previous Live/saved-read selection unchanged.
 Optional **Compare with…** defaults to the preceding saved read and adds an
 orange comparison overlay. Trend points open saved
 spectra. Missing boards stay blank, and current wiring labels remain explicit.

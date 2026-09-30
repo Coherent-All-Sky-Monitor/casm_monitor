@@ -1,7 +1,9 @@
 # Saved SNAP history and change checks
 
-The SNAPs page defaults to Live. History selects an exact saved board pass by
-UTC date and a within-day time slider. Day arrows skip to dates with saved data;
+The SNAPs page defaults to Live. **History** opens the saved-data viewer directly,
+paused. Scrub, step or press Play; there is no second entry button. **Open this
+read** opens an exact saved board pass in the comparison/trend inspector, with a
+UTC date and within-day time slider. Its day arrows skip to dates with saved data;
 read arrows step through saved reads, including across midnight. Selecting a day
 keeps the nearest available time of day. Empty dates explicitly show no data.
 **Compare with…** opens an optional second navigator, initially the preceding
@@ -13,9 +15,10 @@ available. Station and beamforming labels always describe the current mapping.
 
 ## Playback
 
-In History, **Video playback** opens the selected inputs together in a full-window
-grid. Live remains the page default; opening History alone does not play.
-The default interval is the selected UTC day. **Last 48 hours** and **Last week**
+**History** opens the selected inputs together in a full-window grid, paused.
+Live remains the page default. The default interval is the latest saved UTC day
+when opened from Live, or the selected saved day when opened from an inspected read.
+**Last 48 hours** and **Last week**
 end now when today's date is selected, or at the selected past UTC day's end.
 The date selector covers all retained dates. The top-right line shows **UTC,
 OVRO local time and LST together**, wrapping on small screens. UTC and local each
@@ -35,7 +38,7 @@ Play/pause, previous/next read, the time slider, 0.5/1/2/4× speed and optional
 Loop control saved-read playback. At 1× each read gets one second; 4× targets
 250 ms. Playback stops at the end unless Loop is enabled and pauses when the
 browser tab is hidden, a request fails or a plot is enlarged. **Open this read**
-returns to the ordinary History view at that exact snapshot. Closing leaves
+opens the comparison/trend inspector at that exact snapshot. Closing leaves
 the previous selection unchanged. The zoom viewer retains PNG download.
 
 Frequency and power axes stay fixed throughout an interval. Power limits cover

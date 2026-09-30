@@ -7,7 +7,7 @@ generation or deployment occur through these endpoints.
 
 ## Array snapshot
 
-Live remains the default. **History → Video playback** adds saved autos,
+Live remains the default. **History** opens the paused viewer directly for saved autos,
 reference-cross spectra and moving dynamic spectra, including the upper
 triangle. See [visibility playback](visibility-playback.md) for controls,
 fixed scales, scientific conventions and the bounded numeric-chunk API.

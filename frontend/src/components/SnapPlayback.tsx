@@ -88,7 +88,7 @@ function PlaybackDay({day,inputs,onDay,onClose,onSelect,preferences,onPreference
   // hourly acquisition. Never replace the sequence or its axes mid-play.
   const manifest=useResource(`/api/snap-workspace/spectra-playback?day=${day}&span_days=${preferences.span}`);
   const snapshots:SnapSnapshot[]=useMemo(()=>(manifest.data?.snapshots??[]).map((s:SnapSnapshot)=>({...s,day:snapDay(s.at)})),[manifest.data]);
-  const [index,setIndex]=useState(0),[playing,setPlaying]=useState(true),[expanded,setExpanded]=useState<PlaybackInput|null>(null);
+  const [index,setIndex]=useState(0),[playing,setPlaying]=useState(false),[expanded,setExpanded]=useState<PlaybackInput|null>(null);
   const {speed,loop,zone,span}=preferences;
   const [size,setSize]=useState({width:1200,height:700});
   const stage=useRef<HTMLDivElement>(null), seen=useRef(new Map<string,string>());

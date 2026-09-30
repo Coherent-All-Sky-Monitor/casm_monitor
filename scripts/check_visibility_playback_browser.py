@@ -77,8 +77,12 @@ def main():
         page.wait_for_function('document.querySelectorAll(".antenna-plot").length>0',polling=100,timeout=60000)
         expected=page.locator('.antenna-plot').count()
         click(page.get_by_role('button',name='History',exact=True))
-        click(page.locator('.vis-history-mode').get_by_role('button',name='Video playback',exact=True))
-        ready();paused()
+        ready()
+        assert not page.get_by_role('button',name='Video playback',exact=True).count()
+        assert page.get_by_role('button',name='Play visibility playback',exact=True).count()==1
+        initial_time=page.locator('.vis-movie .snap-clock-row').get_attribute('data-timestamp')
+        page.wait_for_timeout(1300)
+        assert page.locator('.vis-movie .snap-clock-row').get_attribute('data-timestamp')==initial_time
         assert page.locator('.vis-movie-card').count()==expected
         assert page.locator('.vis-movie [data-clock]').count()==3
         if '--speeds-only' in sys.argv:
@@ -231,7 +235,9 @@ def main():
         assert not errors,errors
         click(page.get_by_role('button',name='Close visibility playback',exact=True))
         assert page.locator('dialog.vis-movie').count()==0
-        result=dict(result='passed',inputs=expected,frame_intervals_ms=intervals,screenshot=screenshot,
+        assert page.get_by_role('button',name='Live',exact=True).get_attribute('aria-pressed')=='true'
+        assert page.locator('.antenna-plot').count()==expected
+        result=dict(result='passed',inputs=expected,history_one_click=True,history_opens_paused=True,close_returns_live=True,frame_intervals_ms=intervals,screenshot=screenshot,
                     loop_frames=loop_frames,downloads=downloads,load_failures_retried=len(failures),
                     manifests=len(manifests),page_errors=errors,non_get_requests=writes)
         OUT.joinpath('result.json').write_text(json.dumps(result,indent=2)+'\n')

@@ -1,6 +1,8 @@
 # Visibility history playback
 
-Open **Visibilities → History → Video playback**. Live remains the default;
+Open **Visibilities → History**. One click opens the viewer, paused, with no
+intermediate page or separate Video playback button. Scrub or step to inspect
+a frame, or press Play to animate. Closing returns to Live, the default;
 opening history stops the array page's minute refresh. The player initially
 uses the selected antennas, reference, quantity, band, processing, arrangement,
 spectrum statistic and panel window. The initial period is the last 24 hours
@@ -106,12 +108,13 @@ arithmetic, not array health or astrophysical interpretation.
 
 ## Acceptance check, 2026-09-30
 
-The local saved-data browser check covered the 16-input default, all quantities,
+The local saved-data browser check covered one-click paused History entry and
+return to Live, the 16-input default, all quantities,
 SNAP/station order, reference changes without moving the cursor, 136 upper-triangle
 cells, rolling averages, day/48-hour/week selection, historical dates, looping,
 PNG downloads and an injected load failure followed by retry. No page errors or
 non-GET API requests occurred. At 4×, 18 consecutive reference-cross dynamic frames
-crossed a chunk boundary without skipping; commit intervals were 219–280 ms.
+crossed a chunk boundary without skipping, at approximately 250 ms per frame.
 This is a local-browser sample, not a network-speed or all-configurations guarantee.
 
 The follow-up `--speeds-only` check used a 1,258-frame, 48-hour selection. The

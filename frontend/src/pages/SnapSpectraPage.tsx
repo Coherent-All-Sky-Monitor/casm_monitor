@@ -6,7 +6,7 @@ import { dbOffset, snapRange, SNAP_REFERENCE_POWER } from '../components/snapPow
 import { SnapHealth } from '../components/SnapHealth';
 import { SnapPlayback, PlaybackInput } from '../components/SnapPlayback';
 import { SpectrumClocks } from '../components/SpectrumClocks';
-import {ChangeEvidence, previousSnapshot, SavedReadPicker, SnapChanges, SnapSnapshot, snapshotForRead, snapshotUrl, useSnapResource} from '../components/SnapHistory';
+import {ChangeEvidence, previousSnapshot, SavedReadPicker, snapDay, SnapChanges, SnapSnapshot, snapshotForRead, snapshotUrl, useSnapResource} from '../components/SnapHistory';
 import '../snap-spectra.css';
 
 type Input = {key:string;ip:string;snap:number;slot:string;adc:number;station:string|null;antenna:number|null;functional:boolean;packet_idx:number|null;board:Json;beamforming:boolean|null};
@@ -44,7 +44,7 @@ export default function SnapSpectraPage() {
   const membershipKnown=!membership.error&&membership.data?.status==='complete';
   const beamformingKeys=useMemo(()=>new Set<string>(membershipKnown?(membership.data?.inputs??[]).filter((i:Json)=>i.beamforming===true).map((i:Json)=>`${i.ip}/${i.adc}`):[]),[membershipKnown,membership.data]);
   const revision=acquisition?.latest_job?.finished??'';
-  const {data:frame,error:frameError}=useSnapResource(mode==='live'?`/api/snap-workspace/spectra?v=${revision}`:selected?snapshotUrl(selected):null,mode==='live'?60000:0);
+  const {data:frame,error:frameError}=useSnapResource(mode==='live'?`/api/snap-workspace/spectra?v=${revision}`:selected?snapshotUrl(selected):null,mode==='live'&&!playback?60000:0);
   const compare=useSnapResource(comparing&&comparison?snapshotUrl(comparison):null);
   const referenceFor=(ip:string)=>comparing?compare.data?.boards?.find((b:Json)=>b.ip===ip)??null:null;
   const changes=useSnapResource('/api/snap-workspace/changes',60000);
@@ -99,17 +99,18 @@ export default function SnapSpectraPage() {
   };
   const expandedInput=inputs.find(i=>i.key===expanded);
   const openPlayback=()=>{
-    if(!selected)return;
+    if(!visible.length)return;
+    const savedTimes=(frame?.boards??[]).map((b:Json)=>b.ts).filter((t:unknown):t is number=>typeof t==='number'&&Number.isFinite(t));
+    const day=mode==='history'&&selected?selected.day:snapDay(savedTimes.length?Math.max(...savedTimes):Date.now()/1000);
     const ordered=[...visible];
     if(layout!=='snap')ordered.sort((a,b)=>location(b).row-location(a).row||location(a).col-location(b).col);
-    setPlayback({day:selected.day,inputs:ordered.map(({key,ip,adc,snap,slot,station,antenna,beamforming})=>({key,ip,adc,snap,slot,station,antenna,beamforming}))});
+    setPlayback({day,inputs:ordered.map(({key,ip,adc,snap,slot,station,antenna,beamforming})=>({key,ip,adc,snap,slot,station,antenna,beamforming}))});
   };
   return <div className="workspace-page snap-spectra-page">
     <div className="page-heading"><h2>SNAPs</h2><p className="muted">375–500 MHz · 4096 channels · {mode==='live'?'latest spectra':'saved spectra'}</p></div>
     <section className="snap-history-bar control-surface" aria-label="Spectrum history controls">
-      <div className="field-row"><div className="choice-row" aria-label="Spectrum mode">{(['live','history'] as const).map(m=><button key={m} className={mode===m?'active':''} aria-pressed={mode===m} onClick={()=>setMode(m)}>{m==='live'?'Live':'History'}</button>)}</div>
+      <div className="field-row"><div className="choice-row" aria-label="Spectrum mode"><button className={mode==='live'&&!playback?'active':''} aria-pressed={mode==='live'&&!playback} onClick={()=>{setPlayback(null);setMode('live');}}>Live</button><button className={mode==='history'||playback?'active':''} aria-pressed={mode==='history'||!!playback} disabled={!visible.length} onClick={openPlayback}>History</button></div>
       <span className="muted">{mode==='live'?'Latest saved spectra · updated hourly':selected?`${selected.day} · ${stamp(selected.at).slice(11,16)} UTC`:'Choose a date, then slide through saved times'}</span>
-      {mode==='history'&&<button className="primary snap-open-playback" title="Play saved spectra: a day, the last 48 hours or the last week" disabled={!selected||!visible.length} onClick={openPlayback}>Video playback</button>}
       <button className={`snap-compare-toggle${comparing?' active':''}`} aria-pressed={comparing} disabled={comparisonLoading||(!frame&&!comparing)} onClick={()=>void toggleCompare()}>{comparing?'Close comparison':'Compare with…'}</button></div>
       {mode==='history'&&frame&&<SpectrumClocks at={frame.at} lst={frame.lst} dark/>}
       {mode==='history'&&<SavedReadPicker label="Spectrum" value={selected} onChange={setSelected}/>}

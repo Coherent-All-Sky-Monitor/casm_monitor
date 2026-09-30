@@ -35,6 +35,7 @@ def main():
         assert page.locator('.snap-spectrum-card').count()==16
         capture(page,'snaps-live-changes.png')
         page.get_by_role('button',name='History',exact=True).click()
+        page.get_by_role('button',name='Open this read',exact=True).click(timeout=60000)
         dates=page.get_by_label('Spectrum date (UTC)',exact=True)
         options=[d['day'] for d in page.request.get(URL+'/api/snap-workspace/spectra-days').json()['days']]
         assert '2026-09-09' in options
@@ -92,6 +93,7 @@ def main():
             inspected=True
             page.keyboard.press('Escape')
         page.get_by_role('button',name='History',exact=True).click()
+        page.get_by_role('button',name='Open this read',exact=True).click(timeout=60000)
         for width in [390,320]:
             page.set_viewport_size({'width':width,'height':900})
             page.wait_for_timeout(300)
