@@ -451,6 +451,8 @@ def build_router(settings, reader):
     from .science_array import register_routes
     router = APIRouter(prefix='/api/science', tags=['science'])
     register_routes(router, settings, reader)
+    from .visibility_playback import register_routes as register_playback
+    register_playback(router, settings, reader)
 
     @router.get('/catalog')
     def get_catalog(layout_id: str | None = None):

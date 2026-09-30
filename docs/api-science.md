@@ -7,6 +7,11 @@ generation or deployment occur through these endpoints.
 
 ## Array snapshot
 
+Live remains the default. **History → Video playback** adds saved autos,
+reference-cross spectra and moving dynamic spectra, including the upper
+triangle. See [visibility playback](visibility-playback.md) for controls,
+fixed scales, scientific conventions and the bounded numeric-chunk API.
+
 `/vis` opens **Visibilities**: large white figures grouped by station row,
 north to south and west to east, beside a clickable layout map. The default
 follows the inspected nonzero coherent-beam payload union in the latest recorded

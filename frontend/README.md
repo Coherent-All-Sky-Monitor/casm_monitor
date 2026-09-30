@@ -59,6 +59,15 @@ selected, using the same inspected payload membership as Overview and SNAPs.
 Green identifies beamforming inputs, blue other wired inputs; dashed map
 borders identify hidden panels. Manual selections survive refresh, while the
 Beamforming preset follows membership updates. Unknown membership stays unknown.
+Visibility **History → Video playback** carries those selections into a full-window
+player: 24-hour/48-hour/week periods, end date, all four quantities, all layouts
+and an adjustable reference antenna. Spectra advance saved integrations;
+dynamic spectra and the upper triangle slide a separate fixed panel window.
+`VisibilityPlayback.tsx` buffers numeric chunks; `VisibilityDynamic.tsx` crops
+cached canvas strips, with no per-frame image fetch. Quantity/order changes
+are local; reference changes preserve the timestamp and pause for buffering.
+Saved UTC/local/LST and the shared zoom/download viewer remain available.
+See [visibility playback](../docs/visibility-playback.md) for limits and estimators.
 `/snaps` opens white full-band spectrum panels in compact SNAP order, with
 station order/grid, a prominent all-12-ADC switch and expanded 30-day power trends.
 Spectrum panels share the visibility autos' 324:192 aspect ratio at every width

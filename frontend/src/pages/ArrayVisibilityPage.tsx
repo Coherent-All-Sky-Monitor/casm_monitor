@@ -7,6 +7,7 @@ import "../array-vis-compact.css";
 import { FigureZoom } from "../components/FigureZoom";
 import { PairMatrix, PairTile } from "../components/vis/PairMatrix";
 import { SnapPanels, StationPanels } from "../components/vis/StationPanels";
+import { VisibilityPlayback } from "../components/vis/VisibilityPlayback";
 
 const cache=new Map<string,Snapshot>();
 export default function ArrayVisibilityPage() {
@@ -14,6 +15,7 @@ export default function ArrayVisibilityPage() {
   const [mode,setMode]=useState("auto"),[quantity,setQuantity]=useState<Quantity>("amp"),[view,setView]=useState("spectrum");
   const [reference,setReference]=useState("raw"),[referenceInput,setReferenceInput]=useState(8),[hours,setHours]=useState("24");
   const [arrangement,setArrangement]=useState("compact");
+  const [history,setHistory]=useState(false),[playback,setPlayback]=useState(false);
   const [zone,setZone]=useState(LOCAL),[statistic,setStatistic]=useState<"latest"|"mean">("latest"),[log,setLog]=useState(true);
   const [fmin,setFmin]=useState("390.625"),[fmax,setFmax]=useState("484.375"),[band,setBand]=useState([390.625,484.375]);
   const [data,setData]=useState<Snapshot|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false),[tick,setTick]=useState(0);
@@ -22,7 +24,7 @@ export default function ArrayVisibilityPage() {
   const serial=useRef(0);
   const key=new URLSearchParams({mode,reference,reference_input:String(referenceInput),hours,fmin:String(band[0]),fmax:String(band[1])}).toString();
   useEffect(()=>{const id=++serial.current;const cached=cache.get(key);if(cached)setData(cached);setBusy(true);setError("");api<Snapshot>(`/api/science/array?${key}`).then(d=>{if(id!==serial.current)return;cache.set(key,d);if(cache.size>12)cache.delete(cache.keys().next().value!);setData(d);setBusy(false);}).catch(e=>{if(id===serial.current){setError(e.message);setBusy(false);}});return()=>{serial.current++;};},[key,tick]);
-  useEffect(()=>{const timer=window.setInterval(()=>{if(!document.hidden)setTick(t=>t+1);},60000);return()=>window.clearInterval(timer);},[]);
+  useEffect(()=>{const timer=window.setInterval(()=>{if(!document.hidden&&!history&&!playback)setTick(t=>t+1);},60000);return()=>window.clearInterval(timer);},[history,playback]);
   useEffect(()=>{const close=(e:KeyboardEvent)=>{if(e.key==='Escape')setFocus(null);};window.addEventListener('keydown',close);return()=>window.removeEventListener('keydown',close);},[]);
   const inputs=data?.inputs??[];
   const chosen=(selected??data?.default_inputs??[]).filter(p=>inputs.some(a=>a.packet_idx===p));
@@ -48,6 +50,7 @@ export default function ArrayVisibilityPage() {
   };
   const age=data?Math.max(0,(Date.now()/1000-data.t1)/60):0;
   return <div className="workspace-page array-page"><div className="page-heading array-page-heading"><div><p className="eyebrow">ARRAY SNAPSHOT</p><h2>Visibilities</h2><p className="muted">{chosen.length} antennas selected · Rolling visibilities · {arrangement==='snap'&&view!=='matrix'?'SNAP / ADC order':'station order'}.</p></div><button onClick={()=>setParams({view:'detail'})}>Detailed baseline inspector →</button></div>
+    <div className="vis-history-mode"><button aria-pressed={!history} onClick={()=>setHistory(false)}>Live</button><button aria-pressed={history} onClick={()=>setHistory(true)}>History</button>{history&&<button disabled={!data||!chosen.length} onClick={()=>setPlayback(true)}>Video playback</button>}<p>{history?'Saved integrations · choose a day, 48 hours or a week in the player.':'Live · rolling snapshot'}</p></div>
     {error&&<Notice>{error}{data?' Showing the previous successful snapshot below.':''}</Notice>}
     <div className="array-overview-controls"><section className="array-layout-panel"><div className="section-heading"><h3>Array layout</h3><span>{chosen.length} / {inputs.length||'…'}</span></div><LayoutMap inputs={inputs} selected={chosen} reference={referenceInput} mode={view==='matrix'?'all':mode} onToggle={toggle}/><div className="array-preset-buttons"><button className={selected===null?'active':''} aria-pressed={selected===null} onClick={()=>setSelected(null)}>{presetLabel}</button><button onClick={()=>setSelected(inputs.map(a=>a.packet_idx))}>All wired</button><button onClick={()=>setSelected([])}>Clear</button></div>{data&&!membershipKnown&&<Notice>Beamforming membership is unavailable or does not match this layout. Select wired antennas manually.</Notice>}</section>
     <section className="array-control-panel"><div className="array-control-line"><label>Correlation</label><div className="choice-row">{[['auto','Autocorrelations'],['cross','Cross-correlations']].map(([v,l])=><button key={v} className={mode===v?'active':''} onClick={()=>{setMode(v);setView(v==='cross'?'dynamic':'spectrum');setFocus(null);setPairFocus(null);}}>{l}</button>)}{mode==='cross'&&view!=='matrix'&&<label className="array-reference">Reference<select aria-label="Reference antenna" value={referenceInput} onChange={e=>setReferenceInput(Number(e.target.value))}>{inputs.map(a=><option value={a.packet_idx} key={a.packet_idx}>{a.station} · ant {a.antenna}</option>)}</select></label>}</div></div>
@@ -58,7 +61,8 @@ export default function ArrayVisibilityPage() {
       <details className="array-options"><summary>Plot notes</summary><p className="array-caption">{view==='spectrum'?(statistic==='latest'?'One recorded integration. Each panel has its own labelled scale.':'Window mean: mean |V|; Real/Imag from the complex mean; phase = angle of the complex mean.') :view==='dynamic'?'Time → · frequency ↑. Every integration retained. Colour ranges per panel; percentile display limits (phase: −π to π).':'Each cell is a baseline. Antennas are ordered north to south, then west to east.'} {quantity==='phase'?'Zero-amplitude phase is undefined and left blank.':quantity==='amp'?'No channel normalization.':''}</p></details>
       <details className="array-options"><summary>Frequency range & evidence</summary><form className="field-row" onSubmit={e=>{e.preventDefault();const lo=Number(fmin),hi=Number(fmax);if(lo>0&&hi>lo&&hi<1000)setBand([lo,hi]);else setError('Choose increasing frequency bounds in MHz.');}}><label>Min MHz<input type="number" value={fmin} step="any" onChange={e=>setFmin(e.target.value)}/></label><label>Max MHz<input type="number" value={fmax} step="any" onChange={e=>setFmax(e.target.value)}/></label><button>Apply band</button></form><p>Beamforming follows the inspected nonzero coherent-beam weights in the latest recorded deployment, matched to this layout. It is current membership, not historical membership or an antenna-health check. Toggle any wired station; manual selections survive refresh. Spectra retain all cached channels. Dynamic previews average frequency down to ≤128 channels, with no additional time averaging.</p>{data&&<Evidence value={data.provenance}/>}</details>
     </section></div>
-    {data&&<section className={`array-results ${busy?'array-pending':''}`} aria-busy={busy}>
+    {history&&<section className="vis-history-entry"><h3>Play the saved array</h3><p>Keep your antennas, reference and plot settings. Scrub through time, switch quantity or reference, and click any panel to pause and enlarge.</p><button disabled={!data||!chosen.length} onClick={()=>setPlayback(true)}>Video playback</button></section>}
+    {data&&!history&&<section className={`array-results ${busy?'array-pending':''}`} aria-busy={busy}>
       <div className="array-results-heading">
         <h3>{view==='matrix'?'All baselines':data.mode==='auto'?'Autocorrelations':`Baselines to ${targetReference?.station??'reference'}`} <span>· {label}</span></h3>
         <span>{data.reference==='raw'?'Raw':'Sun fringe-stopped'} · {dated(data.t0)}–{dated(data.t1)} {zone===LOCAL?'OVRO local':'UTC'}</span>
@@ -85,6 +89,7 @@ export default function ArrayVisibilityPage() {
             </div></div>}
         </>}
     </section>}
+    {playback&&data&&<VisibilityPlayback inputs={inputs} initial={{mode,view,quantity,reference,referenceInput,arrangement,windowHours:Number(hours),statistic,log,zone:zone as 'UTC'|'America/Los_Angeles',band,selected:chosen,end:data.t1}} onClose={()=>setPlayback(false)} onInspect={(pair,t0,t1,o)=>{setPlayback(false);setParams({view:'detail',pairs:pair.join(','),kind:`${o.quantity==='amp'?'amplitude':o.quantity}_${o.view==='spectrum'?'spectrum':'waterfall'}`,t0:new Date(t0*1000).toISOString(),t1:new Date(t1*1000).toISOString(),reference:o.reference,spectrum_statistic:o.statistic,time_tz:o.zone,fmin:String(o.band[0]),fmax:String(o.band[1])});}}/>}
     {focus!==null&&focused&&data&&ready&&<FigureZoom title={`${focused.station} · ${label} ${view==='dynamic'?'dynamic spectrum':'spectrum'}`} onClose={()=>setFocus(null)}
       actions={<><button onClick={()=>detail(panelFor(focused)!)}>Open stored-pair plot</button><p>Cross panels use V(target, reference). Detailed plots use the ascending stored packet pair.</p></>}>
       {draw(focused,true)}
