@@ -67,6 +67,10 @@ dynamic spectra and the upper triangle slide a separate fixed panel window.
 cached canvas strips, with no per-frame image fetch. Quantity/order changes
 are local; reference changes preserve the timestamp and pause for buffering.
 Saved UTC/local/LST and the shared zoom/download viewer remain available.
+Visibility-only speeds extend to 32×, with full-movie and remaining-time
+estimates from saved frame counts. Rates do not change averaging or skip samples.
+The expanded baseline has its own playback controls; it retains zoom across
+buffering and returns the array to the same time, paused. Download pauses first.
 See [visibility playback](../docs/visibility-playback.md) for limits and estimators.
 `/snaps` opens white full-band spectrum panels in compact SNAP order, with
 station order/grid, a prominent all-12-ADC switch and expanded 30-day power trends.

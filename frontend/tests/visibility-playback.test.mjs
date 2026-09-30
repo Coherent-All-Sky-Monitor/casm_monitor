@@ -4,7 +4,16 @@ import test from 'node:test';
 import ts from 'typescript';
 const source=readFileSync(new URL('../src/components/vis/visibilityPlaybackModel.ts',import.meta.url),'utf8');
 const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;
-const {lowerBound,windowFirst,component,chunkValue,RollingSpectra,decodeVisibilityChunk,movieOrder}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+const {lowerBound,windowFirst,component,chunkValue,RollingSpectra,decodeVisibilityChunk,movieOrder,VISIBILITY_SPEEDS,visibilityDuration}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+
+test('visibility speed choices and duration estimates count saved frames, not look-back context',()=>{
+  assert.deepEqual(VISIBILITY_SPEEDS,[.5,1,2,4,8,16,32]);
+  assert.equal(visibilityDuration(1258,4),'5m 15s');
+  assert.equal(visibilityDuration(1258,8),'2m 38s');
+  assert.equal(visibilityDuration(1258,16),'1m 19s');
+  assert.equal(visibilityDuration(1258,32),'40s');
+  assert.equal(visibilityDuration(1,.5),'2s');assert.equal(visibilityDuration(0,32),'0s');
+});
 
 test('time seek and rolling window use actual timestamps, including gaps',()=>{
   const m={times:[0,137,411,548],window_s:275};

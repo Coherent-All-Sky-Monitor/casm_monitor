@@ -7,9 +7,15 @@ spectrum statistic and panel window. The initial period is the last 24 hours
 ending at the saved snapshot, not the browser clock. Choose 48 hours, Last week,
 or a UTC end date; historical dates end just before the following midnight.
 
-Play/pause, previous/next integration, timeline, 0.5–4× speed and Loop operate on
+Play/pause, previous/next integration, timeline, 0.5–32× speed and Loop operate on
 saved integrations only. 1× is one integration per second of playback, not
-real time. The header shows saved UTC, OVRO local and mean LST simultaneously.
+real time. The speed menu includes an estimated full-movie duration based on
+the actual saved frame count; the adjacent label estimates time remaining.
+Buffering or slow rendering can extend both estimates. Faster speeds still
+visit every saved integration; SNAP playback speeds are unchanged.
+For example, 1,258 integrations spanning 48 hours take about 5m15s at 4×,
+1m19s at 16× or 39s at 32× before overhead.
+The header shows saved UTC, OVRO local and mean LST simultaneously.
 LST uses the same offline Astropy/OVRO convention as Overview. If unavailable,
 it is labelled unavailable. No time samples are synthesized across gaps.
 
@@ -50,6 +56,13 @@ at most 128 integrations across the loaded period, not each frame. Colour
 clipping is a display scale, not data normalization. Colourbars remain labelled.
 
 Click any panel or matrix cell to pause and open the shared zoom/download viewer.
+The enlarged baseline has Play/Pause, speed, Loop, single-frame steps and its own
+timeline. Only that plot is drawn while it is open; the array grid resumes at the
+same saved time, paused, when it closes. The zoom stays open at the selected
+magnification while buffering or seeking. Download pauses playback first so
+the saved title, clocks and pixels describe the same integration, and is disabled
+until that frame is buffered. Existing cache and baselines are reused, without
+additional per-baseline manifests.
 The enlarged view retains the saved clocks, axes and colourbar. **Open stored-pair
 detail** selects that exact historical window in the detailed inspector; its
 ascending stored-pair convention may reverse Imag/Phase relative to the movie.
@@ -100,6 +113,15 @@ PNG downloads and an injected load failure followed by retry. No page errors or
 non-GET API requests occurred. At 4×, 18 consecutive reference-cross dynamic frames
 crossed a chunk boundary without skipping; commit intervals were 219–280 ms.
 This is a local-browser sample, not a network-speed or all-configurations guarantee.
+
+The follow-up `--speeds-only` check used a 1,258-frame, 48-hour selection. The
+16-panel reference-cross view averaged 125, 63 and 31 ms per committed frame at
+8×, 16× and 32× respectively across at least 66 consecutive frames per rate;
+autos averaged 31 ms at 32×. No integrations were skipped. The same test played
+a zoomed baseline, downloaded while playing, retained 150% zoom through an
+explicitly held chunk request, and returned the array to the same timestamp,
+paused. Results are in `speed-result.json`; `baseline-player.png` shows the
+expanded player. These are short local cadence samples, not full-movie timings.
 
 A separate cold 16-auto benchmark took 5.6 s to prepare a 24-hour sequence plus
 24-hour context (629 integrations each). Its process peak RSS was 318 MiB.

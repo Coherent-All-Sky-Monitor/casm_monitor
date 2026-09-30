@@ -1,10 +1,10 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { downloadFigure } from "./figureDownload";
 import "../figure-zoom.css";
 
 /** Display zoom only: never interpolate, re-average, or change scientific axes. */
-export function FigureZoom({title,onClose,children,actions}:{title:string;onClose:()=>void;children:ReactNode;actions?:ReactNode}) {
+export function FigureZoom({title,onClose,children,actions,controls,onBeforeDownload,downloadDisabled=false}:{title:string;onClose:()=>void;children:ReactNode;actions?:ReactNode;controls?:ReactNode;onBeforeDownload?:()=>void;downloadDisabled?:boolean}) {
   const dialog=useRef<HTMLDialogElement>(null), viewport=useRef<HTMLDivElement>(null), content=useRef<HTMLDivElement>(null);
   const [scale,setScale]=useState(1);
   const [downloading,setDownloading]=useState(false),[downloadError,setDownloadError]=useState('');
@@ -16,7 +16,9 @@ export function FigureZoom({title,onClose,children,actions}:{title:string;onClos
   },[]);
   const zoom=(n:number)=>setScale(Math.min(4,Math.max(1,n)));
   const download=async()=>{
-    if(!content.current)return;
+    if(!content.current||downloadDisabled)return;
+    // A moving figure must stop before its title, clocks and pixels are captured.
+    if(onBeforeDownload)flushSync(onBeforeDownload);
     setDownloading(true);setDownloadError('');
     try{await downloadFigure(content.current,title);}
     catch(error){setDownloadError(`Download failed: ${(error as Error).message}`);}
@@ -31,9 +33,10 @@ export function FigureZoom({title,onClose,children,actions}:{title:string;onClos
         <output aria-label="Display zoom">{Math.round(scale*100)}%</output>
         <button aria-label="Zoom in" disabled={scale>=4} onClick={()=>zoom(scale+.5)}>+</button>
         <button onClick={()=>{zoom(1);viewport.current?.scrollTo(0,0);}}>Fit</button>
-        <button onClick={download} disabled={downloading}>{downloading?'Preparing…':'Download'}</button>
+        <button onClick={download} disabled={downloading||downloadDisabled}>{downloading?'Preparing…':'Download'}</button>
         <span>Display zoom · double-click to zoom · drag or scroll to pan</span>
       </div>
+      {controls}
       {downloadError&&<p className="figure-download-error" role="alert">{downloadError}</p>}
       <div ref={viewport} className={`figure-zoom-viewport ${scale>1?'zoomed':''}`}
         onDoubleClick={()=>zoom(scale===1?2:1)}

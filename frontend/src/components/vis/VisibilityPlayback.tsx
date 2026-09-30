@@ -5,7 +5,7 @@ import {SpectrumClocks} from '../SpectrumClocks';
 import {Notice} from '../Workspace';
 import {playbackColumns,playbackNext,playbackStamp,PlaybackTimeZone} from '../snapPlaybackModel';
 import {Antenna,LayoutMap,location,QUANTITIES,Quantity,Spectrum,wiringLabel} from './ArrayPlots';
-import {chunkValue,Encoding,lowerBound,MovieManifest,movieOrder,RollingSpectra,windowFirst} from './visibilityPlaybackModel';
+import {chunkValue,Encoding,lowerBound,MovieManifest,movieOrder,RollingSpectra,VISIBILITY_SPEEDS,visibilityDuration,windowFirst} from './visibilityPlaybackModel';
 import {MovieBuffer,useVisibilityFrames} from './useVisibilityFrames';
 import {VisibilityDynamic} from './VisibilityDynamic';
 import '../../snap-playback.css';
@@ -78,7 +78,7 @@ export function VisibilityPlayback({initial,inputs,onClose,onInspect}:{initial:M
     const hide=()=>{if(document.hidden)setPlaying(false);};document.addEventListener('visibilitychange',hide);return()=>document.removeEventListener('visibilitychange',hide);
   },[]);
   useEffect(()=>{
-    if(!playing||!ready||!m||expanded||document.hidden){deadline.current=null;return;}
+    if(!playing||!ready||!m||document.hidden){deadline.current=null;return;}
     if(previousSpeed.current!==speed){deadline.current=null;previousSpeed.current=speed;}
     const period=1000/speed;if(deadline.current===null)deadline.current=performance.now()+period;
     const timer=window.setTimeout(()=>{
@@ -101,6 +101,7 @@ export function VisibilityPlayback({initial,inputs,onClose,onInspect}:{initial:M
     return pair<0?null:{pair,a,b,conjugate};
   };
   const open=(p:Expanded)=>{setPlaying(false);setExpanded(p);};
+  const closeExpanded=()=>{setPlaying(false);setExpanded(null);};
   const plot=(p:Expanded,mini=false)=>!m?null:options.view==='spectrum'
     ?<MemoSpectrum values={spectra[p.pair]??[]} freq={m.freq_mhz} quantity={options.quantity} log={options.log&&options.quantity==='amp'} range={m.limits[p.pair].spectrum[options.quantity==='amp'&&options.log?'amp_log':options.quantity]}/>
     :<VisibilityDynamic manifest={m} chunks={chunks} index={index} pair={p.pair} quantity={options.quantity} zone={options.zone} mini={mini} conjugate={p.conjugate}/>;
@@ -124,8 +125,8 @@ export function VisibilityPlayback({initial,inputs,onClose,onInspect}:{initial:M
         <button className="snap-movie-play" onClick={toggle} disabled={!m||!!error||(!ready&&!playing)} aria-label={playing?'Pause visibility playback':'Play visibility playback'}>{playing?'Pause':m&&index===m.times.length-1?'Replay':'Play'}</button>
         <div className="snap-movie-range" aria-label="Visibility playback period">{[[1,'24 hours'],[2,'48 hours'],[7,'Last week']].map(([v,l])=><button key={v} aria-pressed={span===v} onClick={()=>{setPlaying(false);setSpan(Number(v));setCursor(null);}}>{l}</button>)}</div>
         <label>Through · UTC<input type="date" aria-label="Visibility playback date (UTC)" value={day} min={m?new Date(m.availability.start*1000).toISOString().slice(0,10):undefined} max={new Date((m?.availability.end??initial.end)*1000).toISOString().slice(0,10)} onChange={e=>{if(e.target.value){setPlaying(false);setCursor(null);setOptions(o=>({...o,end:Math.min(initial.end,Date.parse(e.target.value+'T00:00:00Z')/1000+86400-.001)}));}}}/></label>
-        <label>Speed<select aria-label="Visibility playback speed" value={speed} onChange={e=>setSpeed(Number(e.target.value))}>{[.5,1,2,4].map(s=><option key={s} value={s}>{s}×</option>)}</select></label>
-        <label className="snap-movie-loop"><input type="checkbox" checked={loop} onChange={e=>setLoop(e.target.checked)}/>Loop</label><span className="snap-movie-cadence">1× = 1 s per integration</span>
+        <label>Speed<select aria-label="Visibility playback speed" title="Estimated full movie duration, excluding buffering. Every saved integration is retained." value={speed} onChange={e=>setSpeed(Number(e.target.value))}>{VISIBILITY_SPEEDS.map(s=><option key={s} value={s}>{s}×{m?` · ~${visibilityDuration(m.times.length-m.first_frame,s)}`:''}</option>)}</select></label>
+        <label className="snap-movie-loop"><input type="checkbox" checked={loop} onChange={e=>setLoop(e.target.checked)}/>Loop</label><span className="snap-movie-cadence" title="Estimated at the selected speed; buffering or slow rendering adds time. 1× = 1 integration per second.">{m?`~${visibilityDuration(m.times.length-index,speed)} remaining`:'1× = 1 s per integration'}</span>
       </div>
       <div className="snap-movie-controls vis-movie-choices">
         <label>Correlation<select aria-label="Playback correlation" value={options.mode} onChange={e=>change({mode:e.target.value,view:e.target.value==='auto'?'spectrum':'dynamic'})}><option value="auto">Autocorrelations</option><option value="cross">Cross-correlations</option></select></label>
@@ -146,10 +147,21 @@ export function VisibilityPlayback({initial,inputs,onClose,onInspect}:{initial:M
       <div className="snap-movie-timeline"><button aria-label="Previous visibility frame" disabled={!m||index<=m.first_frame} onClick={()=>seek(index-1)}>‹</button><input type="range" aria-label="Visibility saved time" min={m?.first_frame??0} max={m?m.times.length-1:0} value={index} disabled={!m} aria-valuetext={at===undefined?'No saved integration':playbackStamp(at,options.zone)} onChange={e=>seek(Number(e.target.value))}/><button aria-label="Next visibility frame" disabled={!m||index>=m.times.length-1} onClick={()=>seek(index+1)}>›</button><span>{gap?'Gap before this integration · ':''}{options.view==='spectrum'?(options.statistic==='mean'?`${options.windowHours} h average · mean |V|, phase of complex mean`:'One saved integration'):`${options.windowHours} h moving window · dark pixels: missing/undefined`}</span></div>
       {error&&<div className="snap-movie-error"><Notice>{error}</Notice><button onClick={reopen}>Reload saved sequence</button></div>}
       <div className="snap-movie-stage" ref={stage} aria-busy={!ready} data-frame={ready?index:undefined}>
-        {ready?(options.view==='matrix'?matrix():options.arrangement==='physical'?physical():<div className="snap-movie-grid" style={{gridTemplateColumns:`repeat(${columns},minmax(0,1fr))`,gridTemplateRows:`repeat(${rows},minmax(170px,1fr))`} as CSSProperties}>{ordered.map(card)}</div>):<div className="snap-movie-empty">{status}</div>}
+        {ready&&!expanded?(options.view==='matrix'?matrix():options.arrangement==='physical'?physical():<div className="snap-movie-grid" style={{gridTemplateColumns:`repeat(${columns},minmax(0,1fr))`,gridTemplateRows:`repeat(${rows},minmax(170px,1fr))`} as CSSProperties}>{ordered.map(card)}</div>):<div className="snap-movie-empty">{expanded?'Baseline open in zoom':status}</div>}
       </div>
-      {expanded&&ready&&m&&<FigureZoom title={`${expanded.a.station} × ${expanded.b.station} · ${label} · ${playbackStamp(at!,options.zone)}`} onClose={()=>setExpanded(null)} actions={<button onClick={()=>onInspect(m.pairs[expanded.pair].slice().sort((a,b)=>a-b),Math.max(m.times[0],at!-m.window_s),at!,options)}>Open stored-pair detail</button>}>
-        <div className="vis-movie-expanded"><SpectrumClocks at={at} lst={m.lst[index]}/><p>{expanded.a.station} · {wiringLabel(expanded.a)}<br/>{expanded.b.station} · {wiringLabel(expanded.b)} · {options.reference==='raw'?'Raw':'Sun fringe-stopped'}</p>{plot(expanded)}</div>
+      {expanded&&m&&<FigureZoom title={`${expanded.a.station} × ${expanded.b.station} · ${label} · ${playbackStamp(at!,options.zone)}`} onClose={closeExpanded} onBeforeDownload={()=>setPlaying(false)} downloadDisabled={!ready}
+        controls={<div className="vis-zoom-playback" aria-label="Zoomed baseline playback">
+          <div><button className="vis-zoom-play" onClick={toggle} disabled={!!error||(!ready&&!playing)} aria-label={playing?'Pause baseline playback':'Play baseline playback'}>{playing?'Pause':index===m.times.length-1?'Replay':'Play'}</button>
+            <label>Speed<select aria-label="Zoomed baseline playback speed" value={speed} onChange={e=>setSpeed(Number(e.target.value))}>{VISIBILITY_SPEEDS.map(s=><option key={s} value={s}>{s}× · ~{visibilityDuration(m.times.length-m.first_frame,s)}</option>)}</select></label>
+            <label><input type="checkbox" aria-label="Loop zoomed baseline" checked={loop} onChange={e=>setLoop(e.target.checked)}/>Loop</label>
+            <span role="status">{status} · {index-m.first_frame+1} / {m.times.length-m.first_frame}</span></div>
+          <div><button aria-label="Previous baseline frame" disabled={index<=m.first_frame} onClick={()=>seek(index-1)}>‹</button>
+            <input type="range" aria-label="Zoomed baseline saved time" min={m.first_frame} max={m.times.length-1} value={index} aria-valuetext={playbackStamp(at!,options.zone)} onChange={e=>seek(Number(e.target.value))}/>
+            <button aria-label="Next baseline frame" disabled={index>=m.times.length-1} onClick={()=>seek(index+1)}>›</button></div>
+          {!!error&&<div role="alert">{error}<button onClick={reopen}>Reload saved sequence</button></div>}
+        </div>}
+        actions={<button disabled={!ready} onClick={()=>{setPlaying(false);onInspect(m.pairs[expanded.pair].slice().sort((a,b)=>a-b),Math.max(m.times[0],at!-m.window_s),at!,options);}}>Open stored-pair detail</button>}>
+        <div className="vis-movie-expanded"><SpectrumClocks at={at} lst={m.lst[index]}/><p>{expanded.a.station} · {wiringLabel(expanded.a)}<br/>{expanded.b.station} · {wiringLabel(expanded.b)} · {options.reference==='raw'?'Raw':'Sun fringe-stopped'}</p>{ready?plot(expanded):<div className="vis-zoom-buffering">{status}</div>}</div>
       </FigureZoom>}
     </section>
   </dialog>,document.body);

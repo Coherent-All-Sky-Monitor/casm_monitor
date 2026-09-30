@@ -11,6 +11,13 @@ export type MovieManifest = {
 export type MovieChunk={base:number;count:number;pairs:number;channels:number;components:number;values:Float32Array;times:number[]};
 export type Encoding='complex'|'preview';
 
+export const VISIBILITY_SPEEDS=[.5,1,2,4,8,16,32] as const;
+/** Nominal wall time; buffering and slow rendering can extend it. */
+export function visibilityDuration(frames:number,speed:number){
+  const seconds=Math.ceil(Math.max(0,frames)/speed),minutes=Math.floor(seconds/60);
+  return minutes?`${minutes}m ${String(seconds%60).padStart(2,'0')}s`:`${seconds}s`;
+}
+
 export function lowerBound(times:number[],t:number){
   let lo=0,hi=times.length;while(lo<hi){const mid=(lo+hi)>>>1;if(times[mid]<t)lo=mid+1;else hi=mid;}return lo;
 }

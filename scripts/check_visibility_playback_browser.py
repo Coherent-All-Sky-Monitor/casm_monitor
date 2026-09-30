@@ -4,6 +4,8 @@ DOM/canvas checks use real cache responses. Failure/retry is an explicitly
 intercepted GET. Timing measures committed frames, not physical display refresh.
 """
 import json
+import statistics
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,12 +42,12 @@ def main():
             if b.count():click(b)
         def select(label, value):
             page.get_by_label(label, exact=True).select_option(str(value))
-        def step(index):
-            page.get_by_label('Visibility saved time',exact=True).evaluate('''(e,v)=>{
+        def step(index,label='Visibility saved time',wait=True):
+            page.get_by_label(label,exact=True).evaluate('''(e,v)=>{
               const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
               setter.call(e,String(v));e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));
             }''',index)
-            ready()
+            if wait:ready()
         def download(name):
             OUT.mkdir(parents=True,exist_ok=True)
             with page.expect_download() as event:
@@ -55,6 +57,22 @@ def main():
             saved.save_as(str(target))
             assert target.stat().st_size>1000
             return target.name
+        def speed_check(rates):
+            results={}
+            m=manifests[-1];start=((m['first_frame']+31)//32)*32+26
+            for rate in rates:
+                step(start);select('Visibility playback speed',rate)
+                page.evaluate('''()=>{window.visFrames=[];const el=document.querySelector('.vis-movie .snap-movie-stage');
+                  window.visObserver=new MutationObserver(()=>{if(el.dataset.frame)window.visFrames.push([performance.now(),Number(el.dataset.frame)]);});
+                  window.visObserver.observe(el,{attributes:true,attributeFilter:['data-frame']});}''')
+                click(page.get_by_role('button',name='Play visibility playback',exact=True))
+                page.wait_for_function('window.visFrames.length>=66',polling=100,timeout=30000)
+                paused();frames=page.evaluate('window.visFrames');page.evaluate('window.visObserver.disconnect()')
+                assert all(b[1]==a[1]+1 for a,b in zip(frames,frames[1:])),frames
+                intervals=[b[0]-a[0] for a,b in zip(frames,frames[1:])]
+                results[str(rate)]=dict(frames=len(frames),mean_ms=statistics.mean(intervals),
+                    median_ms=statistics.median(intervals),max_ms=max(intervals))
+            return results
         page.goto(URL+'/vis',wait_until='domcontentloaded')
         page.wait_for_function('document.querySelectorAll(".antenna-plot").length>0',polling=100,timeout=60000)
         expected=page.locator('.antenna-plot').count()
@@ -63,6 +81,58 @@ def main():
         ready();paused()
         assert page.locator('.vis-movie-card').count()==expected
         assert page.locator('.vis-movie [data-clock]').count()==3
+        if '--speeds-only' in sys.argv:
+            assert page.get_by_label('Visibility playback speed',exact=True).locator('option').evaluate_all('(es)=>es.map(e=>e.value)')==['0.5','1','2','4','8','16','32']
+            click(page.locator('[aria-label="Visibility playback period"]').get_by_role('button',name='48 hours',exact=True));ready()
+            n=len(manifests[-1]['times'])-manifests[-1]['first_frame']
+            autos=speed_check([32])
+            select('Playback correlation','cross');ready()
+            crosses=speed_check([4,8,16,32])
+            assert 'remaining' in page.locator('.vis-movie .snap-movie-cadence').inner_text()
+            # The expanded baseline has its own transport and survives buffering.
+            before=page.locator('.vis-movie .snap-clock-row').get_attribute('data-timestamp')
+            click(page.locator('.vis-movie-trigger').first)
+            assert page.locator('.figure-modal .snap-clock-row').get_attribute('data-timestamp')==before
+            assert page.locator('.vis-movie canvas').count()==0
+            assert page.get_by_role('button',name='Play baseline playback',exact=True).count()==1
+            select('Zoomed baseline playback speed',16)
+            click(page.locator('.figure-modal').get_by_role('button',name='Zoom in',exact=True))
+            at_index=int(page.locator('.vis-movie .snap-movie-stage').get_attribute('data-frame'))
+            click(page.get_by_role('button',name='Play baseline playback',exact=True))
+            page.wait_for_function('(i)=>Number(document.querySelector(".figure-modal canvas")?.dataset.frame)>=i+12',arg=at_index,polling=50,timeout=10000)
+            zoom_download=download('playing-baseline')
+            assert page.get_by_role('button',name='Play baseline playback',exact=True).count()==1
+            assert page.get_by_label('Display zoom').inner_text()=='150%'
+            held=[]
+            page.route('**/api/science/array/playback-chunk?*',lambda route:held.append(route))
+            target=len(manifests[-1]['times'])-70
+            step(target,label='Zoomed baseline saved time',wait=False)
+            page.wait_for_function('document.querySelector(".vis-movie .snap-movie-stage")?.getAttribute("aria-busy")==="true"',polling=50,timeout=10000)
+            assert page.locator('.figure-modal').count()==1
+            assert page.locator('.figure-modal canvas').count()==0
+            assert page.locator('.figure-modal').get_by_role('button',name='Download',exact=True).is_disabled()
+            page.wait_for_timeout(100)
+            page.unroute('**/api/science/array/playback-chunk?*')
+            for route in held:route.continue_()
+            ready()
+            assert page.get_by_label('Display zoom').inner_text()=='150%'
+            assert int(page.locator('.figure-modal canvas').get_attribute('data-frame'))==target
+            after=page.locator('.figure-modal .snap-clock-row').get_attribute('data-timestamp')
+            assert float(after)==manifests[-1]['times'][target]
+            page.screenshot(path=str(OUT/'baseline-player.png'),timeout=5000)
+            click(page.locator('.figure-modal').get_by_role('button',name='Close ×',exact=True))
+            assert page.locator('.vis-movie canvas').count()==expected
+            assert page.locator('.vis-movie .snap-clock-row').get_attribute('data-timestamp')==after
+            assert page.get_by_role('button',name='Play visibility playback',exact=True).count()==1
+            assert not errors,errors
+            assert not writes,writes
+            result=dict(result='passed',inputs=expected,playback_frames=n,autos=autos,cross_dynamic=crosses,
+                        zoom_download=zoom_download,zoom_buffering_survived=True,zoom_return_timestamp=after,
+                        page_errors=errors,non_get_requests=writes)
+            OUT.mkdir(parents=True,exist_ok=True)
+            OUT.joinpath('speed-result.json').write_text(json.dumps(result,indent=2)+'\n')
+            page.screenshot(path=str(OUT/'faster-speeds.png'),timeout=5000)
+            print(json.dumps(result,indent=2));browser.close();return
         m=manifests[-1];step(m['first_frame']+4)
         at=page.locator('.vis-movie .snap-clock-row').get_attribute('data-timestamp')
         assert float(at)==m['times'][m['first_frame']+4]
