@@ -17,7 +17,7 @@ export function calibrationProgress(detail: RecordValue | null, deployment: Reco
     done[4] ? 'Dry run passed · not uploaded' : 'Review & local payloads'];
   const jobs: RecordValue[] = detail?.jobs ?? [];
   return done.map((complete, index) => {
-    const kinds = [[], ['solve', 'phase', 'history'], ['transit'], ['grid'], ['deploy_stage']][index];
+    const kinds = [[], ['solve', 'inspect', 'phase', 'history'], ['transit'], ['grid'], ['deploy_stage']][index];
     const latest = jobs.filter(j => kinds.includes(j.params?.action ?? j.kind)).sort((a, b) => b.id - a.id)[0];
     const state: CalibrationStepState = latest?.state === 'running' || latest?.state === 'queued' ? 'running'
       : latest?.state === 'failed' || latest?.state === 'cancelled' ? 'failed' : complete ? 'complete' : 'pending';

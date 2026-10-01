@@ -167,7 +167,7 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
     @app.middleware("http")
     async def refuse_writes(request, call_next):
         local_route = re.fullmatch(r"/api/(?:science/(?:render|transit)|snap-workspace/(?:render|acquire)|review(?:/[A-Za-z0-9_-]+/request)?|commissioning/(?:stage|[0-9a-f]{32}/start))", request.url.path)
-        calibration_route = re.fullmatch(r"/api/calibration/(?:builds|import-reference|builds/[A-Za-z0-9_.-]+/(?:actions|review)|jobs/[0-9]+/cancel|deployment/builds/[A-Za-z0-9_.-]+/stage)", request.url.path)
+        calibration_route = re.fullmatch(r"/api/calibration/(?:builds|import-reference|builds/[A-Za-z0-9_.-]+/(?:actions|review|trial)|jobs/[0-9]+/cancel|deployment/builds/[A-Za-z0-9_.-]+/stage)", request.url.path)
         local_route = local_route or calibration_route
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             if read_only or local_route:

@@ -152,9 +152,16 @@ evidence. The fork's clustered output count cannot measure its pre-clustering
 10k cap. Coverage and bounded log-tail limits must stay visible. Missing data,
 missing artifacts and failed requests must not become zero counts or flat spectra.
 
-Calibration uses a separate persistent worker with explicit offline actions;
-solving, grid generation and scientific review are distinct. Its UTC form and
-API are documented in [Calibration workspace](../docs/calibration-workspace.md).
+Calibration uses a separate persistent worker with explicit offline actions.
+The October 1 Solve & inspect view reuses the visibility-style antenna/SNAP
+layouts, white native-channel curves and dynamic spectra. Processing ends at
+SVD-corrected phase, not a fitted straight-line delay. Amplitude schemes and
+their formulas are in Antenna weights; these are diagnostic experiments, with
+Uniform still used for generated products. Expanded plots share zoom/download.
+`check_calibration_inspector_browser.py` tests the saved September 30 example
+without posting jobs; detailed science semantics are in the calibration manual.
+Solving, grid generation and scientific review are distinct. Local/UTC time
+controls and the API are documented in [Calibration workspace](../docs/calibration-workspace.md).
 Upload is dry-run-only, with live requests blocked server-side. The sky view
 uses schematic ellipses over saved beam positions and exact source tracks;
 scientific grid placement stays exact. **Get latest spectra** submits the existing

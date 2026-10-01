@@ -152,7 +152,7 @@ def review_gate(settings, tag):
 
 def action_params(body, record):
     action = body.get('action')
-    if action not in {'phase', 'transit', 'history', 'grid'}:
+    if action not in {'inspect', 'phase', 'transit', 'history', 'grid'}:
         raise ValueError('Unknown analysis action')
     params = dict(action=action)
     if action == 'grid':
@@ -166,6 +166,9 @@ def action_params(body, record):
     if source not in SOURCES:
         raise ValueError('Source must be Sun, Cyg A or Cas A')
     params['source'] = source
+    if action == 'inspect':
+        window, _, _ = analysis_window(body.get('window', record['params']['source_window']), 'Inspection window')
+        return {**params, 'window': window, 'static': bool(body.get('static', True))}
     if action == 'phase':
         window, start, end = analysis_window(body.get('window', record['params']['source_window']), 'Phase window')
         targets = body.get('targets', [antenna for antenna in record['params']['antennas'] if antenna != record['params']['ref_ant']][:3])
@@ -181,6 +184,9 @@ def action_params(body, record):
         raise ValueError('Choose a date within the last 30 days')
     params['date'] = day
     if action == 'history':
+        reference = body.get('ref_ant', record['params']['ref_ant'])
+        if type(reference) is not int or reference not in record['params']['antennas']:
+            raise ValueError('History reference must be a selected antenna')
         days = int(body.get('days', 3))
         if not 1 <= days <= 3:
             raise ValueError('Choose one to three days')
@@ -188,14 +194,15 @@ def action_params(body, record):
         minutes = float(body.get('minutes', (end - start) / 60))
         if not math.isfinite(minutes) or not 1 <= minutes <= MAX_ANALYSIS_WINDOW_S / 60:
             raise ValueError('History windows must be between one minute and four hours')
-        return {**params, 'days': days, 'minutes': minutes}
+        return {**params, 'days': days, 'minutes': minutes, 'ref_ant': reference}
     low, high = float(body.get('fmin', 384)), float(body.get('fmax', 512))
     off = float(body.get('off_minutes', 90))
     snr = float(body.get('minimum_snr', 5))
     if not all(math.isfinite(value) for value in (low, high, off, snr)) or not 0 < low < high < 1000 or not 50 <= off <= 120 or not 3 <= snr <= 30:
         raise ValueError('Use a valid MHz band, off-source boundary 50..120 minutes and S/N 3..30')
     return {**params, 'fmin': low, 'fmax': high, 'off_minutes': off, 'minimum_snr': snr,
-            'compare_reference': bool(body.get('compare_reference', True))}
+            'compare_reference': bool(body.get('compare_reference', True)),
+            'compare_amplitudes': bool(body.get('compare_amplitudes', False))}
 
 
 def build_router(settings, store):
@@ -240,6 +247,9 @@ def build_router(settings, store):
 
     @router.post('/builds')
     def create(body: dict):
+        return create_revision(body)
+
+    def create_revision(body, parent=None):
         if body.get('reviewed') is not True:
             raise HTTPException(400, 'Review the selected windows, antenna membership and hardware epoch first')
         tag = str(body.get('tag', ''))
@@ -248,7 +258,11 @@ def build_router(settings, store):
             if root.exists():
                 raise HTTPException(409, 'Tag already exists; use a new immutable revision')
             antennas = body.get('antennas')
-            layout = layout_info(settings.layout_csv)
+            layout = layout_info(parent['layout']['snapshot'] if parent else settings.layout_csv)
+            if parent and sha256_file(layout['resolved']) != parent['layout']['sha256']:
+                raise ValueError('The parent layout snapshot has changed')
+            if parent and parent.get('reference') and sha256_file(parent['reference']) != parent['reference_sha256']:
+                raise ValueError('The parent reference calibration has changed')
             if not isinstance(antennas, list) or not 2 <= len(antennas) <= 32 or any(type(ant) is not int for ant in antennas) or len(set(antennas)) != len(antennas) or not set(antennas) <= set(layout['wired_antennas']):
                 raise ValueError('Select 2..32 distinct wired antenna IDs')
             root.mkdir(parents=True)
@@ -265,7 +279,7 @@ def build_router(settings, store):
                 output = csv.DictWriter(stream, fields)
                 output.writeheader()
                 output.writerows(rows)
-            reference = deployed_product(settings).get('cal_file')
+            reference = parent.get('reference') if parent else deployed_product(settings).get('cal_file')
             params = validate({**body, 'prev_cal_path': reference}, dataclasses.replace(settings, snap_layout_csv=private))
             for key in ('source_window', 'static_window'):
                 if params[key]:
@@ -274,8 +288,24 @@ def build_router(settings, store):
                           created=datetime.now(timezone.utc).isoformat(), reference=reference,
                           reference_sha256=sha256_file(reference) if reference else None,
                           hardware_epoch_note=str(body.get('hardware_epoch_note', ''))[:2000])
+            if parent:
+                record['parent_tag'] = parent['params']['tag']
             save_json(root / 'request.json', record)
             return queue(tag, 'solve', {})
+        except (ValueError, OSError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @router.post('/builds/{tag}/trial')
+    def trial(tag: str, body: dict):
+        try:
+            parent = request_record(settings, tag)
+            if parent.get('imported'):
+                raise ValueError('Prepare a new solve to change membership; an imported reference has no frozen solve recipe')
+            values = {**parent['params'], 'tag': str(body.get('tag', '')),
+                      'antennas': body.get('antennas'), 'ref_ant': body.get('ref_ant'),
+                      'reviewed': body.get('reviewed') is True,
+                      'hardware_epoch_note': parent.get('hardware_epoch_note', '')}
+            return create_revision(values, parent)
         except (ValueError, OSError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
@@ -328,6 +358,16 @@ def build_router(settings, store):
         try:
             return sky_view(settings, tag, date)
         except (ValueError, OSError, KeyError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @router.get('/builds/{tag}/inspection')
+    def inspection(tag: str, reference: int | None = None, stage: str = 'svd',
+                   quantity: str = 'phase', scheme: str = 'uniform', target: int | None = None):
+        from .calibration_inspection import snapshot
+        try:
+            request_record(settings, tag)
+            return snapshot(build_dir(settings, tag), reference, stage, quantity, scheme, target)
+        except (ValueError, OSError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
     @router.get('/sky/{filename}')

@@ -30,13 +30,9 @@ def main():
         assert page.locator('a[aria-current=page]', has_text='Calibration').count() >= 1
         page.screenshot(path=str(output / 'calibration-prepare.png'), full_page=True)
         page.get_by_role('button', name='Inspect deployed calibration', exact=True).click()
-        page.get_by_role('heading', name='Matched phase views', exact=True).wait_for()
-        phase_settings = page.locator('details').filter(has=page.locator('summary', has_text='Phase settings'))
-        if phase_settings.get_attribute('open') is None:
-            phase_settings.locator(':scope > summary').click()
-        page.get_by_role('heading', name='Phase progression', exact=True).wait_for()
-        page.get_by_role('button', name='Render matched phase views').wait_for()
-        page.wait_for_function('!Array.from(document.querySelectorAll("button")).find(button => button.textContent === "Render matched phase views").disabled')
+        page.get_by_role('heading', name='Array diagnostics', exact=True).wait_for()
+        page.get_by_role('button', name='Prepare array diagnostics', exact=True).wait_for()
+        page.wait_for_function('!Array.from(document.querySelectorAll("button")).find(button => button.textContent === "Prepare array diagnostics").disabled')
         page.screenshot(path=str(output / 'calibration-inspect.png'), full_page=True)
         page.get_by_role('button', name='03Validate on sky').click()
         transit_settings = page.locator('details').filter(has=page.locator('summary', has_text='Transit settings'))

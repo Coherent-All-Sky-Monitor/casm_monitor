@@ -62,41 +62,37 @@ Organise plots in readable sections instead of one unstructured image gallery:
 - Input spectra and flags: per-antenna autos, integration coverage, channel mask,
   and all six subbands.
 - Phase progression on the same baselines and frequency axes: raw wrapped
-  sawtooth, fringe-stopped, instrumental-delay-fit residual, full-calibration
-  residual. The last two are different diagnostics and need different labels.
-- SVD: singular-value spectra, explicitly named rank-1 ratio/fraction, gain
-  phases, per-antenna delay fits and residual RMS, solved-channel fraction.
-- Comparison: new versus recorded calibration phase/delay differences and
+  sawtooth, static-subtracted, geometric model, fringe-stopped, SVD-corrected.
+  The geometric model is phase only; other stages also expose amplitude,
+  real and imaginary components.
+- SVD: singular-value spectra, explicitly named rank-1 ratio/fraction, applied
+  per-channel antenna phases and baseline residual RMS, solved-channel fraction.
+- Comparison: new versus recorded calibration phase/amplitude differences and
   possible whole-sample slips; static/no-static comparison when requested.
 - Cross-day sawtooth: solve day plus up to three recent available days, matched
   solar-transit offset/duration, common baselines and frequency selection,
   candidate and reference calibration overlays. Label each day's static choice.
 
-Useful display controls: baseline by length/orientation/stations, selected/all
-reference baselines, wrapped/unwrapped phase, full/selected band, day selector,
-candidate/reference overlay, show masked channels, shared axes, download PNG,
-CSV/NPZ, report and executed notebook. Defaults show a few representative long,
-medium and short baselines; antenna membership must never change through a plot
-filter. Rank-1 is solve structure, not a deployment score.
+Operator revision, 2026-10-01 (supersedes the September delay-fit design):
+show every selected antenna in compact station order, SNAP order or the physical
+grid. One reference selector reaches every reference baseline. Spectrum and
+dynamic-spectrum views share white figures and a fixed cyclic phase colour scale
+(-pi to pi). Clicking a cross opens a large figure and side-by-side stage comparison.
+Curves use every native frequency channel; phase is the angle of a complex time
+average, never an arithmetic mean of wrapped angles. Download is available in zoom.
 
-Operator clarification, 2026-09-22: provide BOTH phase-versus-frequency curves
-and frequency-versus-time phase waterfalls, matching the visibility tab and
-the walkthrough notebook. A Curve / Waterfall / Both selector changes only
-presentation. Raw, Fringe-stopped and Delay-subtracted stages are available in
-both representations, with an optional full-calibration residual stage. Offer
-side-by-side comparison with a common baseline, time/frequency selection and
-fixed cyclic phase colour scale (-pi to pi). Source selection for fringe stopping
-is independent of which sources are enabled for SVD solves: Sun, Cyg A and Cas A
-should be available for these diagnostic views through the maintained source API.
+SVD-corrected means fringe-stopped visibility multiplied by the saved per-antenna
+phase corrections. It is not another straight-line delay fit. Remaining offsets,
+bandpass structure, other sources and noise stay visible. Cross-day comparisons
+hold the candidate and reference fixed rather than fitting each day's residual away.
 
-The selected source's contribution should lose its time-dependent geometric
-fringes after fringe stopping; subtracting the fitted instrumental delay should
-flatten its frequency-dependent phase ramp. Remaining phase offsets, bandpass
-structure, other sources and noise remain visible, not forced to zero. Record
-the delay-fit interval/band and keep the fit fixed when applying it to other
-times. Use the notebook's maintained `fit_delay` / `apply_delay` APIs. Curves may
-show one selected integration or the phase of a complex average over a selected
-interval, never an arithmetic average of wrapped phase angles.
+Antenna weights show applied phase, normalized amplitude, differences from the
+recorded reference, per-antenna baseline residual RMS and int8 previews. Uniform,
+inverse variance, inverse standard deviation and matched amplitude profiles have
+human-readable formulas and explicit input estimators. This version compares them
+offline; generated products remain Uniform. Rank-1 is solve structure, not a
+deployment score. A membership change creates a new solve revision using the
+parent's frozen layout and windows; display filters never change the solution.
 
 ## 3. Validate on independent sky data
 

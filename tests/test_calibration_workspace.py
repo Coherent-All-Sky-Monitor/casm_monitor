@@ -137,6 +137,25 @@ def test_membership_and_review_gate(setup):
         workspace.review_gate(settings, body['tag'])
 
 
+def test_antenna_trial_preserves_parent_and_frozen_layout(setup):
+    settings, store, client, body = setup
+    result = client.post('/api/calibration/builds', json=body)
+    assert result.status_code == 200
+    parent_root = workspace.build_dir(settings, body['tag'])
+    original = (parent_root / 'request.json').read_bytes()
+    assert client.post(f'/api/calibration/jobs/{result.json()["job_id"]}/cancel', json={}).status_code == 200
+    # The trial must not read changed live layout coordinates.
+    settings.layout_csv.write_text(settings.layout_csv.read_text().replace('10,0,10,0', '10,0,999,0'))
+    trial = client.post('/api/calibration/builds/test_revision/trial', json={
+        'tag': 'child_revision', 'antennas': [9,10], 'ref_ant': 9, 'reviewed': True})
+    assert trial.status_code == 200, trial.text
+    child = client.get('/api/calibration/builds/child_revision').json()
+    assert child['request']['parent_tag'] == 'test_revision'
+    assert '999' not in (workspace.build_dir(settings,'child_revision')/'layout_snapshot.csv').read_text()
+    assert (parent_root/'request.json').read_bytes() == original
+    assert child['review'] == {}
+
+
 def test_sky_planner_is_read_only_and_validates_date(setup, monkeypatch):
     from casm_monitor.web import calibration_planning
     _, store, client, _ = setup

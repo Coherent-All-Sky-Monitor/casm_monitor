@@ -80,18 +80,37 @@ local payload checks pass and remains explicitly **not uploaded**.
 2. **Calibrate**: the canonical `make_cal_and_weights` driver runs with
    `make_weights=False`, phase-only per-channel SVD, diagnostics and notebook.
    No grid, upload or live layout edit occurs. A failed job retains its log.
-3. **Solve & inspect**: choose up to three reference baselines and Sun, Cyg A
-   or Cas A as the diagnostic fringe-stop direction, over up to four hours.
-   Phase views default to the full solve window. Produce raw,
-   fringe-stopped and fitted-delay-subtracted curves AND frequency/time phase
-   waterfalls. If the revision has a static window, it is also shown and used.
-   The curve is the phase of the complex mean; the fixed delay fit uses the
-   selected above-horizon interval. Presentation changes do not rerun jobs.
-   Canonical cross-day sawtooth comparisons use up to three matched solar
-   windows with the solve's duration (up to four hours), three longest common
-   baselines, and no recycled static. API callers may set `minutes` from 1 to
-   240 for a shorter or longer history view. API and worker revalidation share
-   the same window limit; grid generation reuses the saved calibration.
+3. **Solve & inspect**: the October 1 array inspector provides Compact antenna
+   order, SNAP order and Station grid, with white figures, wiring labels,
+   shared zoom/download and selectable display reference. Autos, crosses,
+   antenna weights, rank-1 quality and cross-day validation are scrolling
+   sections. Native-channel spectra and all unique cross-baselines are saved
+   once per inspection; display changes do not reread raw data or rerun SVD.
+   Processing is Raw, Static-subtracted, Geometric model (phase only),
+   Fringe-stopped and **SVD-corrected**, replacing the old delay-fit stage.
+   Cross panels represent `V(target, reference)`. Expanded panels can show
+   every stage side by side. Phase is angle of complex mean; magnitude is
+   mean magnitude. Dynamic previews average at most 180 time × 256 frequency
+   cells, applying the SVD correction before averaging.
+
+   Antenna weights show applied phase, normalized amplitude and int8 preview,
+   differences from the deployed reference, and RMS phase residual over the
+   corrected baselines touching each antenna. The four amplitude experiments
+   are `1`, `1/N`, `1/sqrt(N)` and `s/N`, independently max-normalized across
+   antennas per channel. Expand **How the four amplitude schemes are calculated**
+   for the symbol definitions and actual estimators. Noise is median raw night
+   auto-power; source voltage response uses a log-linear fit to static-subtracted
+   fringe-stopped cross amplitudes. Missing inputs disable a scheme. These are
+   diagnostic previews; generated products still use Uniform in this version.
+   Int8 previews use scale 127 before steering, not downstream detector scaling.
+
+   **Change antennas** creates an immutable child solve using the parent's
+   windows and frozen full wiring layout; it never edits the parent's cal,
+   review or the live layout. Removing the solve reference requires another.
+   Cross-day comparisons now show every common reference baseline in separate
+   full-width figures, with one fixed candidate across up to three matched
+   solar windows. No cross-day static is silently reused. The old `phase` API
+   remains for compatibility but is not exposed by this inspector.
 4. **Validate on sky**: a five-hour stationary beam, fixed at the source's
    transit alt/az. Cross-only visibilities have a per-baseline/channel complex
    off-source median removed. Candidate and recorded reference share antennas,
@@ -149,7 +168,15 @@ This workspace is offline-only. Do not arm its worker.
 - `POST /api/calibration/builds`: reviewed solve request.
 - `POST /api/calibration/import-reference`: diagnostic-only ledger reference.
 - `GET /api/calibration/builds/{tag}`: recipe, jobs, results and artifact catalog.
-- `POST /api/calibration/builds/{tag}/actions`: phase, transit, history or grid.
+- `POST /api/calibration/builds/{tag}/actions`: inspect, phase (legacy), transit,
+  history or grid. `transit.compare_amplitudes=true` adds all available saved
+  amplitude profiles on one matched five-hour transit; outputs include dynamic
+  spectra and absolute/standardized light curves. Prepare inspection first.
+- `GET /api/calibration/builds/{tag}/inspection`: saved-array display only;
+  `reference`, `stage`, `quantity`, `scheme` and optional `target` select panels.
+  It performs no raw visibility reads and submits no jobs.
+- `POST /api/calibration/builds/{tag}/trial`: explicit `reviewed=true`, new tag,
+  antennas and reference create a child solve. Same-origin protection applies.
 - `POST /api/calibration/builds/{tag}/review`: explicit scientific acceptance.
 - `GET /api/calibration/jobs/{id}/log`, `POST .../{id}/cancel`: durable job control.
 - `/api/calibration/deployment`: the existing guarded calibration deployment
@@ -204,8 +231,18 @@ Source/static hardware-epoch compatibility still needs human review; availabilit
 is established by the actual reader, not inferred from filename presence.
 Historical layout association is dated-file inference for imported references.
 Transit geometry is ideal equal-amplitude, without an element-beam/sky model.
-Common-mask comparison is implemented; separate simultaneous operational-set
-comparison, automatic RFI selection, add-one trials and off-beam controls are
+Common-mask comparison and explicit antenna trials are implemented; separate
+simultaneous operational-set comparison, automatic RFI selection, automated
+leave-one-out sweeps and off-beam controls are
 not part of this first version. There is no automatic restore button or remote
 consumer-identity acknowledgement. Transfer, registry, restart-default and runtime
 receipts remain distinct; unmeasured outcomes are explicitly unverified.
+
+October 1 acceptance used the existing `sun_20260930_200911` calibration, with
+its recorded three-hour source and half-hour night windows. Inspection job 23,
+two-day history job 24 and four-scheme Cyg A transit job 25 wrote diagnostics
+only. This was not a new solve, beam build or calibration endorsement.
+`scripts/check_calibration_inspector_browser.py` exercises every layout,
+reference change, geometric/phase restrictions, amplitude formulas, stage zoom,
+download and mobile overflow, blocking POSTs. Screenshots are under
+`/home/casm/scratch/casm-observation-preview/screenshots/calibration-array-20261001`.

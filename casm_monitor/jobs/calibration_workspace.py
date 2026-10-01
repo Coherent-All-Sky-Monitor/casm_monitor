@@ -46,7 +46,8 @@ def run(params):
     from importlib.util import find_spec
     modules = ('casm_monitor.jobs.calibration_workspace', 'casm_vis_analysis.calibration_checks',
                'casm_vis_analysis.beam_power', 'casm_vis_analysis.fringe_stop',
-               'casm_vis_analysis.delay', 'bf_weights_generator.make_cal_and_weights')
+               'casm_vis_analysis.delay', 'casm_vis_analysis.calibration_inspection',
+               'bf_weights_generator.make_cal_and_weights')
     code = {}
     for module in modules:
         path = find_spec(module).origin
@@ -107,6 +108,10 @@ def build_product(settings, root, dest, record, action, selection):
                               ib_h5=ib_path, report_json=output.get('report_json'), notebook=output.get('notebook'),
                               layout_snapshot=str(root / 'layout_snapshot.csv')))
     save_json(root / 'summary.json', summary)
+    if action == 'solve':
+        summary['inspection'] = diagnose(settings, root, dest, record, 'inspect',
+            dict(source='sun', window=values['source_window'], static=True))
+        save_json(root / 'summary.json', summary)
     return summary
 
 
@@ -134,6 +139,21 @@ def diagnose(settings, root, dest, record, action, selection):
         layout = select_layout(center, center + 86399)['path']
     else:
         layout = str(root / 'selected_layout.csv')
+    if action == 'inspect':
+        from casm_vis_analysis.calibration_inspection import save_inspection
+        from ..web.science import geometry
+        data, mapping, evidence = read_selected(settings.vis_dir, layout, values['antennas'], selection['window'])
+        background = None
+        if values.get('static_window'):
+            background, _, night_evidence = read_selected(settings.vis_dir, layout, values['antennas'], values['static_window'])
+            evidence['night'] = night_evidence
+        previous = load_calibration_weights(record['reference']) if record.get('reference') else None
+        output = save_inspection(data, mapping, cal, dest / 'inspection', source=selection['source'],
+            background=background, reference_cal=previous, subtract_static=selection['static'])
+        inputs, _ = geometry(layout)
+        output.update(inputs=[dict(item, beamforming=item['antenna'] in values['antennas']) for item in inputs], evidence=evidence)
+        save_json(dest / 'inspection' / 'inspection.json', output)
+        return output
     if action == 'phase':
         antennas = sorted([values['ref_ant'], *selection['targets']])
         data, mapping, evidence = read_selected(settings.vis_dir, layout, antennas, selection['window'])
@@ -166,29 +186,30 @@ def diagnose(settings, root, dest, record, action, selection):
         output = stationary_check(data, mapping, calibrations, selection['source'], center, dest,
                                   band=(selection['fmin'], selection['fmax']), off_minutes=selection['off_minutes'],
                                   minimum_snr=selection['minimum_snr'])
+        if selection.get('compare_amplitudes'):
+            from ..web.calibration_inspection import latest_inspection
+            from casm_vis_analysis.calibration_inspection import compare_amplitude_transit
+            inspection, _ = latest_inspection(root)
+            output['amplitude_comparison'] = compare_amplitude_transit(data, mapping, cal,
+                inspection / 'antennas.npz', selection['source'], center, dest,
+                band=(selection['fmin'], selection['fmax']), off_minutes=selection['off_minutes'])
         return dict(**output, evidence=evidence, layout=layout, membership_mode='common antennas',
                     self_check=selection['source'] == values['source'])
     if action == 'history':
-        from bf_weights_generator.sawtooth_compare import run as compare, sun_peak_window, choose_baselines
-        from casm_vis_analysis.calibration_checks import render_raw_history
-        import pandas as pd
-        cals = {'candidate': summary['paths']['cal_h5']}
+        from bf_weights_generator.sawtooth_compare import sun_peak_window
+        from casm_vis_analysis.calibration_inspection import render_history
+        calibrations = {'candidate': cal}
         if record.get('reference'):
-            cals['reference'] = record['reference']
+            calibrations['reference'] = load_calibration_weights(record['reference'])
+        common = sorted(set.intersection(*(set(map(int, c.ant_ids)) for c in calibrations.values())))
         rows, datasets = [], []
-        common = set(map(int, cal.ant_ids))
-        if 'reference' in cals:
-            common &= set(map(int, load_calibration_weights(cals['reference']).ant_ids))
-        targets, _ = choose_baselines('longest:3', values['ref_ant'], sorted(common), pd.read_csv(layout).set_index('antenna'))
         for offset in range(selection['days']):
             day = (datetime.fromisoformat(selection['date']) - timedelta(days=offset)).strftime('%Y-%m-%d')
-            out_dir = dest / day
-            compare(day, cals, None, 'longest:3', str(out_dir), layout_csv=layout, minutes=selection['minutes'], ref_ant=values['ref_ant'])
             start, end, _ = sun_peak_window(day, selection['minutes'])
-            data, mapping, evidence = read_selected(settings.vis_dir, layout, [values['ref_ant'], *targets],
+            data, mapping, evidence = read_selected(settings.vis_dir, layout, common,
                 [start.strftime('%Y-%m-%d %H:%M:%S'), end.strftime('%Y-%m-%d %H:%M:%S')])
             datasets.append((day, data, mapping))
-            rows.append(dict(date=day, evidence=evidence, static='None: do not silently reuse a different day/hardware template'))
-        render_raw_history(datasets, targets, values['ref_ant'], dest)
-        return dict(days=rows, note=f'Matched {selection["minutes"]:g}-minute solar windows; canonical sawtooth comparison. Raw phase views are available separately.')
+            rows.append(dict(date=day, evidence=evidence, static='None: no different-day template reused'))
+        output = render_history(datasets, calibrations, selection['ref_ant'], dest)
+        return dict(**output, evidence=rows, note='Fixed candidate and recorded reference on common antennas and channels.')
     raise ValueError('Unknown diagnostic')
