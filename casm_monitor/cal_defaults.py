@@ -1,6 +1,8 @@
-"""Defaults and provenance for a Calibration-tab build.
+"""Date-based defaults and provenance for a Calibration-tab build.
 
-Everything the Calibration tab pre-fills, computed rather than remembered:
+The workspace's initial date/windows instead come from the uploaded recipe
+(``web.calibration_workspace.workspace_defaults``). This module supplies the
+date-based fallback and the defaults when choosing a different day:
 
 * **solve window** = the source's altitude maximum on the chosen UTC date,
   found with :func:`casm_vis_analysis.sources.source_altaz` on a 1-minute grid,

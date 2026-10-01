@@ -24,9 +24,16 @@ local payload checks pass and remains explicitly **not uploaded**.
 ## Operator flow
 
 1. **Prepare**: choose the solar date and up-to-four-hour solve/static windows,
-   antenna membership, reference and hardware-epoch note. The initial date is
-   the day before the newest raw-observation filename date, not a coverage
-   guarantee. Current layout bytes and the privately adjusted inclusion flags
+   antenna membership, reference and hardware-epoch note. Initial date and windows
+   come from the last uploaded calibration's bound canonical report, selected
+   through the deployment ledger, never from the latest generated candidate.
+   The explicit no-static choice is preserved. **New calibration** restores
+   these recorded starting values without selecting/completing a saved build.
+   Changing to another date computes windows for that day. If the uploaded
+   recipe cannot be identified, a labelled fallback uses the day before the
+   newest raw filename (or yesterday) and computed/configured windows. No path
+   guesses or report modification times establish an uploaded recipe.
+   Current layout bytes and the privately adjusted inclusion flags
    are saved separately. A new scientific selection requires a new tag.
    Solve and static time entry default to **OVRO local (America/Los_Angeles)**;
    the UTC toggle changes display only, preserving the selected instants.
@@ -47,16 +54,28 @@ local payload checks pass and remains explicitly **not uploaded**.
    the window finder but are clipped from the plot, not moved onto the horizon.
    This display shading does not change the per-source quiet-window cuts.
    It follows the same local/UTC toggle without changing the date's physical
-   bounds, shows the current
-   solve/static intervals and supports zoom/download. The canonical
+   bounds and supports zoom/download. Yellow is the **selected solar solve
+   window**, not a separate transit marker. A dashed green, 14%-opacity band
+   shows a **suggested 30-minute static window**; blue is the selected static.
+   The suggestion considers every full 30-minute window on that local day,
+   endpoints included. Sun altitude must remain below 0°. Among those windows,
+   minimise the maximum above-horizon altitude in strict Cyg A, Cas A, Tau A
+   order. Set sources tie at zero; exact ties choose the earliest window.
+   Sun depth below the horizon is not optimised further. This operator-requested
+   priority is not a flux or beam-contamination model. The card shows each
+   source's maximum altitude and warns if usual caps are exceeded; it never
+   calls a ranked compromise a verified quiet template. **Use suggested window**
+   fills the form and clears review, without submitting a job or replacing the
+   uploaded defaults automatically.
+   Under **Fixed altitude-cut windows**, the canonical
    `casm_vis_analysis.offsource.find_quiet_windows` supplies intervals of at
    least 15 minutes using `DEFAULT_ALTITUDE_CAPS_OVRO`: Sun/Tau A below 0°,
    Cyg A below 20°, Cas A below 15°. Cas A never fully sets at OVRO.
-   A **Use 30 min** button (or a shorter qualifying duration) fills a centred
+   Its **Use 30 min** button (or a shorter qualifying duration) fills a centred
    interval and clears human review; it does not start a job or silently replace
    defaults. If no interval qualifies, the page says so. Altitude warnings are
    advisory: RFI, missing data and hardware compatibility still need checking.
-   Source tracks and cuts are sampled each minute; these are geometric
+   Source tracks, ranking and cuts are sampled each minute; these are geometric
    altitudes, not a terrain horizon or a visibility-data quality measurement.
 2. **Calibrate**: the canonical `make_cal_and_weights` driver runs with
    `make_weights=False`, phase-only per-channel SVD, diagnostics and notebook.
@@ -150,9 +169,12 @@ local-first solve/static controls, date rollover, UTC round trips, DST errors
 and responsive layout with all non-GET API requests blocked. It never submits
 a solve, import, diagnostic or upload. Pure conversion cases are in
 `frontend/tests/time-zones.test.mjs`.
-Sky-planning acceptance includes September 18 (no qualifying interval), May 16
-(one interval on that local date, applying it changes only the form), all four canonical source
-tracks, DST day lengths, zoom/download and gray/amber/green workflow states.
+Sky-planning acceptance includes September 18 (no fixed-cut interval, but a
+ranked night suggestion with explicit Cas A/Tau A warnings), May 16 (one fixed-cut
+interval), source-priority and full-window tests, all four canonical tracks,
+DST day lengths, zoom/download and gray/amber/green workflow states. Browser
+checks compare initial values with the actual uploaded report and check that
+suggestions require a click and **New calibration** restores recorded windows.
 Tests: `tests/test_calibration_planning.py` and
 `frontend/tests/calibration-progress.test.mjs`.
 `check_calibration_science.py` explicitly submits bounded real-data analysis; its `--solve` option

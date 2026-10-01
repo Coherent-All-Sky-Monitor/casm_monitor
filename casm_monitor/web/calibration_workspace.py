@@ -31,6 +31,64 @@ def analysis_window(value, field):
     return window, start, end
 
 
+def workspace_defaults(settings, date: str = '') -> dict:
+    """Initial form uses the ledger's uploaded calibration, never latest builds.
+
+    An explicit different date gets computed defaults. An unavailable or unbound
+    report gets a labelled fallback, not dates guessed from a product filename.
+    Antennas still come from populated deployed slots, not the historical layout.
+    """
+    from .calibration_reference import LOCAL, recipe_for, utc
+
+    recorded = None
+    reason = None
+    try:
+        product = deployed_product(settings)
+        if not product.get('cal_file') or not product.get('weights_file'):
+            raise ValueError('No uploaded calibration and weights recorded in the deployment ledger')
+        calibration = Path(product['cal_file'])
+        if not calibration.is_file():
+            raise ValueError('The uploaded calibration file is unavailable')
+        recipe, report = recipe_for(calibration, max_duration_s=MAX_ANALYSIS_WINDOW_S)
+        params = recipe['params']
+        if 'static_window' not in params:
+            raise ValueError('The uploaded recipe does not record a static window or explicit no-static choice')
+        static = params['static_window']
+        if static is None and params.get('static_path'):
+            raise ValueError('The uploaded recipe uses a static file without recording its time window')
+        if static is not None:
+            analysis_window(static, 'Recorded static window')
+        recorded = dict(date=(recipe['t0'] + (recipe['t1'] - recipe['t0']) / 2).astimezone(LOCAL).date().isoformat(),
+                        source_window=[recipe['t0'].isoformat(), recipe['t1'].isoformat()],
+                        static_window=None if static is None else [utc(t).isoformat() for t in static],
+                        report=str(report), report_sha256=sha256_file(report),
+                        date_uploaded=product.get('date_deployed'))
+    except (ValueError, OSError, TypeError) as exc:
+        reason = str(exc)
+    if not date:
+        if recorded:
+            date = recorded['date']
+        else:
+            days = sorted({path.name[:10] for path in Path(settings.vis_dir).glob('*.dat*') if re.match(r'\d{4}-\d{2}-\d{2}', path.name)})
+            latest = datetime.strptime(days[-1], '%Y-%m-%d') if days else datetime.now(timezone.utc)
+            date = (latest - timedelta(days=1)).strftime('%Y-%m-%d')
+    defaults = cal_defaults(date, settings)
+    if recorded and date == recorded['date']:
+        defaults.update(source_window=recorded['source_window'], static_window=recorded['static_window'])
+        t0, t1 = map(utc, recorded['source_window'])
+        defaults.update(window_half_min=(t1 - t0).total_seconds() / 120,
+                        window_offset_min=(t1 - t0).total_seconds() / 120,
+                        window_center_offset_min=((t0 + (t1 - t0) / 2) - utc(defaults['alt_max_utc'])).total_seconds() / 60,
+                        static_note='Recorded uploaded recipe; review data coverage and hardware compatibility before reuse.',
+                        defaults_basis=dict(kind='uploaded_recipe', label='Windows from last uploaded weights', **recorded))
+    else:
+        defaults['defaults_basis'] = dict(kind='date_based' if recorded else 'fallback',
+            label='Computed windows for selected date' if recorded else 'Uploaded recipe unavailable · date-based fallback',
+            reason=reason)
+    defaults['wired_antennas'] = layout_info(settings.layout_csv)['wired_antennas']
+    return defaults
+
+
 def workspace_settings(settings):
     if settings.observation_cache_root is None:
         raise ValueError('Calibration workspace requires an isolated observation root')
@@ -153,13 +211,8 @@ def build_router(settings, store):
 
     @router.get('')
     def overview(date: str = ''):
-        if not date:
-            days = sorted({path.name[:10] for path in Path(settings.vis_dir).glob('*.dat*') if re.match(r'\d{4}-\d{2}-\d{2}', path.name)})
-            latest = datetime.strptime(days[-1], '%Y-%m-%d') if days else datetime.now(timezone.utc)
-            date = (latest - timedelta(days=1)).strftime('%Y-%m-%d')
         try:
-            defaults = cal_defaults(date, settings)
-            defaults['wired_antennas'] = layout_info(settings.layout_csv)['wired_antennas']
+            defaults = workspace_defaults(settings, date)
         except (ValueError, OSError) as exc:
             raise HTTPException(400, str(exc)) from exc
         builds = []

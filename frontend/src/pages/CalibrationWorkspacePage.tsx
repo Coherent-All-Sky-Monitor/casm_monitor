@@ -54,6 +54,7 @@ function BeamSky({tag, date}: {tag: string; date: string}) {
 export default function CalibrationWorkspacePage() {
   const {tag: routeTag} = useParams();
   const [date, setDate] = useState("");
+  const [formRevision, setFormRevision] = useState(0);
   const [overview, setOverview] = useState<Json | null>(null);
   const [form, setForm] = useState<Json | null>(null);
   const [tag, setTag] = useState(() => routeTag ?? "");
@@ -96,7 +97,7 @@ export default function CalibrationWorkspacePage() {
     setStaticOn(Boolean(defaults.static_window));
     setTransit(current => ({...current, date: defaults.date}));
     setReviewed(false);
-  }).catch(reason => setError(reason.message)); return () => {active = false;};}, [date]);
+  }).catch(reason => setError(reason.message)); return () => {active = false;};}, [date, formRevision]);
   useEffect(() => {
     setDetail(null); setDeployDetail({}); setAccept(false); setTargets([]); setPhaseWindow([]);
     if (!tag) return;
@@ -134,7 +135,7 @@ export default function CalibrationWorkspacePage() {
   };
   const runAction = (action: string, values: Json = {}) => perform(`${ROOT}/builds/${tag}/actions`, {action, ...values}, "Queued. You can leave this page; the worker keeps the job and its outputs.");
   const patch = (key: string, value: unknown) => {setForm(current => ({...current, [key]: value})); setReviewed(false);};
-  const chooseCandidate = (value: string) => {setTag(value); setDetail(null); setDeployDetail({}); setReviewed(false); setStep(value ? 1 : 0);};
+  const chooseCandidate = (value: string) => {setTag(value); setDetail(null); setDeployDetail({}); setReviewed(false); setStep(value ? 1 : 0); if (!value) {setForm(null); setDate(""); setFormRevision(v => v + 1);}};
   const candidate = detail?.request?.params;
   const hasCal = Boolean(detail?.summary?.paths?.cal_h5);
   const hasWeights = Boolean(detail?.summary?.has_weights);
@@ -161,6 +162,7 @@ export default function CalibrationWorkspacePage() {
     {(error || message) && <div className={error ? "cal-feedback error" : "cal-feedback"} role="status">{error || message}<button onClick={() => {setError(""); setMessage("");}} aria-label="Dismiss message">×</button></div>}
     {step === 0 && <div className="cal-columns"><section className="cal-card"><div className="cal-section-heading"><h3>Prepare a solar solve</h3><span>Phase-only · per-channel SVD</span></div>{form ? <>
       <div className="cal-fields"><label>Solar date<input type="date" value={date || overview?.defaults?.date || ""} onChange={event => {setReviewed(false); setDate(event.target.value);}}/></label><label>Calibrator<select value="sun" disabled><option value="sun">Sun</option><option disabled>Cyg A · solve not enabled</option><option disabled>Cas A · solve not enabled</option></select></label></div>
+      {form.defaults_basis && <p className="cal-caption" aria-label="Calibration starting point">Starting point: {form.defaults_basis.label}{form.defaults_basis.date_uploaded ? ` · uploaded ${form.defaults_basis.date_uploaded.slice(0, 10)}` : ""}.</p>}
       <label>Revision tag<input value={form.tag} onChange={event => patch("tag", event.target.value)} maxLength={64}/></label>
       <section className="cal-sun-peak" aria-label="Sun altitude maximum"><div>Sun altitude maximum <strong>{human(overview?.defaults?.alt_max_deg)}°</strong></div><div className="cal-sun-clocks">{[LOCAL, "UTC"].map(zone => <div key={zone}><span>{zone === LOCAL ? "OVRO local" : "UTC"}</span><time dateTime={overview?.defaults?.alt_max_utc}>{Number.isFinite(sunPeak) ? playbackStamp(sunPeak, zone as PlaybackTimeZone) : "—"}</time></div>)}</div></section>
       <div className="cal-time-zone"><span>Window times</span><div role="group" aria-label="Solve time zone">{[LOCAL, "UTC"].map(zone => <button key={zone} type="button" aria-pressed={timeZone === zone} onClick={() => {if (invalidTimes) setReviewed(false); setTimeZone(zone as PlaybackTimeZone);}}>{zone === LOCAL ? "OVRO local · PDT/PST" : "UTC"}</button>)}</div></div>

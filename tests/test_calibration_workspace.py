@@ -195,3 +195,73 @@ def test_notebook_must_really_execute(tmp_path):
                                       ([{'text': 'MISSING FIGURE: example'}], 1, False), ([], 1, True)]:
         path.write_text(json.dumps({'cells': [{'cell_type': 'code', 'execution_count': count, 'outputs': outputs}]}))
         assert notebook_executed(path) == expected
+
+
+@pytest.fixture
+def uploaded_recipe(setup, tmp_path, monkeypatch):
+    settings, store, client, _ = setup
+    calibration = tmp_path / 'cal_uploaded.h5'
+    calibration.write_bytes(b'identity fixture; no HDF5 reads')
+    params = dict(out_dir=str(tmp_path), tag='uploaded', cal_source='sun', cal_path=None,
+                  antennas=[9, 10], source_window=['2026-09-17 19:17:00', '2026-09-17 20:17:00'],
+                  static_window=['2026-09-17 03:00:00', '2026-09-17 03:30:00'])
+    report = tmp_path / 'report_uploaded.json'
+    report.write_text(json.dumps(dict(params=params)))
+    # A newer, never-uploaded report must not become the initial selection.
+    (tmp_path / 'report_throwaway.json').write_text(json.dumps(dict(params={**params, 'tag': 'throwaway',
+        'source_window': ['2026-09-29 19:00:00', '2026-09-29 20:00:00']})))
+    monkeypatch.setattr(workspace, 'deployed_product', lambda settings: dict(cal_file=str(calibration),
+        weights_file='uploaded_weights.h5', date_deployed='2026-09-18 07:51:57 UTC'))
+    def defaults(day, settings):
+        return dict(date=day, source='sun', alt_max_utc=f'{day}T19:47:00Z',
+                    source_window=[f'{day}T19:00:00Z', f'{day}T20:00:00Z'],
+                    static_window=[f'{day}T04:00:00Z', f'{day}T04:30:00Z'], antennas=[9, 10])
+    monkeypatch.setattr(workspace, 'cal_defaults', defaults)
+    return store, client, report, params
+
+
+def test_initial_windows_follow_uploaded_recipe_not_newer_build(uploaded_recipe):
+    store, client, report, _ = uploaded_recipe
+    before = store.list_jobs()
+    for suffix in ('', '?date=2026-09-17'):
+        response = client.get('/api/calibration' + suffix)
+        assert response.status_code == 200, response.text
+        defaults = response.json()['defaults']
+        assert defaults['date'] == '2026-09-17'
+        assert defaults['source_window'] == ['2026-09-17T19:17:00+00:00', '2026-09-17T20:17:00+00:00']
+        assert defaults['static_window'] == ['2026-09-17T03:00:00+00:00', '2026-09-17T03:30:00+00:00']
+        assert defaults['defaults_basis']['kind'] == 'uploaded_recipe'
+        assert defaults['defaults_basis']['report'] == str(report)
+        assert defaults['window_center_offset_min'] == 0
+        assert defaults['antennas'] == [9, 10]
+    assert store.list_jobs() == before
+
+
+def test_explicit_other_date_uses_date_based_windows(uploaded_recipe):
+    _, client, _, _ = uploaded_recipe
+    defaults = client.get('/api/calibration?date=2026-09-20').json()['defaults']
+    assert defaults['date'] == '2026-09-20'
+    assert defaults['source_window'][0] == '2026-09-20T19:00:00Z'
+    assert defaults['defaults_basis']['kind'] == 'date_based'
+
+
+@pytest.mark.parametrize('change', [{'tag': 'wrong'}, {'static_window': ['bad', 'bad']},
+                                  {'static_window': None, 'static_path': 'unknown-static.npz'}])
+def test_unbound_or_invalid_uploaded_recipe_is_labelled_fallback(uploaded_recipe, change):
+    _, client, report, params = uploaded_recipe
+    report.write_text(json.dumps(dict(params={**params, **change})))
+    defaults = client.get('/api/calibration?date=2026-09-20').json()['defaults']
+    assert defaults['defaults_basis']['kind'] == 'fallback'
+    assert defaults['defaults_basis']['reason']
+    assert defaults['source_window'][0] == '2026-09-20T19:00:00Z'
+
+
+def test_uploaded_no_static_and_four_hour_solve_preserved(uploaded_recipe):
+    _, client, report, params = uploaded_recipe
+    params.update(static_window=None, source_window=['2026-09-17 17:00:00', '2026-09-17 21:00:00'])
+    report.write_text(json.dumps(dict(params=params)))
+    defaults = client.get('/api/calibration').json()['defaults']
+    assert defaults['defaults_basis']['kind'] == 'uploaded_recipe'
+    assert defaults['static_window'] is None
+    assert defaults['window_half_min'] == 120
+    assert defaults['window_center_offset_min'] == -47

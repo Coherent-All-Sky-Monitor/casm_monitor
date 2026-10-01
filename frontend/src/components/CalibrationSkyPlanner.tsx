@@ -7,7 +7,8 @@ import { timeTicks } from './vis/PlotTicks';
 
 type Track = {id: string; label: string; cap_deg: number; altitude_deg: number[]};
 type Window = {start: number; end: number; selection: number[]; minutes: number};
-type Plan = {date: string; times: number[]; tracks: Track[]; windows: Window[]};
+type Suggestion = {selection: number[]; minutes: number; altitude_max_deg: Record<string, number>; meets_altitude_caps: boolean; exceeded_caps: string[]};
+type Plan = {date: string; times: number[]; tracks: Track[]; windows: Window[]; suggestion: Suggestion | null};
 const cache = new Map<string, Promise<Plan>>();
 const COLORS = ['#b46b00', '#1468a6', '#287348', '#ad3830'];
 const DASHES = ['', '8 3', '3 3', '9 3 2 3'];
@@ -31,9 +32,9 @@ function AltitudePlot({data, zone, solve, staticWindow}: {data: Plan; zone: Play
   const x = (t: number) => 62 + (t - a) / (b - a) * 694;
   const y = (v: number) => 58 + (90 - v) / 90 * 236;
   const altitudeTicks = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90];
-  const spans = (window: number[], fill: string, stroke: string) => {
+  const spans = (window: number[], color: string, kind: string, dashed = false) => {
     const left = Math.max(a, window[0]), right = Math.min(b, window[1]);
-    return right > left ? <rect x={x(left)} y={58} width={Math.max(1, x(right) - x(left))} height={236} fill={fill} stroke={stroke}/> : null;
+    return right > left ? <rect data-window={kind} x={x(left)} y={58} width={Math.max(1, x(right) - x(left))} height={236} fill={color} fillOpacity={.14} stroke={color} strokeDasharray={dashed ? '4 3' : undefined}><title>{kind}</title></rect> : null;
   };
   const ticks = [a, ...timeTicks(a, b, 694, zone).filter(t => t > a + (b - a) * .05 && t < b - (b - a) * .05), b];
   return <svg className="cal-altitude-svg" viewBox="0 0 780 436" role="img" aria-label="Sun, Cyg A, Cas A and Tau A altitude versus time at OVRO" data-start={iso(a)} data-end={iso(b)} data-altitude-min="0" data-altitude-max="90"
@@ -44,10 +45,10 @@ function AltitudePlot({data, zone, solve, staticWindow}: {data: Plan; zone: Play
       {data.tracks.map((track, i) => <g key={track.id}><line x1={64 + i * 175} x2={91 + i * 175} y1={23} y2={23} stroke={COLORS[i]} strokeWidth={2.5} strokeDasharray={DASHES[i]}/><text x={98 + i * 175} y={28}>{track.label}</text></g>)}
       <defs><clipPath id={id}><rect x={62} y={58} width={694} height={236}/></clipPath></defs>
       <g clipPath={`url(#${id})`}>
-        {data.windows.map(w => <g key={w.start}>{spans([w.start, w.end], '#dcebe2', 'none')}</g>)}
-        {spans(solve.map(unix), '#fbe9c8', '#b46b00')}
-        {staticWindow && spans(staticWindow.map(unix), '#dbeafe', '#1468a6')}
         <rect data-low-altitude-band="20" x={62} y={y(20)} width={694} height={y(0) - y(20)} fill="#dce0e5" opacity={.8}/>
+        {spans(solve.map(unix), '#c48a17', 'Solar solve')}
+        {staticWindow && spans(staticWindow.map(unix), '#1468a6', 'Selected static')}
+        {data.suggestion && spans(data.suggestion.selection, '#287348', 'Suggested static', true)}
         {altitudeTicks.map(v => <line key={v} data-altitude-line={v} x1={62} x2={756} y1={y(v)} y2={y(v)} stroke={v === 20 ? '#64748b' : '#dfe3e8'} strokeWidth={v === 20 ? 1.5 : 1} strokeDasharray={v === 20 ? undefined : '3 3'}/>)}
         {ticks.map(t => <line key={t} x1={x(t)} x2={x(t)} y1={58} y2={294} stroke="#e0e5eb"/>)}
         {data.tracks.map((track, i) => <path key={track.id} data-source={track.id} d={track.altitude_deg.map((v, k) => `${k ? 'L' : 'M'}${x(data.times[k]).toFixed(2)},${y(v).toFixed(2)}`).join(' ')} fill="none" stroke={COLORS[i]} strokeWidth={2.2} strokeDasharray={DASHES[i]}/>)}
@@ -59,7 +60,7 @@ function AltitudePlot({data, zone, solve, staticWindow}: {data: Plan; zone: Play
       <text x={744} y={y(20) - 5} textAnchor="end" fontSize={11}>20°</text>
       {ticks.map(t => {const wall = wallTime(iso(t), zone); return <g key={t} textAnchor="middle"><text x={x(t)} y={313}>{wall.slice(11)}</text><text x={x(t)} y={330} fontSize={11}>{wall.slice(5, 10)}</text></g>;})}
       <text x={409} y={351} textAnchor="middle">Time ({zone === 'UTC' ? 'UTC' : 'OVRO local · PDT/PST'})</text>
-      <text x={62} y={376} fontSize={12}>Gray: below 20° · green: altitude cuts met · amber: solve · blue: static</text>
+      {[['Solar solve', '#c48a17'], ['Suggested static', '#287348'], ['Selected static', '#1468a6'], ['Below 20°', '#64748b']].map(([name, color], i) => <g key={name}><rect x={62 + i * 175} y={365} width={12} height={12} fill={color} fillOpacity={.14} stroke={color} strokeDasharray={i === 1 ? '3 2' : undefined}/><text x={81 + i * 175} y={376} fontSize={12}>{name}</text></g>)}
       <text x={62} y={399} fontSize={12}>{cursor === null ? 'Move across the plot to read source altitudes.' : playbackStamp(data.times[cursor], zone)}</text>
       {cursor !== null && data.tracks.map((t, i) => <text key={t.id} x={62 + i * 175} y={421} fill={COLORS[i]} fontSize={13}>{t.label} {t.altitude_deg[cursor] < 0 ? 'below horizon' : `${t.altitude_deg[cursor].toFixed(1)}°`}</text>)}
     </g>
@@ -81,9 +82,16 @@ export default function CalibrationSkyPlanner({date, zone, solve, staticWindow, 
     <div className="cal-section-heading"><h3>Choose a static window</h3><span>{date} · 00:00–23:59 PT</span></div>
     {error ? <p role="alert">Sky guide unavailable: {error}</p> : !ready ? <p>Calculating source altitudes…</p> : <>
       <button className="cal-altitude-trigger" aria-label="Enlarge calibrator altitude plot" onClick={() => setZoom(true)}>{plot}</button>
-      <p className="cal-caption">Sun & Tau A below 0° · Cyg A below 20° · Cas A below 15°. Cas A never sets at OVRO.</p>
+      <p className="cal-caption">Yellow: selected solar solve window. Dashed green: suggested night-time static window.</p>
+      <div className="cal-static-suggestion" aria-label="Suggested night-time static window">{ready.suggestion ? <>
+        <div className="cal-suggestion-heading"><strong>Suggested static · {ready.suggestion.minutes} min</strong><button onClick={() => onSelect(ready.suggestion!.selection.map(iso))}>Use suggested window</button></div>
+        <p className="cal-suggestion-time">{playbackStamp(ready.suggestion.selection[0], zone)} → {playbackStamp(ready.suggestion.selection[1], zone)}</p>
+        <p className="cal-suggestion-altitudes">{ready.tracks.map(t => {const alt = ready.suggestion!.altitude_max_deg[t.id]; return <span key={t.id}>{t.label} {alt < 0 ? 'down' : `≤ ${alt.toFixed(1)}°`}</span>;})}</p>
+        <p className="cal-caption">Sun down throughout; lowest peak altitude in order: Cyg A → Cas A → Tau A.</p>
+        {!ready.suggestion.meets_altitude_caps && <p className="cal-planner-selection attention">Above usual altitude cuts: {ready.tracks.filter(t => ready.suggestion!.exceeded_caps.includes(t.id)).map(t => t.label).join(', ')}. Review before using.</p>}
+      </> : <p>No full 30-minute window with the Sun below the horizon on this date.</p>}</div>
       {staticWindow && <p className={`cal-planner-selection ${fail.length ? 'attention' : ''}`}>{!covered ? 'Selected static window is outside this plot or has an invalid range.' : fail.length ? `Selected static window exceeds altitude limits: ${fail.map(t => t.label).join(', ')}.` : 'Selected static window meets the sampled altitude limits.'}</p>}
-      <div className="cal-window-suggestions">{ready.windows.length ? ready.windows.map(w => <div key={w.start}><span>{playbackStamp(w.start, zone)} → {playbackStamp(w.end, zone)}</span><button onClick={() => onSelect(w.selection.map(iso))}>Use {w.minutes} min</button></div>) : <p>No interval of at least 15 min meets all four altitude limits in this range.</p>}</div>
+      <details className="cal-fixed-windows"><summary>Fixed altitude-cut windows ({ready.windows.length})</summary><p className="cal-caption">Sun & Tau A below 0° · Cyg A below 20° · Cas A below 15°. Cas A never sets at OVRO.</p><div className="cal-window-suggestions">{ready.windows.length ? ready.windows.map(w => <div key={w.start}><span>{playbackStamp(w.start, zone)} → {playbackStamp(w.end, zone)}</span><button onClick={() => onSelect(w.selection.map(iso))}>Use {w.minutes} min</button></div>) : <p>No interval of at least 15 min meets all four altitude limits in this range.</p>}</div></details>
       <p className="cal-caption">Sky positions only. Check data coverage, RFI and matching hardware settings before using a template.</p>
       {zoom && <FigureZoom title={label} onClose={() => setZoom(false)}>{plot}</FigureZoom>}
     </>}

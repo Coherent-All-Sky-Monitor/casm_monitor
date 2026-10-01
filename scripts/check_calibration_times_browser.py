@@ -39,6 +39,10 @@ def main():
         page.route('**/api/**', guard)
         overview = page.request.get(BASE + '/api/calibration').json()
         defaults = overview['defaults']
+        assert defaults['defaults_basis']['kind'] == 'uploaded_recipe'
+        recorded = json.loads(Path(defaults['defaults_basis']['report']).read_text())['params']
+        for key in ('source_window', 'static_window'):
+            assert [wall(t) for t in defaults[key]] == [wall(t + 'Z' if 'T' not in t else t) for t in recorded[key]]
         # Reproduce an old browser's remembered candidate; /cal must ignore it.
         remembered = next((b['tag'] for b in overview['builds'] if b['has_cal']), 'old_candidate')
         context.add_init_script('localStorage.setItem("casm-calibration-candidate", ' + json.dumps(remembered) + ');')
@@ -52,6 +56,7 @@ def main():
         solve = page.get_by_role('button', name='Calibrate with the Sun')
         expect(solve).to_be_disabled()
         expect(page.get_by_role('combobox', name='Saved candidate', exact=True)).to_have_value('')
+        expect(page.get_by_label('Calibration starting point')).to_contain_text('last uploaded weights')
         expect(page.locator('.cal-antennas input:checked')).to_have_count(len(antennas))
         selected = page.locator('.cal-antennas label:has(input:checked)').all_text_contents()
         assert sorted(int(label.split('·')[-1].strip()) for label in selected) == antennas
@@ -68,6 +73,9 @@ def main():
         expect(chart).to_have_attribute('data-altitude-max', '90')
         expect(chart.locator('[data-low-altitude-band="20"]')).to_have_count(1)
         expect(chart.locator('[data-altitude-line="20"]')).to_have_count(1)
+        expect(chart.locator('[data-window="Suggested static"]')).to_have_attribute('fill-opacity', '0.14')
+        expect(chart.locator('[data-window="Suggested static"]')).to_have_attribute('stroke-dasharray', '4 3')
+        expect(chart.locator('[data-window="Solar solve"]')).to_have_count(1)
         assert wall(chart.get_attribute('data-start')) == defaults['date'] + 'T00:00'
         assert wall(chart.get_attribute('data-end')) == defaults['date'] + 'T23:59'
         expect(chart).to_contain_text('23:59')
@@ -132,7 +140,19 @@ def main():
         # Selected local day only: September has no qualifying interval; May has one.
         page.get_by_label('Solar date', exact=True).fill('2026-09-18')
         expect(planner).to_contain_text('No interval of at least 15 min')
+        expect(planner.locator('svg')).to_have_attribute('data-start', '2026-09-18T07:00:00.000Z')
+        suggested = page.request.get(BASE + '/api/calibration/sky-plan?date=2026-09-18').json()['suggestion']
+        expect(planner.get_by_label('Suggested night-time static window')).to_contain_text('Above usual altitude cuts: Cas A, Tau A')
+        review.check()
+        planner.get_by_role('button', name='Use suggested window').click()
+        expect(review).not_to_be_checked()
+        for i, edge in enumerate(('start', 'end')):
+            expect(fields[f'Static {edge}']).to_have_value(datetime.fromtimestamp(suggested['selection'][i], LOCAL).strftime('%Y-%m-%dT%H:%M'))
+        expect(planner).to_contain_text('Selected static window exceeds altitude limits: Cas A, Tau A.')
+        page.screenshot(path=str(output / 'suggested-static-september.png'), full_page=True)
         page.get_by_label('Solar date', exact=True).fill('2026-05-16')
+        expect(chart).to_have_attribute('data-start', '2026-05-16T07:00:00.000Z')
+        planner.locator('summary').click()
         expect(planner.get_by_role('button', name='Use 30 min')).to_have_count(1)
         sky = page.request.get(BASE + '/api/calibration/sky-plan?date=2026-05-16').json()
         assert wall(chart.get_attribute('data-start')) == '2026-05-16T00:00'
@@ -163,6 +183,10 @@ def main():
         page.get_by_role('button', name='New calibration', exact=True).click()
         expect(review).not_to_be_checked()
         expect(page.locator('.cal-steps button[data-state=pending]')).to_have_count(5)
+        expect(page.get_by_label('Solar date', exact=True)).to_have_value(defaults['date'])
+        for kind, key in [('Solve', 'source_window'), ('Static', 'static_window')]:
+            for i, edge in enumerate(('start', 'end')):
+                expect(fields[f'{kind} {edge}']).to_have_value(wall(defaults[key][i]))
         browser.close()
     assert not errors, errors
     assert not writes, writes
@@ -175,7 +199,9 @@ def main():
     result['checks'] += ['four real altitude tracks', 'no qualifying window shown accurately',
                          'apply canonical sky-only suggestion', 'review reset', 'gray-first stages', 'zoom and download',
                          'stored candidate ignored', 'new calibration resets review', 'selected PT day 00:00–23:59',
-                         'altitude 0–90 with 20-degree gray band']
+                         'altitude 0–90 with 20-degree gray band', 'low-alpha night suggestion',
+                         'ranked suggestion leaves form unchanged until selected', 'above-cap suggestion labelled',
+                         'uploaded recipe defaults and new-calibration reset']
     (output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result, indent=2))
 

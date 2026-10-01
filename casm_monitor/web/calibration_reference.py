@@ -21,8 +21,12 @@ def utc(value: str) -> datetime:
     return (parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc))
 
 
-def recipe_for(calibration: Path) -> tuple[dict, Path]:
-    """Only accept a report whose canonical output identity matches this cal."""
+def recipe_for(calibration: Path, *, max_duration_s: float = 3600) -> tuple[dict, Path]:
+    """Accept a bound Sun report within the caller's solve-window limit.
+
+    Phase comparison keeps its one-hour budget; workspace defaults allow the
+    same four-hour window that its solve form supports.
+    """
     for report in islice(sorted(calibration.parent.glob('report_*.json')), 64):
         if report.is_symlink():
             continue
@@ -40,7 +44,7 @@ def recipe_for(calibration: Path) -> tuple[dict, Path]:
             continue
         try:
             t0, t1 = map(utc, window)
-            if not 0 < (t1 - t0).total_seconds() <= 3600:
+            if not 0 < (t1 - t0).total_seconds() <= max_duration_s:
                 continue
         except (TypeError, ValueError):
             continue
@@ -48,7 +52,7 @@ def recipe_for(calibration: Path) -> tuple[dict, Path]:
         if not isinstance(antennas, list) or not antennas or any(type(a) is not int for a in antennas):
             continue
         return dict(params=params, antennas=antennas, t0=t0, t1=t1), report
-    raise ValueError('No adjacent Sun report proves the calibration output identity and a solve window of at most one hour. The date is not inferred from the filename.')
+    raise ValueError(f'No adjacent Sun report proves the calibration output identity and a solve window of at most {max_duration_s / 3600:g} hours. The date is not inferred from the filename.')
 
 
 def references(settings, comparison_date: str = '', now: datetime | None = None) -> dict:
