@@ -143,6 +143,14 @@ def action_params(body, record):
 def build_router(settings, store):
     router = APIRouter(prefix='/api/calibration')
 
+    @router.get('/sky-plan')
+    def sky_plan(date: str):
+        from .calibration_planning import sky_plan as plan
+        try:
+            return plan(date)
+        except (ValueError, OverflowError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @router.get('')
     def overview(date: str = ''):
         if not date:

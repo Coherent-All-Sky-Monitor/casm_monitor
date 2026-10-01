@@ -54,6 +54,10 @@ def main():
         utc = group.get_by_role('button', name='UTC', exact=True)
         local = group.get_by_role('button', name='OVRO local · PDT/PST', exact=True)
         expect(local).to_have_attribute('aria-pressed', 'true')
+        planner = page.get_by_role('region', name='Night-time template planner')
+        expect(planner.locator('path[data-source]')).to_have_count(4)
+        assert page.locator('.cal-steps button[data-state=pending]').count() == 5
+        assert page.locator('.cal-steps button.selected').evaluate('(el)=>getComputedStyle(el).backgroundColor') == 'rgb(52, 45, 32)'
         fields = {f'{kind} {edge}': page.get_by_label(f'{kind} {edge}', exact=True)
                   for kind in ('Solve', 'Static') for edge in ('start', 'end')}
         for kind, key in [('Solve', 'source_window'), ('Static', 'static_window')]:
@@ -80,6 +84,8 @@ def main():
         review = page.get_by_role('checkbox', name='I reviewed the windows')
         review.check()
         expect(solve).to_be_enabled()
+        expect(page.locator('.cal-steps button').first).to_have_attribute('data-state', 'complete')
+        assert page.locator('.cal-steps button').first.evaluate('(el)=>getComputedStyle(el).backgroundColor') == 'rgb(24, 59, 43)'
         local.click()
         expect(review).to_be_checked()  # Display-only zone changes preserve the interval.
         for invalid, message in [('2026-03-08T02:30', 'does not exist'), ('2026-11-01T01:30', 'occurs twice'), ('', 'complete, valid')]:
@@ -110,6 +116,29 @@ def main():
         page.reload(wait_until='networkidle')
         expect(local).to_have_attribute('aria-pressed', 'true')
         expect(fields['Solve start']).to_have_value(wall(defaults['source_window'][0]))
+        # Real ephemerides: September has no qualifying interval; May has two.
+        page.get_by_label('Solar date', exact=True).fill('2026-09-18')
+        expect(planner).to_contain_text('No interval of at least 15 min')
+        page.get_by_label('Solar date', exact=True).fill('2026-05-16')
+        expect(planner.get_by_role('button', name='Use 30 min')).to_have_count(2)
+        sky = page.request.get(BASE + '/api/calibration/sky-plan?date=2026-05-16').json()
+        review.check()
+        planner.get_by_role('button', name='Use 30 min').first.click()
+        expect(review).not_to_be_checked()
+        expect(planner).to_contain_text('Selected static window meets the sampled altitude limits.')
+        for i, edge in enumerate(('start', 'end')):
+            expected = datetime.fromtimestamp(sky['windows'][0]['selection'][i], LOCAL).strftime('%Y-%m-%dT%H:%M')
+            expect(fields[f'Static {edge}']).to_have_value(expected)
+        page.screenshot(path=str(output / 'sky-planner-may.png'), full_page=True)
+        planner.get_by_role('button', name='Enlarge calibrator altitude plot').click()
+        dialog = page.get_by_role('dialog')
+        expect(dialog.locator('path[data-source]')).to_have_count(4)
+        dialog.get_by_role('button', name='Zoom in', exact=True).click()
+        expect(dialog.get_by_label('Display zoom')).to_have_text('150%')
+        with page.expect_download() as exported:
+            dialog.get_by_role('button', name='Download', exact=True).click()
+        exported.value.save_as(output / 'altitude-zoom.png')
+        dialog.get_by_role('button', name='Close ×', exact=True).click()
         for width in (1440, 768, 390):
             page.set_viewport_size({'width': width, 'height': 1100})
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), width
@@ -123,6 +152,8 @@ def main():
                   checks=['deployed membership', 'local default', 'static date rollover', 'UTC toggle',
                           'local edit to UTC', 'DST gap/fold rejection', 'blank time blocks solve',
                           'both UTC fold choices preserved', 'responsive layout'])
+    result['checks'] += ['four real altitude tracks', 'no qualifying window shown accurately',
+                         'apply canonical sky-only suggestion', 'review reset', 'gray/amber/green stages', 'zoom and download']
     (output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result, indent=2))
 

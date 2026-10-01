@@ -137,6 +137,22 @@ def test_membership_and_review_gate(setup):
         workspace.review_gate(settings, body['tag'])
 
 
+def test_sky_planner_is_read_only_and_validates_date(setup, monkeypatch):
+    from casm_monitor.web import calibration_planning
+    _, store, client, _ = setup
+    before = store.list_jobs()
+    def plan(date):
+        if date == 'bad':
+            raise ValueError('bad date')
+        return {'date': date, 'windows': []}
+    monkeypatch.setattr(calibration_planning, 'sky_plan', plan)
+    response = client.get('/api/calibration/sky-plan?date=2026-09-18')
+    assert response.status_code == 200
+    assert response.json()['date'] == '2026-09-18'
+    assert client.get('/api/calibration/sky-plan?date=bad').status_code == 400
+    assert store.list_jobs() == before
+
+
 def test_action_admission_and_grid_roundtrip():
     record = {'params': {'antennas': [9, 10, 12], 'ref_ant': 9}}
     for request in ({'action': 'other'}, {'action': 'grid', 'alt_min': float('nan'), 'replace_custom_cells': True}, {'action': 'grid'}):

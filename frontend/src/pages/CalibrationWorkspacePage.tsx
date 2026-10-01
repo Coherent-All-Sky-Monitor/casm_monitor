@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, Evidence, Json, Notice, ProductImage, stamp, useResource } from "../components/Workspace";
 import CalibrationTimeField from "../components/CalibrationTimeField";
+import CalibrationSkyPlanner from "../components/CalibrationSkyPlanner";
+import { calibrationProgress } from "../components/calibrationProgress";
 import { LOCAL } from "../components/timeZones";
 import { playbackStamp, type PlaybackTimeZone } from "../components/snapPlaybackModel";
 import "../calibration.css";
@@ -139,11 +141,13 @@ export default function CalibrationWorkspacePage() {
   const artifacts: Json[] = detail?.artifacts ?? [];
   const jobs: Json[] = detail?.jobs ?? [];
   const pending = jobs.some(job => ["running", "queued"].includes(job.state));
-  const disabled = busy || pending;
+  const preparing = Boolean(date && form?.date !== date);
+  const disabled = busy || pending || preparing;
   const invalidTimes = Object.entries(timeErrors).some(([id, invalid]) => invalid && (staticOn || !id.startsWith("static")));
   const sunPeak = overview?.defaults?.alt_max_utc ? Date.parse(overview.defaults.alt_max_utc) / 1000 : NaN;
   const transitResults: Json[] = (detail?.actions ?? []).filter((item: Json) => item.action === "transit");
   const latestTransit = transitResults[transitResults.length - 1];
+  const progress = calibrationProgress(detail, deployDetail, reviewed);
   const label = (antenna: number) => {const station = stations?.inputs?.find((item: Json) => item.antenna === antenna)?.station; return station ? `${station} · ${antenna}` : `Ant ${antenna}`;};
   const stageItems = (actions: string[]) => {
     const latestIds = actions.map(action => [...(detail?.actions ?? [])].reverse().find((entry: Json) => entry.action === action)?.action_id).filter(Boolean);
@@ -153,16 +157,18 @@ export default function CalibrationWorkspacePage() {
   return <div className="cal-workspace">
     <header className="cal-hero"><div><h2>Calibration</h2><p>Solar solve · sky validation · 512 beams</p></div><span className="cal-safety"><span/> Upload testing · dry run only</span></header>
     <div className="cal-context"><label>Saved candidate<select value={tag} onChange={event => {setTag(event.target.value); setStep(1);}}><option value="">New calibration</option>{(overview?.builds ?? []).map((item: Json) => <option key={item.tag} value={item.tag}>{item.tag}{item.imported ? " · recorded reference" : item.has_weights ? " · 512 beams" : item.has_cal ? " · solved" : " · pending"}</option>)}</select></label><button onClick={() => {setTag(""); setStep(0);}}>New calibration</button><button disabled={busy} onClick={() => perform(ROOT + "/import-reference", {date: overview?.defaults?.date}, "Recorded reference loaded for offline diagnostics; not a new solve.").then(result => {if (result) setStep(1);})}>Inspect deployed calibration</button><span className="cal-context-note">{candidate ? `${candidate.antennas.length} antennas · reference ${candidate.ref_ant}` : "Start from deployed antennas"}</span></div>
-    <nav className="cal-steps" aria-label="Calibration workflow">{STEPS.map((name, index) => <button key={name} className={step === index ? "selected" : ""} onClick={() => setStep(index)} aria-current={step === index ? "step" : undefined}><span>{String(index + 1).padStart(2, "0")}</span>{name}<small>{["Windows & membership", hasCal ? "Calibration saved" : "SVD & phase progression", latestTransit ? "Transit saved" : "Stationary Cyg A + chromaticity", hasWeights ? "CB + IB saved" : "512-point sky view", detail?.review?.accepted ? "Review saved" : "Review & local payloads"][index]}</small></button>)}</nav>
+    <nav className="cal-steps" aria-label="Calibration workflow">{STEPS.map((name, index) => <button key={name} className={`${progress[index].state}${step === index ? " selected" : ""}`} data-state={progress[index].state} onClick={() => setStep(index)} aria-current={step === index ? "step" : undefined}><span>{String(index + 1).padStart(2, "0")}</span>{name}<small>{progress[index].label}</small></button>)}</nav>
     {(error || message) && <div className={error ? "cal-feedback error" : "cal-feedback"} role="status">{error || message}<button onClick={() => {setError(""); setMessage("");}} aria-label="Dismiss message">×</button></div>}
     {step === 0 && <div className="cal-columns"><section className="cal-card"><div className="cal-section-heading"><h3>Prepare a solar solve</h3><span>Phase-only · per-channel SVD</span></div>{form ? <>
-      <div className="cal-fields"><label>Solar date<input type="date" value={date || overview?.defaults?.date || ""} onChange={event => setDate(event.target.value)}/></label><label>Calibrator<select value="sun" disabled><option value="sun">Sun</option><option disabled>Cyg A · solve not enabled</option><option disabled>Cas A · solve not enabled</option></select></label></div>
+      <div className="cal-fields"><label>Solar date<input type="date" value={date || overview?.defaults?.date || ""} onChange={event => {setReviewed(false); setDate(event.target.value);}}/></label><label>Calibrator<select value="sun" disabled><option value="sun">Sun</option><option disabled>Cyg A · solve not enabled</option><option disabled>Cas A · solve not enabled</option></select></label></div>
       <label>Revision tag<input value={form.tag} onChange={event => patch("tag", event.target.value)} maxLength={64}/></label>
       <section className="cal-sun-peak" aria-label="Sun altitude maximum"><div>Sun altitude maximum <strong>{human(overview?.defaults?.alt_max_deg)}°</strong></div><div className="cal-sun-clocks">{[LOCAL, "UTC"].map(zone => <div key={zone}><span>{zone === LOCAL ? "OVRO local" : "UTC"}</span><time dateTime={overview?.defaults?.alt_max_utc}>{Number.isFinite(sunPeak) ? playbackStamp(sunPeak, zone as PlaybackTimeZone) : "—"}</time></div>)}</div></section>
       <div className="cal-time-zone"><span>Window times</span><div role="group" aria-label="Solve time zone">{[LOCAL, "UTC"].map(zone => <button key={zone} type="button" aria-pressed={timeZone === zone} onClick={() => {if (invalidTimes) setReviewed(false); setTimeZone(zone as PlaybackTimeZone);}}>{zone === LOCAL ? "OVRO local · PDT/PST" : "UTC"}</button>)}</div></div>
       <div className="cal-fields">{[0, 1].map(index => <CalibrationTimeField key={index} id={`solve-${index}`} label={`Solve ${index ? "end" : "start"}`} zone={timeZone} value={form.source_window[index]} onError={markTimeError} onChange={value => {const window = [...form.source_window]; window[index] = value; patch("source_window", window);}}/>)}</div>
       <label className="cal-check"><input type="checkbox" checked={staticOn} onChange={event => {setStaticOn(event.target.checked); setReviewed(false);}}/>Subtract a matched night-time static template</label>
       {staticOn && <div className="cal-fields">{[0, 1].map(index => <CalibrationTimeField key={index} id={`static-${index}`} label={`Static ${index ? "end" : "start"}`} zone={timeZone} value={form.static_window?.[index] ?? ""} onError={markTimeError} onChange={value => {const window = [...(form.static_window ?? ["", ""])]; window[index] = value; patch("static_window", window);}}/>)}</div>}
+      {preparing && <p className="cal-caption" role="status">Loading windows for the selected date…</p>}
+      {staticOn && !preparing && <CalibrationSkyPlanner date={form.date} zone={timeZone} solve={form.source_window} staticWindow={form.static_window} onSelect={window => {setTimeErrors(current => ({...current, 'static-0': false, 'static-1': false})); patch('static_window', window);}}/>}
       <label>Hardware / static note<textarea rows={2} placeholder="Any wiring, EQ or timing changes? Is the night-time window suitable?" value={form.hardware_epoch_note} onChange={event => patch("hardware_epoch_note", event.target.value)}/></label>
       <label className="cal-check"><input type="checkbox" checked={reviewed} onChange={event => setReviewed(event.target.checked)}/>I reviewed the windows, static compatibility, and antenna selection.</label>
       <button className="cal-primary" disabled={disabled || invalidTimes || !reviewed || !form.antennas.includes(form.ref_ant)} onClick={() => perform(ROOT + "/builds", {...form, static_window: staticOn ? form.static_window : null, reviewed}, "Calibration queued. No beam weights or live deployment are requested.").then(result => {if (result) setStep(1);})}>{busy ? "Saving…" : "Calibrate with the Sun →"}</button>
