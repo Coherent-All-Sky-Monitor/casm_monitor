@@ -19,6 +19,18 @@ the white style. The old Commissioning page is superseded.
    the day before the newest raw-observation filename date, not a coverage
    guarantee. Current layout bytes and the privately adjusted inclusion flags
    are saved separately. A new scientific selection requires a new tag.
+   Solve and static time entry default to **OVRO local (America/Los_Angeles)**;
+   the UTC toggle changes display only, preserving the selected instants.
+   The Sun altitude maximum shows its altitude and both dated local/UTC times.
+   The solar date is the Sun-maximum date, the same civil day in UTC and at OVRO;
+   the matched static window can fall on the previous local evening. Recipes
+   and API timestamps remain UTC. Invalid or repeated DST-hour edits block
+   submission; choose UTC explicitly for either occurrence of a repeated hour.
+   Antennas default to the recorded deployed CB weights, not the layout flags.
+   On October 1 the selection matched the SNAPs deployment view's 16 antennas;
+   antennas 12 and 33 were layout-only and unselected. This was a saved-product
+   comparison, not a fresh GPU readback. Missing deployed weights retain the
+   existing labelled layout fallback.
 2. **Calibrate**: the canonical `make_cal_and_weights` driver runs with
    `make_weights=False`, phase-only per-channel SVD, diagnostics and notebook.
    No grid, upload or live layout edit occurs. A failed job retains its log.
@@ -103,7 +115,12 @@ Artifact URLs are catalogued, contained and reject escaping symlinks.
 Acceptance: `tests/test_calibration_workspace.py`, existing `tests/test_cal.py`,
 `casm_vis_analysis/tests/test_calibration_checks.py`, frontend production build,
 `scripts/check_calibration_browser.py` and `scripts/check_calibration_science.py`.
-The latter explicitly submits bounded real-data analysis; its `--solve` option
+`scripts/check_calibration_times_browser.py` checks the served membership,
+local-first solve/static controls, date rollover, UTC round trips, DST errors
+and responsive layout with all non-GET API requests blocked. It never submits
+a solve, import, diagnostic or upload. Pure conversion cases are in
+`frontend/tests/time-zones.test.mjs`.
+`check_calibration_science.py` explicitly submits bounded real-data analysis; its `--solve` option
 also generates a new offline canonical calibration. It never uploads.
 
 Documentation checks: the central Sphinx build, local-link and export checks

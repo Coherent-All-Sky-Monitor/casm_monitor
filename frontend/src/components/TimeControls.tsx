@@ -1,24 +1,6 @@
 import { useState } from "react";
-
-export const LOCAL = "America/Los_Angeles";
-export function wallTime(utc: string, zone: string): string {
-  const d = new Date(utc.endsWith("Z") ? utc : utc + "Z");
-  if (!Number.isFinite(d.getTime())) return "";
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d);
-  const p = (key: string) => parts.find(x => x.type === key)?.value;
-  return `${p("year")}-${p("month")}-${p("day")}T${p("hour")}:${p("minute")}`;
-}
-export function utcFromWall(wall: string, zone: string): string {
-  const naive = Date.parse(wall + "Z");
-  const offsets = [-12, 0, 12].map(h => {
-    const d = new Date(naive + h * 3600000);
-    return Date.parse(wallTime(d.toISOString(), zone) + "Z") - d.getTime();
-  });
-  const matches = offsets.map(o => new Date(naive - o).toISOString().slice(0,16))
-    .filter(s => wallTime(s, zone) === wall).sort();
-  if (!matches.length) throw new Error("That local time does not exist across the daylight-saving transition. Select another time or UTC.");
-  return matches[0]; // Repeated fall-back hour: earlier occurrence; UTC selects either explicitly.
-}
+import { LOCAL, utcFromWall, wallTime } from "./timeZones";
+export { LOCAL, utcFromWall, wallTime } from "./timeZones";
 export function TimeZone({value,onChange}:{value:string;onChange:(v:string)=>void}) {
   return <label>Plot and selection time<select aria-label="Time zone" value={value} onChange={e=>onChange(e.target.value)}><option value={LOCAL}>OVRO local · PDT/PST</option><option value="UTC">UTC</option></select></label>;
 }
