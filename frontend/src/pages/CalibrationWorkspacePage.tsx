@@ -56,7 +56,7 @@ export default function CalibrationWorkspacePage() {
   const [date, setDate] = useState("");
   const [overview, setOverview] = useState<Json | null>(null);
   const [form, setForm] = useState<Json | null>(null);
-  const [tag, setTag] = useState(() => routeTag ?? localStorage.getItem("casm-calibration-candidate") ?? "");
+  const [tag, setTag] = useState(() => routeTag ?? "");
   const [detail, setDetail] = useState<Json | null>(null);
   const [step, setStep] = useState(tag ? 1 : 0);
   const [error, setError] = useState("");
@@ -98,7 +98,6 @@ export default function CalibrationWorkspacePage() {
     setReviewed(false);
   }).catch(reason => setError(reason.message)); return () => {active = false;};}, [date]);
   useEffect(() => {
-    localStorage.setItem("casm-calibration-candidate", tag);
     setDetail(null); setDeployDetail({}); setAccept(false); setTargets([]); setPhaseWindow([]);
     if (!tag) return;
     let active = true;
@@ -135,6 +134,7 @@ export default function CalibrationWorkspacePage() {
   };
   const runAction = (action: string, values: Json = {}) => perform(`${ROOT}/builds/${tag}/actions`, {action, ...values}, "Queued. You can leave this page; the worker keeps the job and its outputs.");
   const patch = (key: string, value: unknown) => {setForm(current => ({...current, [key]: value})); setReviewed(false);};
+  const chooseCandidate = (value: string) => {setTag(value); setDetail(null); setDeployDetail({}); setReviewed(false); setStep(value ? 1 : 0);};
   const candidate = detail?.request?.params;
   const hasCal = Boolean(detail?.summary?.paths?.cal_h5);
   const hasWeights = Boolean(detail?.summary?.has_weights);
@@ -156,7 +156,7 @@ export default function CalibrationWorkspacePage() {
 
   return <div className="cal-workspace">
     <header className="cal-hero"><div><h2>Calibration</h2><p>Solar solve · sky validation · 512 beams</p></div><span className="cal-safety"><span/> Upload testing · dry run only</span></header>
-    <div className="cal-context"><label>Saved candidate<select value={tag} onChange={event => {setTag(event.target.value); setStep(1);}}><option value="">New calibration</option>{(overview?.builds ?? []).map((item: Json) => <option key={item.tag} value={item.tag}>{item.tag}{item.imported ? " · recorded reference" : item.has_weights ? " · 512 beams" : item.has_cal ? " · solved" : " · pending"}</option>)}</select></label><button onClick={() => {setTag(""); setStep(0);}}>New calibration</button><button disabled={busy} onClick={() => perform(ROOT + "/import-reference", {date: overview?.defaults?.date}, "Recorded reference loaded for offline diagnostics; not a new solve.").then(result => {if (result) setStep(1);})}>Inspect deployed calibration</button><span className="cal-context-note">{candidate ? `${candidate.antennas.length} antennas · reference ${candidate.ref_ant}` : "Start from deployed antennas"}</span></div>
+    <div className="cal-context"><label>Saved candidate<select value={tag} onChange={event => chooseCandidate(event.target.value)}><option value="">New calibration</option>{(overview?.builds ?? []).map((item: Json) => <option key={item.tag} value={item.tag}>{item.tag}{item.imported ? " · recorded reference" : item.has_weights ? " · 512 beams" : item.has_cal ? " · solved" : " · pending"}</option>)}</select></label><button onClick={() => chooseCandidate("")}>New calibration</button><button disabled={busy} onClick={() => perform(ROOT + "/import-reference", {date: overview?.defaults?.date}, "Recorded reference loaded for offline diagnostics; not a new solve.").then(result => {if (result) setStep(1);})}>Inspect deployed calibration</button><span className="cal-context-note">{candidate ? `${candidate.antennas.length} antennas · reference ${candidate.ref_ant}` : "Start from deployed antennas"}</span></div>
     <nav className="cal-steps" aria-label="Calibration workflow">{STEPS.map((name, index) => <button key={name} className={`${progress[index].state}${step === index ? " selected" : ""}`} data-state={progress[index].state} onClick={() => setStep(index)} aria-current={step === index ? "step" : undefined}><span>{String(index + 1).padStart(2, "0")}</span>{name}<small>{progress[index].label}</small></button>)}</nav>
     {(error || message) && <div className={error ? "cal-feedback error" : "cal-feedback"} role="status">{error || message}<button onClick={() => {setError(""); setMessage("");}} aria-label="Dismiss message">×</button></div>}
     {step === 0 && <div className="cal-columns"><section className="cal-card"><div className="cal-section-heading"><h3>Prepare a solar solve</h3><span>Phase-only · per-channel SVD</span></div>{form ? <>

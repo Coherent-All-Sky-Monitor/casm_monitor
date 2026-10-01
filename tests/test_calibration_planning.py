@@ -7,16 +7,19 @@ import pytest
 from casm_monitor.web.calibration_planning import sky_plan
 
 
-@pytest.mark.parametrize('day,hours', [('2026-09-18', 36), ('2026-03-08', 35), ('2026-11-01', 37)])
+@pytest.mark.parametrize('day,hours', [('2026-09-18', 24), ('2026-03-08', 23), ('2026-11-01', 25)])
 def test_planner_local_range_and_canonical_tracks(day, hours):
     from astropy.utils import iers
     from casm_vis_analysis.sources import source_altaz
     result = sky_plan(day)
     times = np.array(result['times'])
-    assert times[-1] - times[0] == hours * 3600
+    assert times[-1] - times[0] == hours * 3600 - 60
+    assert len(times) == hours * 60
     assert np.all(np.diff(times) == 60)
-    assert datetime.fromtimestamp(times[0], ZoneInfo('America/Los_Angeles')).hour == 12
-    assert datetime.fromtimestamp(times[-1], ZoneInfo('America/Los_Angeles')).hour == 0
+    local = ZoneInfo('America/Los_Angeles')
+    assert datetime.fromtimestamp(times[0], local).strftime('%Y-%m-%d %H:%M') == day + ' 00:00'
+    assert datetime.fromtimestamp(times[-1], local).strftime('%Y-%m-%d %H:%M') == day + ' 23:59'
+    assert all(datetime.fromtimestamp(t, local).strftime('%Y-%m-%d') == day for t in times)
     assert len(result['tracks']) == 4
     with iers.conf.set_temp('auto_download', False), iers.conf.set_temp('auto_max_age', None):
         for track in result['tracks']:

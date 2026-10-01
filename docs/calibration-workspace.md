@@ -6,9 +6,12 @@ figures, a compact plot gallery and the shared click-to-zoom viewer. Existing
 results come before collapsed settings; jobs and downloadable files remain saved.
 Historical PNGs retain their original pixels; newly rendered diagnostics use
 the white style. The old Commissioning page is superseded.
-October 1 controls use gray for untouched steps, amber for the active/running
-step, green for reviewed preparation or saved outputs, and red for a failed or
-cancelled job. Opening a step does not complete it. An imported reference does
+October 1 controls use gray for untouched steps (including the selected step),
+amber for running work, green for reviewed preparation or saved outputs, and
+red for a failed or cancelled job. `/cal` starts a fresh, unreviewed preparation;
+it no longer restores a candidate from browser storage. Select a saved candidate
+or open `/cal/{tag}` explicitly to see its saved progress. **New calibration**
+also clears review/completion state. Opening a step does not complete it. An imported reference does
 not count as a new solve/grid; green sky validation means a saved independent
 transit to review, not scientific acceptance. Upload turns green only after
 local payload checks pass and remains explicitly **not uploaded**.
@@ -37,9 +40,14 @@ local payload checks pass and remains explicitly **not uploaded**.
    antennas 12 and 33 were layout-only and unselected. This was a saved-product
    comparison, not a fresh GPU readback. Missing deployed weights retain the
    existing labelled layout fallback.
-   **Choose a static window** plots the Sun, Cyg A, Cas A and Tau A from
-   the previous local noon through the selected day's end (36 hours normally,
-   35/37 across DST). It follows the same local/UTC toggle, shows the current
+   **Choose a static window** plots the Sun, Cyg A, Cas A and Tau A for exactly
+   the selected local date, 00:00 through 23:59 PT (24 hours normally, 23/25 on
+   DST transition days). Altitude runs from 0° to 90°; a horizontal 20° line
+   marks the gray low-altitude region. Negative altitudes remain available to
+   the window finder but are clipped from the plot, not moved onto the horizon.
+   This display shading does not change the per-source quiet-window cuts.
+   It follows the same local/UTC toggle without changing the date's physical
+   bounds, shows the current
    solve/static intervals and supports zoom/download. The canonical
    `casm_vis_analysis.offsource.find_quiet_windows` supplies intervals of at
    least 15 minutes using `DEFAULT_ALTITUDE_CAPS_OVRO`: Sun/Tau A below 0°,
@@ -143,7 +151,7 @@ and responsive layout with all non-GET API requests blocked. It never submits
 a solve, import, diagnostic or upload. Pure conversion cases are in
 `frontend/tests/time-zones.test.mjs`.
 Sky-planning acceptance includes September 18 (no qualifying interval), May 16
-(two intervals, applying one changes only the form), all four canonical source
+(one interval on that local date, applying it changes only the form), all four canonical source
 tracks, DST day lengths, zoom/download and gray/amber/green workflow states.
 Tests: `tests/test_calibration_planning.py` and
 `frontend/tests/calibration-progress.test.mjs`.

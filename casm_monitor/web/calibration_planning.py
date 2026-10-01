@@ -14,10 +14,10 @@ _LOCK = Lock()
 
 @lru_cache(maxsize=32)
 def sky_plan(date: str) -> dict:
-    """Previous local noon through the end of the solar day, sampled each minute.
+    """Selected local date, 00:00 through 23:59, sampled each minute.
 
-    Includes the preceding night and the full selected civil day, including
-    daylight-saving days. No visibility reads, template construction or jobs.
+    Uses civil-day boundaries, including 23/25-hour daylight-saving days.
+    No visibility reads, template construction or jobs.
     Suggestions only satisfy sky-altitude cuts, not a data-quality check.
     """
     from astropy.utils import iers
@@ -27,9 +27,9 @@ def sky_plan(date: str) -> dict:
     day = calendar_date.fromisoformat(date)
     if day.isoformat() != date:
         raise ValueError('Use a date in YYYY-MM-DD form')
-    start = datetime.combine(day - timedelta(days=1), time(12), LOCAL)
+    start = datetime.combine(day, time(), LOCAL)
     end = datetime.combine(day + timedelta(days=1), time(), LOCAL)
-    times = np.arange(start.timestamp(), end.timestamp() + 1, 60.)
+    times = np.arange(start.timestamp(), end.timestamp(), 60.)
     caps = dict(DEFAULT_ALTITUDE_CAPS_OVRO)
     # This is display planning with local ephemerides, never an IERS download.
     with _LOCK, warnings.catch_warnings(), iers.conf.set_temp('auto_download', False), iers.conf.set_temp('auto_max_age', None):
