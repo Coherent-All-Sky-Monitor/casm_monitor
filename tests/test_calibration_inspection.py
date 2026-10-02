@@ -48,6 +48,23 @@ def test_incomplete_inspection_is_not_published(saved):
         latest_inspection(saved)
 
 
+def test_auto_template_is_the_subtracted_mean_not_the_noise_median(saved):
+    path=saved/'actions'/'test'/'inspection'/'antennas.npz'
+    with np.load(path) as src:
+        arrays=dict(src)
+    arrays.update(auto=np.array([[5.,9.,3.],[7.,2.,4.]]),
+                  static_auto=np.array([[2.,12.,1.],[3.,4.,np.nan]]),
+                  night=np.ones((2,3))*99)
+    np.savez(path,**arrays)
+    first=snapshot(saved)['antenna_panels'][0]
+    assert first['auto']==[5.,9.,3.]
+    assert first['static']==[2.,12.,1.]
+    assert first['subtracted']==[3.,-3.,2.]
+    assert first['night']==[99.,99.,99.]
+    second=snapshot(saved)['antenna_panels'][1]
+    assert second['static'][-1] is None and second['subtracted'][-1] is None
+
+
 def test_inspect_validation_no_unbounded_window():
     from datetime import datetime,timedelta,timezone
     day=(datetime.now(timezone.utc)-timedelta(days=2)).strftime('%Y-%m-%d')

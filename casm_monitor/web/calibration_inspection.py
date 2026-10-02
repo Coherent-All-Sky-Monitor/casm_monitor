@@ -107,6 +107,7 @@ def snapshot(root, reference=None, stage='svd', quantity='phase', scheme='unifor
         ratio = np.divide(amplitude[i], reference_amp, out=np.full_like(norm, np.nan), where=reference_amp > 0)
         antenna_panels.append(dict(antenna=antenna,
             auto=finite_list(antdata['auto'][i]), night=finite_list(antdata['night'][i]),
+            static=finite_list(antdata['static_auto'][i]),
             subtracted=finite_list(antdata['auto'][i]-antdata['static_auto'][i]),
             applied_phase=finite_list(phase(applied[i])), reference_phase=finite_list(phase(refphase[i])),
             phase_difference=finite_list(phase(applied[i]*refphase[i].conj())),

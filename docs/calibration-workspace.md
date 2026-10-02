@@ -86,6 +86,25 @@ local payload checks pass and remains explicitly **not uploaded**.
    antenna weights, rank-1 quality and cross-day validation are scrolling
    sections. Native-channel spectra and all unique cross-baselines are saved
    once per inspection; display changes do not reread raw data or rerun SVD.
+   October 2 replaces diagnostic dropdowns with visible button groups for
+   layout, processing, quantity, plot type, amplitude scheme and weight view.
+   Reference antenna and clock remain dropdowns. Autos have independently
+   selectable **Raw**, **Static template** and **Static-subtracted** buttons,
+   also available inside zoom. Raw and subtracted start selected in separate
+   plots, each with its own fitted y-axis. **Overlay** is optional and uses a
+   common y-axis per antenna. With no saved template only Raw is available.
+   Selecting none shows an explicit empty state.
+
+   The template is the saved night-window complex time mean's real diagonal,
+   exactly the quantity subtracted from the source-window auto average. It is
+   not the night median used for noise weighting. The inspection response adds
+   `antenna_panels[].static`; the existing `night` median is unchanged.
+   **Linear** is the default. **Signed log** maps counts `v` to
+   `sign(v) log10(1 + abs(v)/(1 count))` for display only; tick labels remain
+   counts. It preserves zero, negative residuals and every finite channel,
+   including peaks. Neither display mode clips percentiles, normalizes spectra
+   or changes the saved arrays. Separate y-axes compare shape, not equal heights.
+
    Processing is Raw, Static-subtracted, Geometric model (phase only),
    Fringe-stopped and **SVD-corrected**, replacing the old delay-fit stage.
    Cross panels represent `V(target, reference)`. Expanded panels can show
@@ -196,6 +215,14 @@ local-first solve/static controls, date rollover, UTC round trips, DST errors
 and responsive layout with all non-GET API requests blocked. It never submits
 a solve, import, diagnostic or upload. Pure conversion cases are in
 `frontend/tests/time-zones.test.mjs`.
+`scripts/check_calibration_inspector_browser.py` exercises saved diagnostic
+buttons, isolated/overlaid autos, signed-log bounds, zoom/download, reference
+changes, all layouts and mobile widths, with every non-GET/HEAD API request
+blocked. October 2 screenshots are under
+`/home/casm/scratch/casm-observation-preview/screenshots/calibration-array-20261002/`.
+`tests/test_calibration_inspection.py` checks mean-template versus noise-median
+identity and negative/missing residuals; `frontend/tests/calibration-curve-scale.test.mjs`
+checks invertibility, sign and peak preservation of the display transform.
 Sky-planning acceptance includes September 18 (no fixed-cut interval, but a
 ranked night suggestion with explicit Cas A/Tau A warnings), May 16 (one fixed-cut
 interval), source-priority and full-window tests, all four canonical tracks,
@@ -212,6 +239,9 @@ pass. The source snapshot drift check reports changes across all three science
 repositories; a complete refresh remains blocked by its configured
 `casm_calibrator/calibration.py` source not being a tracked file. This task does
 not replace that historical snapshot with a partial refresh.
+October 2 retried snapshot generation in an isolated temporary directory and
+confirmed the same missing-file block. The maintained guide, Sphinx build,
+local-link and export checks pass; no partial snapshot was installed.
 
 Offline acceptance on September 22 produced saved Sun solve and executed
 notebook, exact 512-beam CB plus matching IB, and real September 18 phase and
