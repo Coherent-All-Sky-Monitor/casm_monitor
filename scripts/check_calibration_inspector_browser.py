@@ -97,7 +97,7 @@ def main():
         page.locator('#cal-weights').evaluate('(el)=>el.scrollIntoView({block:"start"})')
         shot('antenna-amplitudes.png')
         page.get_by_text('How the four amplitude schemes are calculated',exact=True).click()
-        assert 'voltage variance' in page.locator('.cal-amplitude-help').inner_text()
+        assert 'median autocorrelation power' in page.locator('.cal-amplitude-help').inner_text()
         page.locator('.cal-amplitude-help').scroll_into_view_if_needed();shot('weight-formulas.png')
         page.get_by_text('How the four amplitude schemes are calculated',exact=True).click()
         page.locator('#cal-weights .cal-plot-button').first.click()

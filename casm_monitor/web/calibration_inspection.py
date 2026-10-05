@@ -20,11 +20,15 @@ def load_arrays(path):
     return arrays(str(path), path.stat().st_mtime_ns)
 
 
-def latest_inspection(root):
+def latest_inspection(root, expected_static=None):
     if root.is_symlink() or (root / 'actions').is_symlink():
         raise ValueError('Inspection symlinks are not permitted')
     paths = [p for p in root.glob('actions/*/inspection/inspection.json')
              if (p.parent.parent / 'result.json').is_file()]
+    if any(p.is_symlink() for path in paths for p in (path, path.parent, path.parent.parent)):
+        raise ValueError('Inspection symlinks are not permitted')
+    if expected_static is not None:
+        paths = [p for p in paths if json.loads(p.read_text()).get('static_used') is expected_static]
     if not paths:
         raise ValueError('Prepare the array diagnostics for this saved calibration first')
     path = max(paths, key=lambda p: p.stat().st_mtime_ns)
@@ -63,8 +67,8 @@ def component(z, amplitude, quantity):
     return amplitude if quantity == 'amp' else z.real if quantity == 'real' else z.imag if quantity == 'imag' else phase(z)
 
 
-def snapshot(root, reference=None, stage='svd', quantity='phase', scheme='uniform', target=None):
-    dest, meta = latest_inspection(root)
+def snapshot(root, reference=None, stage='svd', quantity='phase', scheme='uniform', target=None, *, expected_static=None):
+    dest, meta = latest_inspection(root, expected_static)
     if stage not in meta['stages'] or quantity not in ('amp', 'real', 'imag', 'phase'):
         raise ValueError('Unknown processing stage or quantity')
     if stage == 'geometric' and quantity != 'phase':

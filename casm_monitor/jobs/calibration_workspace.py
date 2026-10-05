@@ -110,7 +110,7 @@ def build_product(settings, root, dest, record, action, selection):
     save_json(root / 'summary.json', summary)
     if action == 'solve':
         summary['inspection'] = diagnose(settings, root, dest, record, 'inspect',
-            dict(source='sun', window=values['source_window'], static=True))
+            dict(source='sun', window=values['source_window'], static=bool(values.get('static_window'))))
         save_json(root / 'summary.json', summary)
     return summary
 
@@ -132,6 +132,17 @@ def diagnose(settings, root, dest, record, action, selection):
     summary = read_json(root / 'summary.json') or {}
     cal = load_calibration_weights(summary['paths']['cal_h5'])
     values = record['params']
+    def add_comparison(calibrations):
+        if not selection.get('compare_subtraction'):
+            return
+        from ..web.calibration_variants import family, mode
+        comparison = family(settings, values['tag'])
+        key = 'regular' if mode(record) == 'static' else 'static'
+        other = comparison['versions'].get(key)
+        if not other or not other['ready']:
+            raise ValueError('Prepare both subtraction solutions before running this comparison')
+        saved = read_json(build_dir(settings, other['tag']) / 'summary.json')
+        calibrations['without subtraction' if key == 'regular' else 'with subtraction'] = load_calibration_weights(saved['paths']['cal_h5'])
     if record.get('imported'):
         from ..web.science import select_layout
         day = selection.get('date', selection.get('window', values['source_window'])[0][:10])
@@ -144,8 +155,9 @@ def diagnose(settings, root, dest, record, action, selection):
         from ..web.science import geometry
         data, mapping, evidence = read_selected(settings.vis_dir, layout, values['antennas'], selection['window'])
         background = None
-        if values.get('static_window'):
-            background, _, night_evidence = read_selected(settings.vis_dir, layout, values['antennas'], values['static_window'])
+        night = record.get('night_window') or values.get('static_window')
+        if night:
+            background, _, night_evidence = read_selected(settings.vis_dir, layout, values['antennas'], night)
             evidence['night'] = night_evidence
         previous = load_calibration_weights(record['reference']) if record.get('reference') else None
         output = save_inspection(data, mapping, cal, dest / 'inspection', source=selection['source'],
@@ -175,6 +187,7 @@ def diagnose(settings, root, dest, record, action, selection):
                     layout=layout, static_used=static is not None)
     if action == 'transit':
         calibrations = {'candidate': cal}
+        add_comparison(calibrations)
         if selection['compare_reference'] and record.get('reference'):
             calibrations['reference'] = load_calibration_weights(record['reference'])
         antennas = sorted(set.intersection(*(set(map(int, item.ant_ids)) for item in calibrations.values())))
@@ -189,7 +202,7 @@ def diagnose(settings, root, dest, record, action, selection):
         if selection.get('compare_amplitudes'):
             from ..web.calibration_inspection import latest_inspection
             from casm_vis_analysis.calibration_inspection import compare_amplitude_transit
-            inspection, _ = latest_inspection(root)
+            inspection, _ = latest_inspection(root, None if record.get('imported') else bool(values.get('static_window')))
             output['amplitude_comparison'] = compare_amplitude_transit(data, mapping, cal,
                 inspection / 'antennas.npz', selection['source'], center, dest,
                 band=(selection['fmin'], selection['fmax']), off_minutes=selection['off_minutes'])
@@ -199,6 +212,7 @@ def diagnose(settings, root, dest, record, action, selection):
         from bf_weights_generator.sawtooth_compare import sun_peak_window
         from casm_vis_analysis.calibration_inspection import render_history
         calibrations = {'candidate': cal}
+        add_comparison(calibrations)
         if record.get('reference'):
             calibrations['reference'] = load_calibration_weights(record['reference'])
         common = sorted(set.intersection(*(set(map(int, c.ant_ids)) for c in calibrations.values())))

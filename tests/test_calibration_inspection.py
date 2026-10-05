@@ -48,6 +48,15 @@ def test_incomplete_inspection_is_not_published(saved):
         latest_inspection(saved)
 
 
+def test_incompatible_static_diagnostic_is_not_reused(saved):
+    path=saved/'actions'/'test'/'inspection'/'inspection.json'
+    meta=json.loads(path.read_text());meta['static_used']=True
+    path.write_text(json.dumps(meta))
+    assert latest_inspection(saved,True)[1]['static_used']
+    with pytest.raises(ValueError,match='Prepare'):
+        latest_inspection(saved,False)
+
+
 def test_auto_template_is_the_subtracted_mean_not_the_noise_median(saved):
     path=saved/'actions'/'test'/'inspection'/'antennas.npz'
     with np.load(path) as src:
@@ -70,7 +79,7 @@ def test_inspect_validation_no_unbounded_window():
     day=(datetime.now(timezone.utc)-timedelta(days=2)).strftime('%Y-%m-%d')
     record={'params':{'source_window':[day+' 18:00:00',day+' 19:00:00']}}
     result=action_params({'action':'inspect'},record)
-    assert result['static'] and result['source']=='sun'
+    assert not result['static'] and result['source']=='sun'
     assert action_params(result,record)==result
     with pytest.raises(ValueError,match='four hours'):
         action_params({'action':'inspect','window':[day+' 10:00:00',day+' 15:00:00']},record)

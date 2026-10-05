@@ -95,6 +95,33 @@ local payload checks pass and remains explicitly **not uploaded**.
    common y-axis per antenna. With no saved template only Raw is available.
    Selecting none shows an explicit empty state.
 
+   **Without subtraction / With subtraction / Compare** (October 5) switches
+   saved calibration solutions within one comparison family. **Prepare** queues
+   the missing solution through the canonical driver, with the same source
+   window, antennas, reference and frozen layout. Older candidates need this
+   one-time solve; browsing alone does not start it. The original request and
+   products stay unchanged. Each solution has its own diagnostics, validation,
+   beam products and review. **Use this solution** selects its revision for
+   later steps and updates the `/cal/{tag}` URL.
+
+   Compare overlays cross spectra and antenna-weight/residual curves, and pairs
+   dynamic spectra with matching time/frequency axes and labelled colour limits.
+   Raw/static autos remain independently selectable. A separately recorded
+   `night_window` supplies noise estimates even when `static_window` is null.
+   Thus Inv-var and Inv-std remain available without subtraction; Matched needs
+   the static-subtracted source-response estimate. Inspect requests cannot
+   change a saved solve's subtraction choice. Older mismatched inspections are
+   excluded and can be refreshed with the matching recipe.
+
+   Rank-1 quality is one native-channel **σ₁/σ₂ versus Frequency (MHz)** plot:
+   Regular, Static-subtracted and Current deployed, each with its full-band
+   finite-sample median. Curves come from `rank1_ratios` in saved calibration
+   HDF5s. The deployed curve is resolved from the current upload ledger on each
+   refresh and uses its original solve data; its date and antenna count are
+   shown. A missing curve is labelled unavailable until prepared. The former
+   singular-value/dominance figures are removed from this section. Historical
+   notebook artifacts retain their original contents.
+
    The template is the saved night-window complex time mean's real diagonal,
    exactly the quantity subtracted from the source-window auto average. It is
    not the night median used for noise weighting. The inspection response adds
@@ -134,6 +161,9 @@ local payload checks pass and remains explicitly **not uploaded**.
    full-width figures, with one fixed candidate across up to three matched
    solar windows. No cross-day static is silently reused. The old `phase` API
    remains for compatibility but is not exposed by this inspector.
+   Once both subtraction solutions are saved, the cross-day/transit comparison
+   checkbox includes both on common antennas and channel masks. It defaults on
+   when available. Selecting a solution retains its own validation records.
 4. **Validate on sky**: a five-hour stationary beam, fixed at the source's
    transit alt/az. Cross-only visibilities have a per-baseline/channel complex
    off-source median removed. Candidate and recorded reference share antennas,
@@ -201,6 +231,11 @@ This workspace is offline-only. Do not arm its worker.
 - `POST /api/calibration/builds/{tag}/trial`: explicit `reviewed=true`, new tag,
   antennas and reference create a child solve. Same-origin protection applies.
 - `POST /api/calibration/builds/{tag}/review`: explicit scientific acceptance.
+- `GET /api/calibration/builds/{tag}/subtraction`: related solution revisions;
+  `POST` with boolean `static` and `reviewed=true` prepares/retries the missing
+  solution. A ready revision is reused. Antenna trials start a new family.
+- `GET /api/calibration/builds/{tag}/rank1`: saved full-band curves and medians,
+  including the current ledger calibration; never reads raw visibilities.
 - `GET /api/calibration/jobs/{id}/log`, `POST .../{id}/cancel`: durable job control.
 - `/api/calibration/deployment`: the existing guarded calibration deployment
   router with isolated settings, review gate and live uploads forced off.
@@ -227,6 +262,11 @@ blocked. October 2 screenshots are under
 October 5 power-unit checks and screenshots are in
 `/home/casm/scratch/casm-observation-preview/screenshots/power-scales-20261005/`,
 from `scripts/check_power_scales_browser.py` (saved data, GET/HEAD only).
+Subtraction UI checks: `scripts/check_calibration_solutions_browser.py`, with
+real saved rank-1/zoom/download and browser-only A/B fixtures. Evidence is in
+`/home/casm/scratch/casm-observation-preview/screenshots/calibration-solutions-20261005/`.
+Fixtures check controls, polling stability, paired plots and downstream selection;
+they are not a scientific validation of a newly solved calibration.
 `tests/test_calibration_inspection.py` checks mean-template versus noise-median
 identity and negative/missing residuals; `frontend/tests/power-scale.test.mjs`
 checks power conversion, non-positive gaps and full linear ranges.

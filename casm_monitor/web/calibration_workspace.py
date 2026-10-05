@@ -8,6 +8,7 @@ import io
 import json
 import math
 import re
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -168,7 +169,10 @@ def action_params(body, record):
     params['source'] = source
     if action == 'inspect':
         window, _, _ = analysis_window(body.get('window', record['params']['source_window']), 'Inspection window')
-        return {**params, 'window': window, 'static': bool(body.get('static', True))}
+        solved_static = bool(record['params'].get('static_window'))
+        if not record.get('imported') and bool(body.get('static', solved_static)) != solved_static:
+            raise ValueError('Use a subtraction comparison solve to change the saved calibration choice')
+        return {**params, 'window': window, 'static': bool(body.get('static', solved_static))}
     if action == 'phase':
         window, start, end = analysis_window(body.get('window', record['params']['source_window']), 'Phase window')
         targets = body.get('targets', [antenna for antenna in record['params']['antennas'] if antenna != record['params']['ref_ant']][:3])
@@ -194,7 +198,8 @@ def action_params(body, record):
         minutes = float(body.get('minutes', (end - start) / 60))
         if not math.isfinite(minutes) or not 1 <= minutes <= MAX_ANALYSIS_WINDOW_S / 60:
             raise ValueError('History windows must be between one minute and four hours')
-        return {**params, 'days': days, 'minutes': minutes, 'ref_ant': reference}
+        return {**params, 'days': days, 'minutes': minutes, 'ref_ant': reference,
+                'compare_subtraction': bool(body.get('compare_subtraction', False))}
     low, high = float(body.get('fmin', 384)), float(body.get('fmax', 512))
     off = float(body.get('off_minutes', 90))
     snr = float(body.get('minimum_snr', 5))
@@ -202,11 +207,13 @@ def action_params(body, record):
         raise ValueError('Use a valid MHz band, off-source boundary 50..120 minutes and S/N 3..30')
     return {**params, 'fmin': low, 'fmax': high, 'off_minutes': off, 'minimum_snr': snr,
             'compare_reference': bool(body.get('compare_reference', True)),
+            'compare_subtraction': bool(body.get('compare_subtraction', False)),
             'compare_amplitudes': bool(body.get('compare_amplitudes', False))}
 
 
 def build_router(settings, store):
     router = APIRouter(prefix='/api/calibration')
+    version_lock = threading.Lock()
 
     @router.get('/sky-plan')
     def sky_plan(date: str):
@@ -249,7 +256,7 @@ def build_router(settings, store):
     def create(body: dict):
         return create_revision(body)
 
-    def create_revision(body, parent=None):
+    def create_revision(body, parent=None, comparison_root=None):
         if body.get('reviewed') is not True:
             raise HTTPException(400, 'Review the selected windows, antenna membership and hardware epoch first')
         tag = str(body.get('tag', ''))
@@ -284,10 +291,19 @@ def build_router(settings, store):
             for key in ('source_window', 'static_window'):
                 if params[key]:
                     analysis_window(params[key], key)
+            night = body.get('night_window') or params['static_window']
+            if night:
+                night, start, end = analysis_window(night, 'Night window')
+                _, source_start, source_end = analysis_window(params['source_window'], 'Source window')
+                if start < source_end and end > source_start:
+                    raise ValueError('Night and source windows overlap')
             record = dict(params=params, layout=layout, selected_layout_sha256=sha256_file(private),
                           created=datetime.now(timezone.utc).isoformat(), reference=reference,
                           reference_sha256=sha256_file(reference) if reference else None,
                           hardware_epoch_note=str(body.get('hardware_epoch_note', ''))[:2000])
+            record['night_window'] = night
+            if comparison_root:
+                record['comparison_root_tag'] = comparison_root
             if parent:
                 record['parent_tag'] = parent['params']['tag']
             save_json(root / 'request.json', record)
@@ -304,8 +320,60 @@ def build_router(settings, store):
             values = {**parent['params'], 'tag': str(body.get('tag', '')),
                       'antennas': body.get('antennas'), 'ref_ant': body.get('ref_ant'),
                       'reviewed': body.get('reviewed') is True,
+                      'night_window': parent.get('night_window') or parent['params'].get('static_window'),
                       'hardware_epoch_note': parent.get('hardware_epoch_note', '')}
             return create_revision(values, parent)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @router.get('/builds/{tag}/subtraction')
+    def subtraction(tag: str):
+        from .calibration_variants import family
+        try:
+            result = family(settings, tag)
+            for item in result['versions'].values():
+                jobs = [j for j in store.list_jobs(limit=300) if j['params'].get('tag') == item['tag']]
+                item['pending'] = any(j['state'] in ('queued', 'running') for j in jobs)
+            return result
+        except (ValueError, OSError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @router.post('/builds/{tag}/subtraction')
+    def prepare_subtraction(tag: str, body: dict):
+        with version_lock:
+            return prepare_subtraction_locked(tag, body)
+
+    def prepare_subtraction_locked(tag, body):
+        from .calibration_variants import family
+        try:
+            if body.get('reviewed') is not True or type(body.get('static')) is not bool:
+                raise ValueError('Confirm the shared recipe and choose with or without subtraction')
+            comparison = family(settings, tag)
+            if not comparison['can_prepare']:
+                raise ValueError('Prepare a reviewed solve with a night window before comparing subtraction')
+            key = 'static' if body['static'] else 'regular'
+            existing = comparison['versions'].get(key)
+            if existing:
+                if existing['ready']:
+                    return dict(tag=existing['tag'], reused=True)
+                return queue(existing['tag'], 'solve', {})
+            if any(job['state'] in ('queued', 'running') for job in store.list_jobs(limit=300)):
+                raise HTTPException(409, 'Wait for the current analysis before preparing another solution')
+            parent = request_record(settings, comparison['root_tag'])
+            version_tag = f"{comparison['root_tag'][:40]}_{key}_{uuid.uuid4().hex[:8]}"
+            values = {**parent['params'], 'tag': version_tag, 'reviewed': True,
+                      'static_window': comparison['night_window'] if body['static'] else None,
+                      'night_window': comparison['night_window'],
+                      'hardware_epoch_note': parent.get('hardware_epoch_note', '')}
+            return create_revision(values, parent, comparison['root_tag'])
+        except (ValueError, OSError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @router.get('/builds/{tag}/rank1')
+    def rank1(tag: str):
+        from .calibration_variants import rank1_comparison
+        try:
+            return rank1_comparison(settings, tag)
         except (ValueError, OSError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
@@ -365,8 +433,9 @@ def build_router(settings, store):
                    quantity: str = 'phase', scheme: str = 'uniform', target: int | None = None):
         from .calibration_inspection import snapshot
         try:
-            request_record(settings, tag)
-            return snapshot(build_dir(settings, tag), reference, stage, quantity, scheme, target)
+            record = request_record(settings, tag)
+            return snapshot(build_dir(settings, tag), reference, stage, quantity, scheme, target,
+                            expected_static=None if record.get('imported') else bool(record['params'].get('static_window')))
         except (ValueError, OSError) as exc:
             raise HTTPException(400, str(exc)) from exc
 

@@ -156,6 +156,107 @@ def test_antenna_trial_preserves_parent_and_frozen_layout(setup):
     assert child['review'] == {}
 
 
+def test_subtraction_versions_keep_frozen_recipe_and_night_for_noise(setup):
+    settings, store, client, body = setup
+    day = body['source_window'][0][:10]
+    body['static_window'] = [day+' 03:00:00', day+' 03:30:00']
+    created = client.post('/api/calibration/builds', json=body).json()
+    root = workspace.build_dir(settings, body['tag'])
+    original = (root/'request.json').read_bytes()
+    store.cancel_job(created['job_id'])
+    response = client.post('/api/calibration/builds/test_revision/subtraction', json={'static':False,'reviewed':True})
+    assert response.status_code == 200, response.text
+    other = response.json()
+    child = client.get(f'/api/calibration/builds/{other["tag"]}').json()
+    assert child['request']['params']['static_window'] is None
+    assert child['request']['night_window'] == body['static_window']
+    assert child['request']['comparison_root_tag'] == 'test_revision'
+    assert child['request']['selected_layout_sha256'] == json.loads(original)['selected_layout_sha256']
+    assert (root/'request.json').read_bytes() == original
+    versions = client.get(f'/api/calibration/builds/{other["tag"]}/subtraction').json()
+    assert versions['selected'] == 'regular' and set(versions['versions']) == {'regular','static'}
+    assert versions['versions']['regular']['pending']
+    count = len(list(settings.cal_builds_root.iterdir()))
+    assert client.post('/api/calibration/builds/test_revision/subtraction', json={'static':False,'reviewed':True}).status_code == 409
+    assert len(list(settings.cal_builds_root.iterdir())) == count
+    store.cancel_job(other['job_id'])
+    retry = client.post('/api/calibration/builds/test_revision/subtraction', json={'static':False,'reviewed':True})
+    assert retry.status_code == 200 and retry.json()['tag'] == other['tag']
+
+
+def test_no_subtraction_initial_solve_can_keep_a_reviewed_night_window(setup):
+    settings, _, client, body = setup
+    day = body['source_window'][0][:10]
+    body.update(static_window=None, night_window=[day+' 03:00:00',day+' 03:30:00'])
+    assert client.post('/api/calibration/builds',json=body).status_code == 200
+    record = workspace.request_record(settings,body['tag'])
+    assert record['night_window'] == body['night_window']
+    assert record['params']['static_window'] is None
+    assert client.get('/api/calibration/builds/test_revision/subtraction').json()['can_prepare']
+
+
+def test_inspection_cannot_mix_subtraction_with_another_solve():
+    record={'params':{'source_window':['2026-10-01 19:00:00','2026-10-01 20:00:00'],
+                      'static_window':None}}
+    assert not workspace.action_params({'action':'inspect'},record)['static']
+    with pytest.raises(ValueError,match='comparison solve'):
+        workspace.action_params({'action':'inspect','static':True},record)
+
+
+def test_regular_inspection_reads_night_for_noise_without_subtracting(setup, monkeypatch, tmp_path):
+    import numpy as np
+    import bf_weights_generator
+    from casm_monitor.jobs import calibration_workspace as worker
+    from casm_monitor.web import science
+    from casm_vis_analysis import calibration_checks, calibration_inspection
+    settings, _, _, body = setup
+    day=body['source_window'][0][:10]
+    night=[day+' 03:00:00',day+' 03:30:00']
+    record={'params':{**body,'static_window':None},'night_window':night}
+    calls=[]
+    def read(*args):
+        calls.append(args[-1]);return {'freq_mhz':np.array([480.,400.])},None,{}
+    def save(data,mapping,cal,path,**kwargs):
+        assert kwargs['background'] is not None
+        assert kwargs['subtract_static'] is False
+        path.mkdir();return {'static_used':False}
+    monkeypatch.setattr(worker,'read_json',lambda path:{'paths':{'cal_h5':'fixture.h5'}})
+    monkeypatch.setattr(bf_weights_generator,'load_calibration_weights',lambda path:object())
+    monkeypatch.setattr(calibration_checks,'read_selected',read)
+    monkeypatch.setattr(calibration_inspection,'save_inspection',save)
+    monkeypatch.setattr(science,'geometry',lambda path:([],None))
+    result=worker.diagnose(settings,tmp_path,tmp_path,record,'inspect',workspace.action_params({'action':'inspect'},record))
+    assert calls==[body['source_window'],night] and not result['static_used']
+
+
+def test_rank1_uses_current_ledger_and_full_band_original_data(setup, monkeypatch, tmp_path):
+    import h5py
+    import numpy as np
+    from casm_monitor.web import calibration_variants as variants
+    settings, _, client, body = setup
+    client.post('/api/calibration/builds',json=body)
+    root=workspace.build_dir(settings,body['tag'])
+    def calibration(path, values):
+        with h5py.File(path,'w') as h:
+            h['freqs_mhz']=[484.,460.,430.,400.]
+            h['rank1_ratios']=values
+            h['ant_ids']=[9,10]
+    candidate=root/'candidate.h5'; deployed=tmp_path/'deployed.h5'
+    calibration(candidate,[1.,2.,20.,np.nan]);calibration(deployed,[10.,20.,30.,40.])
+    workspace.save_json(root/'summary.json',{'paths':{'cal_h5':str(candidate)}})
+    monkeypatch.setattr(variants,'deployed_product',lambda settings:{'cal_file':str(deployed),'date_deployed':'today'})
+    response=client.get('/api/calibration/builds/test_revision/rank1')
+    assert response.status_code == 200,response.text
+    result=response.json(); rows={row['key']:row for row in result['curves']}
+    assert rows['regular']['values']==[1.,2.,20.,None]
+    assert rows['regular']['median']==2. and rows['deployed']['median']==25.
+    assert 'static' in result['unavailable']
+    calibration(deployed,[20.,30.,40.,50.])
+    result=client.get('/api/calibration/builds/test_revision/rank1').json()
+    assert next(c for c in result['curves'] if c['key']=='deployed')['median']==35.
+    assert 'in-band' not in json.dumps(result)
+
+
 def test_sky_planner_is_read_only_and_validates_date(setup, monkeypatch):
     from casm_monitor.web import calibration_planning
     _, store, client, _ = setup
