@@ -234,6 +234,11 @@ This workspace is offline-only. Do not arm its worker.
 - `GET /api/calibration/builds/{tag}/subtraction`: related solution revisions;
   `POST` with boolean `static` and `reviewed=true` prepares/retries the missing
   solution. A ready revision is reused. Antenna trials start a new family.
+  The POST is explicitly permitted by the local-workspace middleware, with
+  matching loopback Origin and `X-CASM-Workspace: 1` required. October 5's
+  initial deployment omitted this route and rejected Prepare with 403; the
+  full-app regression now covers both directions, isolation and denied requests
+  in `tests/test_workspace_security.py`. Upload protection remains unchanged.
 - `GET /api/calibration/builds/{tag}/rank1`: saved full-band curves and medians,
   including the current ledger calibration; never reads raw visibilities.
 - `GET /api/calibration/jobs/{id}/log`, `POST .../{id}/cancel`: durable job control.
