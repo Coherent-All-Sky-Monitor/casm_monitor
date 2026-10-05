@@ -160,7 +160,7 @@ function PlaybackDay({day,inputs,onDay,onClose,onSelect,preferences,onPreference
       {frame&&shown&&!expanded?<div className="snap-movie-grid" style={{gridTemplateColumns:`repeat(${columns},minmax(0,1fr))`,gridTemplateRows:`repeat(${rows},minmax(155px,1fr))`}}>{inputs.map(input=>{
         const b=boardFor(input);
         return <article key={input.key} className={`snap-movie-card${input.beamforming?' in-beamforming':''}`} data-input-key={input.key}>
-          <header><strong>{input.station??`ADC ${input.adc}`}</strong><span>SNAP {input.snap} · ADC {input.adc}</span></header>
+          <header><strong>{input.station??`ADC ${input.adc}`}</strong><span>SNAP {input.snap} · SLOT {input.slot} · ADC {input.adc}</span></header>
           <button className="snap-plot-trigger" aria-label={`Expand playback SNAP ${input.snap} ADC ${input.adc}`} onClick={()=>{setPlaying(false);setExpanded(input);}}><SnapPlot compact freq={frame.data.freq_mhz} values={b?.spectra_db?.[input.adc]??null} range={range}/></button>
           <footer>{b?.ts!=null?playbackStamp(b.ts,zone):'No board read in this snapshot'}{b?.error?' · unavailable':''}{b?.zero_channels?.[input.adc]?` · ${b.zero_channels[input.adc]} zero channels`:''}{b?.invalid_channels?.[input.adc]?` · ${b.invalid_channels[input.adc]} invalid channels`:''}</footer>
         </article>;

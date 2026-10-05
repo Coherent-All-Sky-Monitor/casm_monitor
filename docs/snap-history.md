@@ -16,6 +16,7 @@ available. Station and beamforming labels always describe the current mapping.
 ## Playback
 
 **History** opens the selected inputs together in a full-window grid, paused.
+Every panel header shows SNAP, slot and ADC beside the station name.
 Live remains the page default. The default interval is the latest saved UTC day
 when opened from Live, or the selected saved day when opened from an inspected read.
 **Last 48 hours** and **Last week**

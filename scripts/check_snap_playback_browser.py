@@ -52,6 +52,8 @@ def main():
             wait("document.querySelectorAll('.snap-spectrum-card').length===48")
         click('History')
         wait(f"document.querySelectorAll('.snap-movie-card').length==={count}")
+        headers=page.locator('.snap-movie-card>header>span').all_text_contents()
+        assert all(' · SLOT ' in header and ' · ADC ' in header for header in headers),headers
         assert not page.get_by_role('button',name='Video playback',exact=True).count()
         assert page.get_by_role('button',name='Play playback',exact=True).count()==1
         page.wait_for_timeout(1400)
