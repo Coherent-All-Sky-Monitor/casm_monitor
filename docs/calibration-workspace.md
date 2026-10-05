@@ -161,12 +161,26 @@ local payload checks pass and remains explicitly **not uploaded**.
    full-width figures, with one fixed candidate across up to three matched
    solar windows. No cross-day static is silently reused. The old `phase` API
    remains for compatibility but is not exposed by this inspector.
-   Once both subtraction solutions are saved, the cross-day/transit comparison
-   checkbox includes both on common antennas and channel masks. It defaults on
-   when available. Selecting a solution retains its own validation records.
+   Cross-day uses only the solution selected with **Use this solution**, plus
+   the current ledger calibration resolved when the job starts. The selected
+   with/without-subtraction mode is shown above the controls. Date-only legends
+   have large markers; residuals for the selected solution and **Current deployed
+   weights** have separate panels. RMS and repeated recipe details are removed
+   from legends. The optional both-solutions checkbox now applies only to transit.
+   Selecting a solution retains its own validation records. The latest-day
+   control restores that solution's last cross-day date, falling back to its
+   solve date; editing it is independent of transit settings and polling.
+
+   Existing cross-day figures are redrawn from their saved NPZ arrays, with the
+   original samples and channel masks. Original PNG/NPZ artifacts are preserved.
+   Comparison metadata stores the deployed calibration path and hash. Historical
+   results use **Previously deployed weights** when their reference hash no longer
+   matches the current deployment; frozen antenna-phase references use the same
+   conditional label. New history and transit jobs use the current deployment,
+   independently of the reference frozen in the candidate recipe.
 4. **Validate on sky**: a five-hour stationary beam, fixed at the source's
    transit alt/az. Cross-only visibilities have a per-baseline/channel complex
-   off-source median removed. Candidate and recorded reference share antennas,
+   off-source median removed. Candidate and current deployed weights share antennas,
    integrations and the intersection of their good-channel masks. Turning off
    comparison uses the candidate's own antenna set. Raw signed power,
    peak-normalized shape and exact ideal geometry are retained separately.
@@ -241,6 +255,9 @@ This workspace is offline-only. Do not arm its worker.
   in `tests/test_workspace_security.py`. Upload protection remains unchanged.
 - `GET /api/calibration/builds/{tag}/rank1`: saved full-band curves and medians,
   including the current ledger calibration; never reads raw visibilities.
+- `GET /api/calibration/builds/{tag}/history/{action_id}/{reference}/{target}.png`:
+  read-only cached redraw of completed history arrays, with short legends and
+  current/previous deployment labels. It does not submit an analysis job.
 - `GET /api/calibration/jobs/{id}/log`, `POST .../{id}/cancel`: durable job control.
 - `/api/calibration/deployment`: the existing guarded calibration deployment
   router with isolated settings, review gate and live uploads forced off.
@@ -272,6 +289,10 @@ real saved rank-1/zoom/download and browser-only A/B fixtures. Evidence is in
 `/home/casm/scratch/casm-observation-preview/screenshots/calibration-solutions-20261005/`.
 Fixtures check controls, polling stability, paired plots and downstream selection;
 they are not a scientific validation of a newly solved calibration.
+Cross-day acceptance: `scripts/check_calibration_history_browser.py` uses saved
+three-day arrays, tests zoom/download and date stability, and intercepts the
+submit click before it reaches the server. Evidence:
+`/home/casm/scratch/casm-observation-preview/screenshots/calibration-history-20261005/`.
 `tests/test_calibration_inspection.py` checks mean-template versus noise-median
 identity and negative/missing residuals; `frontend/tests/power-scale.test.mjs`
 checks power conversion, non-positive gaps and full linear ranges.

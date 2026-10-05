@@ -188,8 +188,12 @@ def diagnose(settings, root, dest, record, action, selection):
     if action == 'transit':
         calibrations = {'candidate': cal}
         add_comparison(calibrations)
-        if selection['compare_reference'] and record.get('reference'):
-            calibrations['reference'] = load_calibration_weights(record['reference'])
+        from ..web.calibration_history import current_reference
+        deployed = current_reference(settings)
+        if selection['compare_reference']:
+            if not deployed['sha256']:
+                raise ValueError('Current deployed weights are unavailable')
+            calibrations['Current deployed weights'] = load_calibration_weights(deployed['path'])
         antennas = sorted(set.intersection(*(set(map(int, item.ant_ids)) for item in calibrations.values())))
         center = transit_center(selection['source'], selection['date'])
         window = [datetime.fromtimestamp(center + offset, timezone.utc).strftime('%Y-%m-%d %H:%M:%S') for offset in (-9000, 9000)]
@@ -206,15 +210,17 @@ def diagnose(settings, root, dest, record, action, selection):
             output['amplitude_comparison'] = compare_amplitude_transit(data, mapping, cal,
                 inspection / 'antennas.npz', selection['source'], center, dest,
                 band=(selection['fmin'], selection['fmax']), off_minutes=selection['off_minutes'])
-        return dict(**output, evidence=evidence, layout=layout, membership_mode='common antennas',
+        return dict(**output, evidence=evidence, layout=layout, membership_mode='common antennas', deployed_reference=deployed,
                     self_check=selection['source'] == values['source'])
     if action == 'history':
         from bf_weights_generator.sawtooth_compare import sun_peak_window
         from casm_vis_analysis.calibration_inspection import render_history
+        from ..web.calibration_history import current_reference
         calibrations = {'candidate': cal}
-        add_comparison(calibrations)
-        if record.get('reference'):
-            calibrations['reference'] = load_calibration_weights(record['reference'])
+        deployed = current_reference(settings)
+        if not deployed['sha256']:
+            raise ValueError('Current deployed weights are unavailable')
+        calibrations['reference'] = load_calibration_weights(deployed['path'])
         common = sorted(set.intersection(*(set(map(int, c.ant_ids)) for c in calibrations.values())))
         rows, datasets = [], []
         for offset in range(selection['days']):
@@ -224,6 +230,9 @@ def diagnose(settings, root, dest, record, action, selection):
                 [start.strftime('%Y-%m-%d %H:%M:%S'), end.strftime('%Y-%m-%d %H:%M:%S')])
             datasets.append((day, data, mapping))
             rows.append(dict(date=day, evidence=evidence, static='None: no different-day template reused'))
-        output = render_history(datasets, calibrations, selection['ref_ant'], dest)
-        return dict(**output, evidence=rows, note='Fixed candidate and recorded reference on common antennas and channels.')
+        label = 'With static subtraction' if values.get('static_window') else 'Without static subtraction'
+        output = render_history(datasets, calibrations, selection['ref_ant'], dest,
+            labels=dict(candidate_label=label, reference_weights_label='Current deployed weights'))
+        return dict(**output, evidence=rows, deployed_reference=deployed,
+                    note='Selected solution and current deployed weights on common antennas and channels.')
     raise ValueError('Unknown diagnostic')

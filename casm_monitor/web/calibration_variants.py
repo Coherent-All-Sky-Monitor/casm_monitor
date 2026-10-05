@@ -90,7 +90,7 @@ def rank1_comparison(settings, tag):
             window = recipe['params']['source_window']
         except (ValueError, OSError):
             window = None
-        curves.append(dict(**curve, key='deployed', label='Current deployed', source_window=window,
+        curves.append(dict(**curve, key='deployed', label='Current deployed weights', source_window=window,
                            uploaded=product.get('date_deployed')))
     except (ValueError, KeyError, OSError) as exc:
         unavailable['deployed'] = str(exc)

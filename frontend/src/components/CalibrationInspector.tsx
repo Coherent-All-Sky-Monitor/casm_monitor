@@ -78,7 +78,7 @@ export default function CalibrationInspector({tag,detail,disabled,onAction,onTri
   const lines=(kind:string,a:Antenna):CalLine[]=>{const p=find(a);if(!p)return [];if(kind==='auto')return shownAutos.map(([id,label,color])=>({label,color,values:p[id]??[]}));
     if(other)return variants.flatMap(d=>{const row=d.antenna_panels.find((v:Json)=>v.antenna===a.antenna);return row?[{label:solutionLabel(d),values:row[weightView],color:d.static_used?'#207c5b':'#2459a6'}]:[];});
     if(weightView==='amplitude')return [{label:'Float weights',values:p.amplitude},{label:'Int8 preview',values:p.quantized_amplitude}];
-    if(weightView==='applied_phase')return [{label:solutionLabel(data!),values:p.applied_phase},{label:'Recorded reference',values:p.reference_phase,color:'#a3acb7'}];
+    if(weightView==='applied_phase')return [{label:solutionLabel(data!),values:p.applied_phase},{label:detail.reference_label??data?.reference_label??'Saved deployed weights',values:p.reference_phase,color:'#a3acb7'}];
     return [{label:weightLabels[weightView],values:p[weightView]}];};
   const curve=(kind:string,a:Antenna)=>{
     const values=lines(kind,a);

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from ..cal_defaults import cal_defaults, deployed_product, layout_info, sha256_file
 from ..jobs.cal_build import build_dir, validate, _window
@@ -199,7 +199,7 @@ def action_params(body, record):
         if not math.isfinite(minutes) or not 1 <= minutes <= MAX_ANALYSIS_WINDOW_S / 60:
             raise ValueError('History windows must be between one minute and four hours')
         return {**params, 'days': days, 'minutes': minutes, 'ref_ant': reference,
-                'compare_subtraction': bool(body.get('compare_subtraction', False))}
+                'compare_subtraction': False}
     low, high = float(body.get('fmin', 384)), float(body.get('fmax', 512))
     off = float(body.get('off_minutes', 90))
     snr = float(body.get('minimum_snr', 5))
@@ -407,6 +407,7 @@ def build_router(settings, store):
 
     @router.get('/builds/{tag}')
     def detail(tag: str):
+        from .calibration_history import reference_label
         try:
             record = request_record(settings, tag)
             root = build_dir(settings, tag)
@@ -418,7 +419,8 @@ def build_router(settings, store):
         actions.sort(key=lambda item: item.get('finished', ''))
         jobs = [job for job in store.list_jobs(limit=300) if job['params'].get('tag', job['params'].get('build_tag')) == tag]
         return dict(request=record, summary=read_json(root / 'summary.json'), actions=actions,
-                    review=read_json(root / 'review.json'), artifacts=artifact_entries(settings, tag), jobs=jobs)
+                    review=read_json(root / 'review.json'), artifacts=artifact_entries(settings, tag), jobs=jobs,
+                    reference_label=reference_label(settings, dict(path=record.get('reference'), sha256=record.get('reference_sha256'))))
 
     @router.get('/builds/{tag}/sky')
     def sky(tag: str, date: str):
@@ -432,12 +434,24 @@ def build_router(settings, store):
     def inspection(tag: str, reference: int | None = None, stage: str = 'svd',
                    quantity: str = 'phase', scheme: str = 'uniform', target: int | None = None):
         from .calibration_inspection import snapshot
+        from .calibration_history import reference_label
         try:
             record = request_record(settings, tag)
-            return snapshot(build_dir(settings, tag), reference, stage, quantity, scheme, target,
+            result = snapshot(build_dir(settings, tag), reference, stage, quantity, scheme, target,
                             expected_static=None if record.get('imported') else bool(record['params'].get('static_window')))
+            result['reference_label'] = reference_label(settings, dict(path=record.get('reference'), sha256=record.get('reference_sha256')))
+            return result
         except (ValueError, OSError) as exc:
             raise HTTPException(400, str(exc)) from exc
+
+    @router.get('/builds/{tag}/history/{identity}/{reference}/{target}.png')
+    def history_image(tag: str, identity: str, reference: int, target: int):
+        from .calibration_history import history_png
+        try:
+            return Response(history_png(settings, tag, identity, reference, target), media_type='image/png',
+                            headers={'Cache-Control': 'private, max-age=10'})
+        except (ValueError, OSError, KeyError) as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @router.get('/sky/{filename}')
     def sky_image(filename: str):
