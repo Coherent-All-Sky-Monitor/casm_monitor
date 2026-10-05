@@ -15,6 +15,11 @@ also clears review/completion state. Opening a step does not complete it. An imp
 not count as a new solve/grid; green sky validation means a saved independent
 transit to review, not scientific acceptance. Upload turns green only after
 local payload checks pass and remains explicitly **not uploaded**.
+From Solve & inspect onward, a persistent bottom bar provides **Proceed to…**
+and **Back to…** controls. It shows the selected subtraction mode and antenna
+count, and returns the view/focus to the next step's heading. Navigation retains
+the selected revision and transit inputs; it does not submit a job or mark a
+step complete. Forward navigation is disabled until the calibration is saved.
 
 ![512-beam sky view, September 25 screenshot](screenshots/2026-09-25-calibration/sky.png)
 
@@ -191,8 +196,12 @@ local payload checks pass and remains explicitly **not uploaded**.
    and Sun/Cyg A/Cas A/Tau A altitude tracks. It reads actual saved pointings;
    glyph widths are the approximate 450-MHz FWHM, for display only. No ellipse
    hit times or coverage scores are computed. Before generation it explicitly
-   shows the last uploaded grid as a reference. Changing the UTC track date
-   only renders/caches a local PNG; it never generates or changes weights.
+   shows the last uploaded grid as a reference. Track dates and the altitude
+   axis use **OVRO local time** (`America/Los_Angeles`), labelled PDT/PST for
+   the selected date. The plot covers local midnight to the next midnight,
+   including 23/25-hour daylight-saving days. The initial date is the solve's
+   local date. Changing it only renders/caches a PNG; it never changes weights.
+   Versioned caching keeps earlier UTC images separate from new local views.
    Canonical `cal_path` reuse creates exactly 512 exact-grid
    beams and the matching IB mask using the configured hash-pinned generator.
    Minimum elevation is editable; custom/factorial cells are explicitly not
@@ -262,7 +271,9 @@ This workspace is offline-only. Do not arm its worker.
 - `/api/calibration/deployment`: the existing guarded calibration deployment
   router with isolated settings, review gate and live uploads forced off.
 - `GET /api/calibration/builds/{tag}/sky?date=YYYY-MM-DD`: cached schematic
-  sky view; PNGs are in `calibration/sky_views/`, outside weight build products.
+  sky view for an OVRO local date; metadata includes the zone, display label
+  and local/UTC window bounds. PNGs are in `calibration/sky_views/`, outside
+  weight build products.
 
 All workspace POSTs require the loopback same-origin request and
 `X-CASM-Workspace: 1`. Generic job submission cannot invoke this privileged kind.
@@ -293,6 +304,12 @@ Cross-day acceptance: `scripts/check_calibration_history_browser.py` uses saved
 three-day arrays, tests zoom/download and date stability, and intercepts the
 submit click before it reaches the server. Evidence:
 `/home/casm/scratch/casm-observation-preview/screenshots/calibration-history-20261005/`.
+Generate-beams clock checks: `tests/test_calibration_sky.py` covers local civil
+days and both DST transitions. `scripts/check_calibration_sky_local_browser.py`
+checks PDT/PST dates, zoom/download and narrow screens from a Tokyo-zone
+browser, plus Proceed/Back navigation and retained settings. All non-GET/HEAD
+requests are blocked. Evidence:
+`/home/casm/scratch/casm-observation-preview/screenshots/calibration-sky-local-20261005/`.
 `tests/test_calibration_inspection.py` checks mean-template versus noise-median
 identity and negative/missing residuals; `frontend/tests/power-scale.test.mjs`
 checks power conversion, non-positive gaps and full linear ranges.

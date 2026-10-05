@@ -10,9 +10,10 @@ from pathlib import Path
 from ..cal_defaults import deployed_product
 from ..observation import read_json
 from ..jobs.cal_build import build_dir
+from .calibration_planning import LOCAL
 
 _RENDER_LOCK = threading.Lock()
-STYLE_VERSION = 2
+STYLE_VERSION = 3
 
 
 def product(settings, tag):
@@ -45,8 +46,11 @@ def render_schematic(weights, output, day):
         _compute_source_track, _load_beams_from_hdf5, _plot_two_panel,
     )
 
-    start = datetime.strptime(day, '%Y-%m-%d').replace(tzinfo=timezone.utc)
-    end = start + timedelta(days=1)
+    local_start = datetime.strptime(day, '%Y-%m-%d').replace(tzinfo=LOCAL)
+    local_end = local_start + timedelta(days=1)
+    start, end = (value.astimezone(timezone.utc) for value in (local_start, local_end))
+    zones = dict.fromkeys([local_start.tzname(), (local_end - timedelta(seconds=1)).tzname()])
+    time_label = f"OVRO local time ({'/'.join(zones)})"
     alt, az, _, ew, ns = _load_beams_from_hdf5(weights)
     if len(alt) != 512 or len(az) != 512 or not np.isfinite([*alt, *az, ew, ns]).all():
         raise ValueError('Expected 512 finite beam pointings')
@@ -57,7 +61,7 @@ def render_schematic(weights, output, day):
         tracks.append(dict(name=name, times=times, alt=source_alt, az=source_az, hits=[], color=color))
     with plt.style.context(['default', {'font.size': 12, 'axes.labelsize': 13, 'axes.titlesize': 15}]):
         figure = _plot_two_panel(tracks, alt, az, ew, ns,
-                                 f'512 beams · source tracks · {day} UTC', timezone.utc)
+                                 f'512 beams · source tracks · {day} · {time_label}', LOCAL)
         sky, elevation = figure.axes
         for patch in sky.patches:
             patch.set(facecolor='#9272be', edgecolor='#644492', alpha=.20, linewidth=.45)
@@ -77,8 +81,9 @@ def render_schematic(weights, output, day):
                           label='Pointing elevations')
         sky.set(xlabel='West ← projected zenith angle (°) → East',
                 ylabel='South ← projected zenith angle (°) → North', title='Beam ellipses & sky tracks')
-        elevation.set(xlim=(start, end), xlabel='Time (UTC)', ylabel='Altitude (°)')
-        elevation.xaxis.set_major_locator(mdates.HourLocator(interval=3, tz=timezone.utc))
+        elevation.set(xlim=(start, end), xlabel=time_label, ylabel='Altitude (°)')
+        elevation.xaxis.set_major_locator(mdates.HourLocator(byhour=range(0, 24, 3), tz=LOCAL))
+        elevation.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=LOCAL))
         elevation.tick_params(axis='x', rotation=0)
         sky.tick_params(axis='x', rotation=0)
         elevation.legend(loc='upper right', fontsize=11)
@@ -96,6 +101,9 @@ def render_schematic(weights, output, day):
         figure.savefig(output, dpi=115, facecolor='white', bbox_inches='tight')
         plt.close(figure)
     return dict(beam_count=len(alt), ellipse_fwhm_deg=[float(ew), float(ns)],
+                time_zone=LOCAL.key, time_label=time_label,
+                window_utc=[start.isoformat(), end.isoformat()],
+                window_local=[local_start.isoformat(), local_end.isoformat()],
                 ellipse_frequency_mhz=450, model='Schematic ellipses; exact saved pointings and astropy tracks')
 
 
