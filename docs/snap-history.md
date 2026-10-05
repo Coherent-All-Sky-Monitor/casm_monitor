@@ -37,9 +37,19 @@ calculation is unavailable, LST says Unavailable rather than substituting UTC.
 Play/pause, previous/next read, the time slider, 0.5/1/2/4× speed and optional
 Loop control saved-read playback. At 1× each read gets one second; 4× targets
 250 ms. Playback stops at the end unless Loop is enabled and pauses when the
-browser tab is hidden, a request fails or a plot is enlarged. **Open this read**
+browser tab is hidden, a request fails or a plot is first enlarged. **Open this read**
 opens the comparison/trend inspector at that exact snapshot. Closing leaves
 the previous selection unchanged. The zoom viewer retains PNG download.
+
+Since October 5, an enlarged antenna has its own Play/Pause, speed, Loop,
+previous/next read and timeline controls. Only that antenna is drawn while zoom
+is open, using the existing frame buffer and fixed shared axes. Closing zoom
+returns the full grid to the same saved read, paused. The dialog and display
+magnification survive buffering; no old spectrum is shown under a new time.
+Download is disabled while loading and pauses before capturing a ready frame.
+Missing reads stay blank, gaps/settings changes stay labelled, and UTC/local/LST
+describe the selected antenna's board read. No additional hardware request or
+per-antenna manifest is introduced.
 
 Frequency and power axes stay fixed throughout an interval. Power limits cover
 every finite native channel of the selected inputs across that interval, with
@@ -55,7 +65,7 @@ EQ/FFT changes are labelled against the first setting encountered. No samples
 or missing hours are interpolated. Selection, wiring and beamforming membership
 are captured from the page when playback opens, not reconstructed historically.
 
-The browser fetches up to 12 frames at a time, only for displayed inputs, and
+The browser fetches up to 12 frames at a time for the initial input selection and
 prefetches the next batch. It retains two batches plus the displayed frame while
 seeking, not the full week. Steps within a loaded batch make no HTTP request.
 Every spectrum still contains 4096 separate channels; float32 transport replaces
@@ -151,6 +161,15 @@ server-side spectrum cache are written.
 
 ## Validation
 
+On October 5, native browser checks passed for both the default 16 inputs and
+all 48 ADCs: single-antenna playback, buffering with retained magnification,
+loop/replay, downloading while playing, and paused return to the same grid frame.
+The day/48-hour/week views and 4× progression across a batch boundary also passed,
+with no skipped reads, buffering during the measured sequence, page errors or
+non-GET API requests. Results and screenshots are saved in
+`/home/casm/scratch/casm-observation-preview/screenshots/playback-20261005/`.
+These are local-browser samples, not an all-network performance guarantee.
+
 `tests/test_snap_changes.py` injects gain steps, broad shape changes, single
 channel peaks (including repeated/intermittent lines), zeros, NaNs, missing reads, rapid repeat reads, configuration
 changes and normally variable baselines. API tests cover exact ID validation,
@@ -160,7 +179,9 @@ archive dates, missing boards, anchored trends and no jobs/watermark writes.
 trend-point navigation, badge expansion, downloads and phone widths against the
 local preview; it blocks every non-GET API request.
 `scripts/check_snap_playback_browser.py` checks the player, fixed axes, intervals,
-seeking and 4× progression across a batch boundary. `--dom-only` explicitly
+seeking and 4× progression across a batch boundary. It also checks single-antenna
+playback, stepping, loop/replay, retained zoom while buffering, paused return
+to the same grid frame, and downloading during playback. `--dom-only` explicitly
 excludes native painting, hit-target and PNG-download validation.
 `scripts/measure_snap_playback.py --output <private-path>` measures saved-data
 manifest/batch requests and the web service's CPU/RAM without contacting hardware.

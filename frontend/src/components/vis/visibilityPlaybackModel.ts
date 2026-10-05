@@ -12,6 +12,10 @@ export type MovieChunk={base:number;count:number;pairs:number;channels:number;co
 export type Encoding='complex'|'preview';
 
 export const VISIBILITY_SPEEDS=[.5,1,2,4,8,16,32] as const;
+/** Readable compact panels: four across at most; scroll instead of shrinking. */
+export function visibilityCompactColumns(count:number,width:number):number {
+  return Math.max(1,Math.min(count,4,Math.floor((width+8)/308)));
+}
 /** Nominal wall time; buffering and slow rendering can extend it. */
 export function visibilityDuration(frames:number,speed:number){
   const seconds=Math.ceil(Math.max(0,frames)/speed),minutes=Math.floor(seconds/60);

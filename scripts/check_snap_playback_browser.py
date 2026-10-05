@@ -34,7 +34,7 @@ def main():
             else:el.click()
         def field(label,value,kind='input'):
             el=page.get_by_label(label,exact=True)
-            if args.dom_only or label=='Playback saved time':el.evaluate('''(e,v)=>{
+            if args.dom_only or label in ('Playback saved time','Zoomed antenna saved time'):el.evaluate('''(e,v)=>{
               Object.getOwnPropertyDescriptor(e.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype,'value').set.call(e,v);
               e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));}''',value)
             elif kind=='select':el.select_option(value)
@@ -125,12 +125,69 @@ def main():
         page.locator('.snap-movie-card .snap-plot-trigger').first.evaluate('e=>e.click()') if args.dom_only else page.locator('.snap-movie-card .snap-plot-trigger').first.click()
         wait("document.querySelector('.figure-modal')!==null")
         check_clocks('.figure-modal .snap-clock-row')
+        assert page.locator('.snap-movie-card').count()==0
+        assert page.get_by_role('button',name='Play antenna playback',exact=True).count()==1
+        zoom=page.locator('.snap-expanded')
+        key=zoom.get_attribute('data-input-key')
+        start=int(zoom.get_attribute('data-frame'))
+        zoom_axes=zoom.locator('svg').evaluate('e=>[e.dataset.yMin,e.dataset.yMax]')
+        field('Zoomed antenna playback speed','4','select')
+        click('Play antenna playback')
+        wait(f"Number(document.querySelector('.snap-expanded').dataset.frame)>={start+3}")
+        click('Pause antenna playback')
+        current=int(zoom.get_attribute('data-frame'))
+        page.wait_for_timeout(400)
+        assert int(zoom.get_attribute('data-frame'))==current
+        click('Next antenna read')
+        wait(f"Number(document.querySelector('.snap-expanded').dataset.frame)==={current+1}")
+        click('Previous antenna read')
+        wait(f"Number(document.querySelector('.snap-expanded').dataset.frame)==={current}")
+        assert zoom.get_attribute('data-input-key')==key
+        assert zoom.locator('svg').evaluate('e=>[e.dataset.yMin,e.dataset.yMax]')==zoom_axes
+        # A seek must keep the zoom mounted and hide the old spectrum while loading.
+        click('Zoom in')
+        held=[]
+        page.route('**/spectra-playback-frames?**',lambda route:held.append(route))
+        target=min(int(page.get_by_label('Zoomed antenna saved time').get_attribute('max')),((current//12)+4)*12)
+        field('Zoomed antenna saved time',str(target))
+        wait("document.querySelector('.snap-zoom-buffering')!==null")
+        assert zoom.locator('svg').count()==0
+        assert page.get_by_role('button',name='Download',exact=True).is_disabled()
+        assert page.get_by_label('Display zoom').inner_text()=='150%'
+        page.wait_for_timeout(100)
+        page.unroute('**/spectra-playback-frames?**')
+        for route in held:route.continue_()
+        wait(f"Number(document.querySelector('.snap-expanded').dataset.frame)==={target}")
+        assert page.get_by_label('Display zoom').inner_text()=='150%'
+        check_clocks('.figure-modal .snap-clock-row')
+        # End/loop and replay apply to the same input without resetting zoom.
+        maximum=int(page.get_by_label('Zoomed antenna saved time').get_attribute('max'))
+        field('Zoomed antenna saved time',str(maximum))
+        wait(f"Number(document.querySelector('.snap-expanded').dataset.frame)==={maximum}")
+        click('Play antenna playback')
+        wait("document.querySelector('.snap-expanded').dataset.frame==='0'")
+        click('Pause antenna playback')
+        page.get_by_label('Loop zoomed antenna',exact=True).check()
+        field('Zoomed antenna saved time',str(maximum-1))
+        wait(f"Number(document.querySelector('.snap-expanded').dataset.frame)==={maximum-1}")
+        click('Play antenna playback')
+        wait("document.querySelector('.snap-expanded').dataset.frame==='0'")
+        click('Pause antenna playback')
+        page.get_by_label('Loop zoomed antenna',exact=True).uncheck()
         assert page.get_by_role('button',name='Download',exact=True).count()==1
         if not args.dom_only:
+            click('Fit')
+            page.screenshot(path=str(args.output/f'snaps-antenna-player{suffix}.png'),timeout=15000)
+            click('Play antenna playback')
             with page.expect_download():click('Download')
+            assert page.get_by_role('button',name='Play antenna playback',exact=True).count()==1
+        returned_index=zoom.get_attribute('data-frame')
         page.keyboard.press('Escape')
         wait("document.querySelector('.figure-modal')===null")
         assert page.get_by_role('dialog',name='SNAP history playback',exact=True).count()==1
+        wait(f"document.querySelectorAll('.snap-movie-card').length==={count}")
+        assert page.get_by_label('Playback saved time').input_value()==returned_index
+        assert page.get_by_role('button',name='Play playback',exact=True).count()==1
         # Loop's first batch is prefetched while the final batch is on screen.
         maximum=int(page.get_by_label('Playback saved time').get_attribute('max'))
         page.get_by_label('Loop',exact=True).evaluate('e=>e.click()')
@@ -181,6 +238,7 @@ def main():
         result=dict(mode='DOM-only' if args.dom_only else 'native-browser',live_default=True,history_one_click=True,history_opens_paused=True,close_returns_live=True,play_pause=True,
                     day_48h_week=True,timezone=True,shared_fixed_axes=True,inputs=count,desktop_all_panels=not args.all_adcs,
                     mobile_bounds=True,zoom=True,download_verified=not args.dom_only,
+                    antenna_playback=True,zoom_buffering_preserves_view=True,zoom_returns_same_frame=True,
                     playback_4x=timing,
                     loop=True,error_retry=True,
                     simultaneous_utc_local_lst=True,historical_zoom_clocks=True,

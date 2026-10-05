@@ -168,6 +168,18 @@ def main():
         assert page.locator('.vis-movie .snap-clock-row').get_attribute('data-timestamp')==at
         select('Playback reference antenna',8);ready()
         assert page.locator('.vis-movie canvas').count()==expected
+        # Compact panels stay four across even on wide, short viewports.
+        for width,height,columns in [(1920,800,4),(1500,1050,4),(1000,900,3),(720,900,2),(390,900,1)]:
+            page.set_viewport_size(dict(width=width,height=height))
+            page.wait_for_function('''n=>{
+                const el=document.querySelector('.vis-movie .snap-movie-grid');
+                return el && getComputedStyle(el).gridTemplateColumns.split(' ').length===n;
+            }''',arg=columns)
+            bounds=page.locator('.vis-movie-card').first.bounding_box()
+            assert bounds['height']>=239 and bounds['width']>=299,bounds
+            assert page.evaluate('document.querySelector(".vis-movie").scrollWidth<=innerWidth+1')
+        page.set_viewport_size(dict(width=1500,height=1050))
+        page.wait_for_function('getComputedStyle(document.querySelector(".vis-movie .snap-movie-grid")).gridTemplateColumns.split(" ").length===4')
         # Cross a chunk boundary at 4x, measuring actual React frame commits.
         m=manifests[-1];start=((m['first_frame']+31)//32)*32+26;step(start)
         select('Visibility playback speed',4)
@@ -238,6 +250,7 @@ def main():
         assert page.get_by_role('button',name='Live',exact=True).get_attribute('aria-pressed')=='true'
         assert page.locator('.antenna-plot').count()==expected
         result=dict(result='passed',inputs=expected,history_one_click=True,history_opens_paused=True,close_returns_live=True,frame_intervals_ms=intervals,screenshot=screenshot,
+                    compact_four_columns=True,compact_min_height=240,
                     loop_frames=loop_frames,downloads=downloads,load_failures_retried=len(failures),
                     manifests=len(manifests),page_errors=errors,non_get_requests=writes)
         OUT.joinpath('result.json').write_text(json.dumps(result,indent=2)+'\n')

@@ -5,7 +5,7 @@ import {SpectrumClocks} from '../SpectrumClocks';
 import {Notice} from '../Workspace';
 import {playbackColumns,playbackNext,playbackStamp,PlaybackTimeZone} from '../snapPlaybackModel';
 import {Antenna,LayoutMap,location,QUANTITIES,Quantity,Spectrum,wiringLabel} from './ArrayPlots';
-import {chunkValue,Encoding,lowerBound,MovieManifest,movieOrder,RollingSpectra,VISIBILITY_SPEEDS,visibilityDuration,windowFirst} from './visibilityPlaybackModel';
+import {chunkValue,Encoding,lowerBound,MovieManifest,movieOrder,RollingSpectra,VISIBILITY_SPEEDS,visibilityCompactColumns,visibilityDuration,windowFirst} from './visibilityPlaybackModel';
 import {MovieBuffer,useVisibilityFrames} from './useVisibilityFrames';
 import {VisibilityDynamic} from './VisibilityDynamic';
 import '../../snap-playback.css';
@@ -89,7 +89,8 @@ export function VisibilityPlayback({initial,inputs,onClose,onInspect}:{initial:M
   },[playing,ready,m,index,speed,loop,expanded]);
   const antennas=m?.inputs??inputs,ordered=movieOrder(antennas,options.selected,options.arrangement);
   const ref=antennas.find(a=>a.packet_idx===options.referenceInput);
-  const columns=playbackColumns(ordered.length||1,size.width,size.height),rows=Math.ceil(ordered.length/columns);
+  const compact=options.arrangement==='compact';
+  const columns=compact?visibilityCompactColumns(ordered.length,size.width):playbackColumns(ordered.length||1,size.width,size.height),rows=Math.ceil(ordered.length/columns);
   const at=m?.times[index],label=QUANTITIES.find(q=>q[0]===options.quantity)![1];
   const day=new Date(options.end*1000).toISOString().slice(0,10);
   const error=manifest.error||buffer.error;
@@ -147,7 +148,7 @@ export function VisibilityPlayback({initial,inputs,onClose,onInspect}:{initial:M
       <div className="snap-movie-timeline"><button aria-label="Previous visibility frame" disabled={!m||index<=m.first_frame} onClick={()=>seek(index-1)}>‹</button><input type="range" aria-label="Visibility saved time" min={m?.first_frame??0} max={m?m.times.length-1:0} value={index} disabled={!m} aria-valuetext={at===undefined?'No saved integration':playbackStamp(at,options.zone)} onChange={e=>seek(Number(e.target.value))}/><button aria-label="Next visibility frame" disabled={!m||index>=m.times.length-1} onClick={()=>seek(index+1)}>›</button><span>{gap?'Gap before this integration · ':''}{options.view==='spectrum'?(options.statistic==='mean'?`${options.windowHours} h average · mean |V|, phase of complex mean`:'One saved integration'):`${options.windowHours} h moving window · dark pixels: missing/undefined`}</span></div>
       {error&&<div className="snap-movie-error"><Notice>{error}</Notice><button onClick={reopen}>Reload saved sequence</button></div>}
       <div className="snap-movie-stage" ref={stage} aria-busy={!ready} data-frame={ready?index:undefined}>
-        {ready&&!expanded?(options.view==='matrix'?matrix():options.arrangement==='physical'?physical():<div className="snap-movie-grid" style={{gridTemplateColumns:`repeat(${columns},minmax(0,1fr))`,gridTemplateRows:`repeat(${rows},minmax(170px,1fr))`} as CSSProperties}>{ordered.map(card)}</div>):<div className="snap-movie-empty">{expanded?'Baseline open in zoom':status}</div>}
+        {ready&&!expanded?(options.view==='matrix'?matrix():options.arrangement==='physical'?physical():<div className="snap-movie-grid" style={{gridTemplateColumns:`repeat(${columns},minmax(0,1fr))`,gridTemplateRows:`repeat(${rows},minmax(${compact?240:170}px,1fr))`} as CSSProperties}>{ordered.map(card)}</div>):<div className="snap-movie-empty">{expanded?'Baseline open in zoom':status}</div>}
       </div>
       {expanded&&m&&<FigureZoom title={`${expanded.a.station} × ${expanded.b.station} · ${label} · ${playbackStamp(at!,options.zone)}`} onClose={closeExpanded} onBeforeDownload={()=>setPlaying(false)} downloadDisabled={!ready}
         controls={<div className="vis-zoom-playback" aria-label="Zoomed baseline playback">

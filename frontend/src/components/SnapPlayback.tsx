@@ -102,6 +102,7 @@ function PlaybackDay({day,inputs,onDay,onClose,onSelect,preferences,onPreference
   const earlier=days.find(d=>d.day<day)?.day,later=[...days].reverse().find(d=>d.day>day)?.day;
   const pick=(i:number)=>{setPlaying(false);setIndex(i);};
   const toggle=()=>{if(playing)setPlaying(false);else{if(index===snapshots.length-1)setIndex(0);setPlaying(true);}};
+  const closeExpanded=()=>{setPlaying(false);setExpanded(null);};
   useEffect(()=>{
     const el=stage.current!;
     const measure=()=>{if(el.clientWidth&&el.clientHeight)setSize({width:el.clientWidth,height:el.clientHeight});};
@@ -115,7 +116,7 @@ function PlaybackDay({day,inputs,onDay,onClose,onSelect,preferences,onPreference
     return()=>document.removeEventListener('visibilitychange',hide);
   },[]);
   useEffect(()=>{
-    if(!playing||!ready||expanded||document.hidden){deadline.current=null;return;}
+    if(!playing||!ready||document.hidden){deadline.current=null;return;}
     if(previousSpeed.current!==speed){deadline.current=null;previousSpeed.current=speed;}
     const period=1000/speed;
     if(deadline.current===null)deadline.current=performance.now()+period;
@@ -155,16 +156,31 @@ function PlaybackDay({day,inputs,onDay,onClose,onSelect,preferences,onPreference
     </div>
     <div className="snap-movie-timeline" title={manifest.data?`${playbackStamp(manifest.data.start,zone)} to ${playbackStamp(manifest.data.end,zone)}`:undefined}><button aria-label="Playback previous read" disabled={!snapshots.length||index===0} onClick={()=>pick(index-1)}>‹</button><input aria-label="Playback saved time" type="range" min={0} max={Math.max(0,snapshots.length-1)} value={index} disabled={snapshots.length<2} aria-valuetext={snapshots[index]?playbackStamp(snapshots[index].at,zone):'No saved read'} onChange={e=>pick(Number(e.target.value))}/><button aria-label="Playback next read" disabled={!snapshots.length||index===snapshots.length-1} onClick={()=>pick(index+1)}>›</button><span>{gap??'Saved reads only · no interpolation'}{missing&&shown?` · ${missing} inputs without a saved spectrum`:''}{changed.length?` · EQ/FFT differs from first saved setting on SNAP ${changed.map((b:Json)=>b.feng_id).join(', ')}`:''}</span></div>
     {(manifest.error||error)&&<div className="snap-movie-error"><Notice>{manifest.error||error}</Notice>{error&&<button onClick={retry}>Retry saved read</button>}</div>}
-    <div className={`snap-movie-stage${!ready?' buffering':''}`} ref={stage} aria-busy={!ready&&!!snapshots.length}>
-      {frame&&shown?<div className="snap-movie-grid" style={{gridTemplateColumns:`repeat(${columns},minmax(0,1fr))`,gridTemplateRows:`repeat(${rows},minmax(155px,1fr))`}}>{inputs.map(input=>{
+    <div className={`snap-movie-stage${!ready?' buffering':''}`} ref={stage} aria-busy={!ready&&!!snapshots.length} data-frame={ready?index:undefined}>
+      {frame&&shown&&!expanded?<div className="snap-movie-grid" style={{gridTemplateColumns:`repeat(${columns},minmax(0,1fr))`,gridTemplateRows:`repeat(${rows},minmax(155px,1fr))`}}>{inputs.map(input=>{
         const b=boardFor(input);
         return <article key={input.key} className={`snap-movie-card${input.beamforming?' in-beamforming':''}`} data-input-key={input.key}>
           <header><strong>{input.station??`ADC ${input.adc}`}</strong><span>SNAP {input.snap} · ADC {input.adc}</span></header>
           <button className="snap-plot-trigger" aria-label={`Expand playback SNAP ${input.snap} ADC ${input.adc}`} onClick={()=>{setPlaying(false);setExpanded(input);}}><SnapPlot compact freq={frame.data.freq_mhz} values={b?.spectra_db?.[input.adc]??null} range={range}/></button>
           <footer>{b?.ts!=null?playbackStamp(b.ts,zone):'No board read in this snapshot'}{b?.error?' · unavailable':''}{b?.zero_channels?.[input.adc]?` · ${b.zero_channels[input.adc]} zero channels`:''}{b?.invalid_channels?.[input.adc]?` · ${b.invalid_channels[input.adc]} invalid channels`:''}</footer>
         </article>;
-      })}</div>:<div className="snap-movie-empty">{status}</div>}
+      })}</div>:<div className="snap-movie-empty">{expanded?'Antenna open in zoom':status}</div>}
     </div>
-    {expanded&&frame&&shown&&<FigureZoom title={`${expanded.station??`ADC ${expanded.adc}`} · ${playbackStamp(shown.at,zone)}`} onClose={()=>setExpanded(null)}><div className="snap-expanded"><p>SNAP {expanded.snap} SLOT {expanded.slot} ADC {expanded.adc}</p><SpectrumClocks at={boardFor(expanded)?.ts} lst={boardFor(expanded)?.lst}/><SnapPlot freq={frame.data.freq_mhz} values={boardFor(expanded)?.spectra_db?.[expanded.adc]??null} range={range}/></div></FigureZoom>}
+    {expanded&&<FigureZoom title={`${expanded.station??`ADC ${expanded.adc}`} · SNAP ${expanded.snap} · ${shown?playbackStamp(shown.at,zone):day}`} onClose={closeExpanded} onBeforeDownload={()=>setPlaying(false)} downloadDisabled={!ready}
+      controls={<div className="snap-zoom-playback" aria-label="Zoomed antenna playback">
+        <div><button className="snap-zoom-play" onClick={toggle} disabled={(!ready&&!playing)||snapshots.length<2} aria-label={playing?'Pause antenna playback':'Play antenna playback'}>{playing?'Pause':index===snapshots.length-1?'Replay':'Play'}</button>
+          <label>Speed<select aria-label="Zoomed antenna playback speed" value={speed} onChange={e=>onPreferences({...preferences,speed:Number(e.target.value)})}>{[.5,1,2,4].map(s=><option key={s} value={s}>{s}×</option>)}</select></label>
+          <label><input type="checkbox" aria-label="Loop zoomed antenna" checked={loop} onChange={e=>onPreferences({...preferences,loop:e.target.checked})}/>Loop</label>
+          <span role="status">{status} · read {frame?frame.index+1:'—'} / {snapshots.length}</span></div>
+        <div><button aria-label="Previous antenna read" disabled={index===0} onClick={()=>pick(index-1)}>‹</button>
+          <input type="range" aria-label="Zoomed antenna saved time" min={0} max={Math.max(0,snapshots.length-1)} value={index} disabled={snapshots.length<2} aria-valuetext={snapshots[index]?playbackStamp(snapshots[index].at,zone):'No saved read'} onChange={e=>pick(Number(e.target.value))}/>
+          <button aria-label="Next antenna read" disabled={index>=snapshots.length-1} onClick={()=>pick(index+1)}>›</button></div>
+        <p>{gap??'Saved reads only · no interpolation'}{changed.some((b:Json)=>b.ip===expanded.ip)?' · EQ/FFT differs from first saved setting':''}</p>
+        {(manifest.error||error)&&<div role="alert">{manifest.error||error}{error&&<button onClick={retry}>Retry antenna read</button>}</div>}
+      </div>}>
+      <div className="snap-expanded" data-frame={ready?index:undefined} data-input-key={expanded.key}><p>{expanded.station??'Unassigned input'} · SNAP {expanded.snap} SLOT {expanded.slot} ADC {expanded.adc}</p>
+        {ready&&frame?<><SpectrumClocks at={boardFor(expanded)?.ts} lst={boardFor(expanded)?.lst}/><SnapPlot freq={frame.data.freq_mhz} values={boardFor(expanded)?.spectra_db?.[expanded.adc]??null} range={range}/>{boardFor(expanded)?.error&&<p>Saved board read unavailable.</p>}</>:<div className="snap-zoom-buffering">{status}</div>}
+      </div>
+    </FigureZoom>}
   </section>;
 }

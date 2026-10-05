@@ -35,7 +35,12 @@ it is labelled unavailable. No time samples are synthesized across gaps.
   The lower triangle is intentionally blank. Reordering the matrix also
   conjugates reversed pairs so cells still mean V(row, column).
 
-Compact panels fill the playback viewport in plank order. SNAP order sorts by
+Compact panels use at most four columns in plank order, with a 300 px target
+minimum width and 240 px minimum card height (October 5). Narrow screens use
+fewer columns; the grid scrolls instead of shrinking dynamic spectra to fit.
+Previously the viewport-fit rule could choose six columns on a wide, short
+screen. The live compact view remains up to three columns; it was not changed.
+SNAP order retains its viewport-fit sizing and sorts by
 the dated layout's SNAP/slot/ADC fields. Station grid preserves empty and hidden
 positions. The expandable antenna map distinguishes current recorded
 beamforming members from other wired inputs; it is not historical membership.
@@ -106,7 +111,24 @@ Tests: `tests/test_visibility_playback.py`,
 frame commits, not physical display refresh. This validates presentation and
 arithmetic, not array health or astrophysical interpretation.
 
-## Acceptance check, 2026-09-30
+## Acceptance checks
+
+### 2026-10-05
+
+The saved-data browser suite passed with the 16-input default. Compact reference
+crosses used four columns at 1920/1500 px viewport widths, three at 1000 px, two
+at 720 px and one at 390 px. Cards remained at least 240 px tall without
+horizontal viewport overflow. All quantities, references, other arrangements,
+history periods, looping, downloads and failed-request retry also passed.
+At 4×, consecutive frames crossed a chunk boundary at approximately 250 ms,
+with no skipped integrations, page errors or non-GET API requests.
+
+Dated evidence is in
+`/home/casm/scratch/casm-observation-preview/screenshots/playback-20261005/visibility/`:
+`result.json`, `cross-dynamic.png` and downloaded spectrum/dynamic figures.
+The script's default output directory below is mutable across runs.
+
+### 2026-09-30
 
 The local saved-data browser check covered one-click paused History entry and
 return to Live, the 16-input default, all quantities,
@@ -138,3 +160,9 @@ actual application screenshot. The central docs build, local links and exports
 pass. Its source-snapshot drift check still reports unrelated changes in
 casm_io, casm_vis_analysis and casm_calibrator; those snapshots were not refreshed
 as part of this monitor change.
+
+On October 5, the central docs build, links and exports were checked again.
+Snapshot refresh was retried in an isolated temporary directory and remains
+blocked by `sources.json` naming the removed/untracked
+`casm_calibrator/src/casm_calibrator/calibration.py`. Existing scientific source
+snapshots were preserved; updating that unrelated API mapping is still pending.

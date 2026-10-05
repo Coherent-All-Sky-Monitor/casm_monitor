@@ -4,7 +4,20 @@ import test from 'node:test';
 import ts from 'typescript';
 const source=readFileSync(new URL('../src/components/vis/visibilityPlaybackModel.ts',import.meta.url),'utf8');
 const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;
-const {lowerBound,windowFirst,component,chunkValue,RollingSpectra,decodeVisibilityChunk,movieOrder,VISIBILITY_SPEEDS,visibilityDuration}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+const {lowerBound,windowFirst,component,chunkValue,RollingSpectra,decodeVisibilityChunk,movieOrder,VISIBILITY_SPEEDS,visibilityCompactColumns,visibilityDuration}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+
+test('compact visibility movies keep four readable columns, regardless of screen height',()=>{
+  for(const width of [1244,1464,1884,2524])assert.equal(visibilityCompactColumns(16,width),4);
+  assert.equal(visibilityCompactColumns(16,1000),3);
+  assert.equal(visibilityCompactColumns(16,720),2);
+  assert.equal(visibilityCompactColumns(16,390),1);
+  assert.equal(visibilityCompactColumns(2,1900),2);
+  assert.equal(visibilityCompactColumns(0,0),1);
+  for(const width of [300,720,1000,1244,1900]){
+    const cols=visibilityCompactColumns(16,width);
+    assert((width-(cols-1)*8)/cols>=300);
+  }
+});
 
 test('visibility speed choices and duration estimates count saved frames, not look-back context',()=>{
   assert.deepEqual(VISIBILITY_SPEEDS,[.5,1,2,4,8,16,32]);
