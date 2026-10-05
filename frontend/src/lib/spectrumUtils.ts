@@ -41,8 +41,9 @@ export function downsample(
 
 /** dB <-> linear power conversion for the units toggle. */
 export function dbToLinear(db: number | null): number | null {
-  if (db === null || Number.isNaN(db)) return null;
-  return 10 ** (db / 10);
+  if (db === null || !Number.isFinite(db)) return null;
+  const power = 10 ** (db / 10);
+  return Number.isFinite(power) ? power : null;
 }
 
 export function convertSeries(
@@ -52,4 +53,3 @@ export function convertSeries(
   if (units === "dB") return values;
   return values.map(dbToLinear);
 }
-

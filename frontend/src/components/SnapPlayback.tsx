@@ -5,6 +5,9 @@ import {FigureZoom} from './FigureZoom';
 import {SnapPlot} from './SnapPlot';
 import {SpectrumClocks} from './SpectrumClocks';
 import {snapRange,SNAP_REFERENCE_POWER} from './snapPower';
+import {PowerScale,linearPowerRange,powerLabel} from './powerScale';
+import {PowerScaleControl} from './PowerScaleControl';
+import {dbToLinear} from '../lib/spectrumUtils';
 import {SnapSnapshot,snapDay,useSnapResource} from './SnapHistory';
 import {decodePlaybackBatch,PLAYBACK_BATCH_SIZE,playbackColumns,playbackGap,playbackNext,playbackStamp,PlaybackTimeZone} from './snapPlaybackModel';
 import '../snap-playback.css';
@@ -68,7 +71,7 @@ function useFrames(snapshots:SnapSnapshot[],index:number,manifest:Json|null,inpu
   return {frame,error,retry:()=>setRetry(v=>v+1)};
 }
 
-export function SnapPlayback({day:initialDay,inputs,onClose,onSelect}:{day:string;inputs:PlaybackInput[];onClose:()=>void;onSelect:(s:SnapSnapshot)=>void}){
+export function SnapPlayback({day:initialDay,inputs,onClose,onSelect,powerScale,onPowerScale}:{day:string;inputs:PlaybackInput[];onClose:()=>void;onSelect:(s:SnapSnapshot)=>void;powerScale:PowerScale;onPowerScale:(scale:PowerScale)=>void}){
   const dialog=useRef<HTMLDialogElement>(null);
   const [day,setDay]=useState(initialDay);
   const [preferences,setPreferences]=useState<Preferences>({zone:'UTC',speed:1,loop:false,span:1});
@@ -78,11 +81,11 @@ export function SnapPlayback({day:initialDay,inputs,onClose,onSelect}:{day:strin
     return()=>{el.close();document.body.style.overflow=overflow;previous?.focus();};
   },[]);
   return createPortal(<dialog ref={dialog} className="snap-movie" aria-label="SNAP history playback" onCancel={e=>{if(e.target===e.currentTarget){e.preventDefault();onClose();}}}>
-    <PlaybackDay key={`${day}/${preferences.span}`} day={day} inputs={inputs} onDay={setDay} onClose={onClose} onSelect={onSelect} preferences={preferences} onPreferences={setPreferences}/>
+    <PlaybackDay key={`${day}/${preferences.span}`} day={day} inputs={inputs} onDay={setDay} onClose={onClose} onSelect={onSelect} preferences={preferences} onPreferences={setPreferences} powerScale={powerScale} onPowerScale={onPowerScale}/>
   </dialog>,document.body);
 }
 
-function PlaybackDay({day,inputs,onDay,onClose,onSelect,preferences,onPreferences}:{day:string;inputs:PlaybackInput[];onDay:(d:string)=>void;onClose:()=>void;onSelect:(s:SnapSnapshot)=>void;preferences:Preferences;onPreferences:(p:Preferences)=>void}){
+function PlaybackDay({day,inputs,onDay,onClose,onSelect,preferences,onPreferences,powerScale,onPowerScale}:{day:string;inputs:PlaybackInput[];onDay:(d:string)=>void;onClose:()=>void;onSelect:(s:SnapSnapshot)=>void;preferences:Preferences;onPreferences:(p:Preferences)=>void;powerScale:PowerScale;onPowerScale:(scale:PowerScale)=>void}){
   const dates=useSnapResource('/api/snap-workspace/spectra-days',60000);
   // Fresh when opened, then pinned for the whole session, even across an
   // hourly acquisition. Never replace the sequence or its axes mid-play.
@@ -96,7 +99,11 @@ function PlaybackDay({day,inputs,onDay,onClose,onSelect,preferences,onPreference
   const {frame,error,retry}=useFrames(snapshots,index,manifest.data,inputs,loop);
   const ready=frame?.index===index&&!error;
   const shown=frame?snapshots[frame.index]:null;
-  const range=useMemo(()=>snapRange(inputs.flatMap(i=>manifest.data?.limits_db?.[i.key]??[]),SNAP_REFERENCE_POWER),[manifest.data,inputs]);
+  const range=useMemo(()=>{
+    const values=inputs.flatMap(i=>manifest.data?.limits_db?.[i.key]??[]);
+    return powerScale==='linear'?linearPowerRange(values.map(dbToLinear)):snapRange(values,SNAP_REFERENCE_POWER);
+  },[manifest.data,inputs,powerScale]);
+  const scaleControl=<PowerScaleControl value={powerScale} onChange={v=>{setPlaying(false);onPowerScale(v);}}/>;
   const columns=playbackColumns(inputs.length,size.width,size.height),rows=Math.ceil(inputs.length/columns);
   const days:Json[]=dates.data?.days??[];
   const earlier=days.find(d=>d.day<day)?.day,later=[...days].reverse().find(d=>d.day>day)?.day;
@@ -140,11 +147,12 @@ function PlaybackDay({day,inputs,onDay,onClose,onSelect,preferences,onPreference
   const gap=frame&&frame.index>0?playbackGap(snapshots[frame.index-1].at,snapshots[frame.index].start,manifest.data?.configured_interval_s??3600):null;
   const status=manifest.error||error?'Playback unavailable':!manifest.data?'Preparing fixed axes…':!snapshots.length?'No saved reads in this interval':!ready?'Buffering saved reads…':playing?'Playing':index===snapshots.length-1?'End of playback':'Paused';
   return <section className="snap-movie-content">
-    <header className="snap-movie-header"><div><h2>SNAP history</h2><span>{inputs.length} inputs · current wiring · fixed axes · dB re 10⁻¹⁰ native</span></div>
+    <header className="snap-movie-header"><div><h2>SNAP history</h2><span>{inputs.length} inputs · current wiring · fixed axes · {powerLabel(powerScale,'native')}</span></div>
       <div className="snap-movie-clock">{shown?<SpectrumClocks at={shown.at} lst={shown.lst} dark/>:<strong>{day}</strong>}<small>{status}{shown?` · read ${frame!.index+1} / ${snapshots.length}`:''}</small></div>
       <button onClick={onClose} autoFocus aria-label="Close playback">Close ×</button>
     </header>
     <div className="snap-movie-controls">
+      {scaleControl}
       <button className="primary snap-movie-play" onClick={toggle} disabled={(!ready&&!playing)||snapshots.length<2} aria-label={playing?'Pause playback':index===snapshots.length-1?'Replay history':'Play playback'}>{playing?'Pause':index===snapshots.length-1?'Replay':'Play'}</button>
       <div className="snap-movie-range" aria-label="Playback interval">{[[1,'Day'],[2,'Last 48 hours'],[7,'Last week']].map(([value,label])=><button key={value} aria-pressed={span===value} onClick={()=>onPreferences({...preferences,span:Number(value)})}>{label}</button>)}</div>
       <div className="snap-movie-date"><button title="Previous saved day" aria-label="Playback previous day" disabled={!earlier} onClick={()=>onDay(earlier)}>‹</button><label>{span===1?'Day':'Through'} · UTC<input type="date" aria-label="Playback date (UTC)" value={day} min={days[days.length-1]?.day} max={days[0]?.day} onChange={e=>{if(e.target.value)onDay(e.target.value);}}/></label><button title="Next saved day" aria-label="Playback next day" disabled={!later} onClick={()=>onDay(later)}>›</button></div>
@@ -161,13 +169,14 @@ function PlaybackDay({day,inputs,onDay,onClose,onSelect,preferences,onPreference
         const b=boardFor(input);
         return <article key={input.key} className={`snap-movie-card${input.beamforming?' in-beamforming':''}`} data-input-key={input.key}>
           <header><strong>{input.station??`ADC ${input.adc}`}</strong><span>SNAP {input.snap} · SLOT {input.slot} · ADC {input.adc}</span></header>
-          <button className="snap-plot-trigger" aria-label={`Expand playback SNAP ${input.snap} ADC ${input.adc}`} onClick={()=>{setPlaying(false);setExpanded(input);}}><SnapPlot compact freq={frame.data.freq_mhz} values={b?.spectra_db?.[input.adc]??null} range={range}/></button>
+          <button className="snap-plot-trigger" aria-label={`Expand playback SNAP ${input.snap} ADC ${input.adc}`} onClick={()=>{setPlaying(false);setExpanded(input);}}><SnapPlot compact freq={frame.data.freq_mhz} values={b?.spectra_db?.[input.adc]??null} range={range} powerScale={powerScale}/></button>
           <footer>{b?.ts!=null?playbackStamp(b.ts,zone):'No board read in this snapshot'}{b?.error?' · unavailable':''}{b?.zero_channels?.[input.adc]?` · ${b.zero_channels[input.adc]} zero channels`:''}{b?.invalid_channels?.[input.adc]?` · ${b.invalid_channels[input.adc]} invalid channels`:''}</footer>
         </article>;
       })}</div>:<div className="snap-movie-empty">{expanded?'Antenna open in zoom':status}</div>}
     </div>
     {expanded&&<FigureZoom title={`${expanded.station??`ADC ${expanded.adc}`} · SNAP ${expanded.snap} · ${shown?playbackStamp(shown.at,zone):day}`} onClose={closeExpanded} onBeforeDownload={()=>setPlaying(false)} downloadDisabled={!ready}
       controls={<div className="snap-zoom-playback" aria-label="Zoomed antenna playback">
+        {scaleControl}
         <div><button className="snap-zoom-play" onClick={toggle} disabled={(!ready&&!playing)||snapshots.length<2} aria-label={playing?'Pause antenna playback':'Play antenna playback'}>{playing?'Pause':index===snapshots.length-1?'Replay':'Play'}</button>
           <label>Speed<select aria-label="Zoomed antenna playback speed" value={speed} onChange={e=>onPreferences({...preferences,speed:Number(e.target.value)})}>{[.5,1,2,4].map(s=><option key={s} value={s}>{s}×</option>)}</select></label>
           <label><input type="checkbox" aria-label="Loop zoomed antenna" checked={loop} onChange={e=>onPreferences({...preferences,loop:e.target.checked})}/>Loop</label>
@@ -179,7 +188,7 @@ function PlaybackDay({day,inputs,onDay,onClose,onSelect,preferences,onPreference
         {(manifest.error||error)&&<div role="alert">{manifest.error||error}{error&&<button onClick={retry}>Retry antenna read</button>}</div>}
       </div>}>
       <div className="snap-expanded" data-frame={ready?index:undefined} data-input-key={expanded.key}><p>{expanded.station??'Unassigned input'} · SNAP {expanded.snap} SLOT {expanded.slot} ADC {expanded.adc}</p>
-        {ready&&frame?<><SpectrumClocks at={boardFor(expanded)?.ts} lst={boardFor(expanded)?.lst}/><SnapPlot freq={frame.data.freq_mhz} values={boardFor(expanded)?.spectra_db?.[expanded.adc]??null} range={range}/>{boardFor(expanded)?.error&&<p>Saved board read unavailable.</p>}</>:<div className="snap-zoom-buffering">{status}</div>}
+        {ready&&frame?<><SpectrumClocks at={boardFor(expanded)?.ts} lst={boardFor(expanded)?.lst}/><SnapPlot compact freq={frame.data.freq_mhz} values={boardFor(expanded)?.spectra_db?.[expanded.adc]??null} range={range} powerScale={powerScale}/>{boardFor(expanded)?.error&&<p>Saved board read unavailable.</p>}</>:<div className="snap-zoom-buffering">{status}</div>}
       </div>
     </FigureZoom>}
   </section>;

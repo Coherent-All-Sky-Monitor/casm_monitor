@@ -6,7 +6,7 @@ from playwright.sync_api import sync_playwright
 
 
 def main():
-    output=Path('/home/casm/scratch/casm-observation-preview/screenshots/calibration-array-20261002')
+    output=Path('/home/casm/scratch/casm-observation-preview/screenshots/calibration-power-20261005')
     output.mkdir(parents=True,exist_ok=True)
     errors=[]
     with sync_playwright() as p:
@@ -36,17 +36,19 @@ def main():
         def choose(group,button,scope=page):
             scope.get_by_role('group',name=group,exact=True).get_by_role('button',name=button,exact=True).click()
         autos=page.locator('#cal-autos')
+        assert autos.get_by_role('button',name='Power (dB)',exact=True).get_attribute('aria-pressed')=='true'
         assert autos.locator('.cal-auto-plot').count()==32
         assert autos.get_by_role('button',name='Raw',exact=True).get_attribute('aria-pressed')=='true'
         choose('Autocorrelation data','Raw',autos)
         assert autos.locator('.cal-auto-plot').count()==16
-        choose('Power scale','Signed log',autos)
-        assert autos.locator('.cal-curve[data-scale="symlog"]').count()==16
-        # Every finite point remains inside the axes, including bright peaks.
+        choose('Power scale','Power (dB)',autos)
+        assert autos.locator('.cal-auto-plots[data-auto-scale="db"]').count()==16
+        assert autos.locator('svg').first.get_attribute('aria-label').startswith('Power (dB)')
+        # Every displayed positive power remains inside the axes, including peaks.
         assert autos.evaluate('''el => [...el.querySelectorAll('svg path[stroke-width]')].every(p => {
           const box=p.getBBox();return box.y>=15.9 && box.y+box.height<=196.1;
         })''')
-        autos.evaluate('(el)=>el.scrollIntoView({block:"start"})');shot('autos-subtracted-signed-log.png')
+        autos.evaluate('(el)=>el.scrollIntoView({block:"start"})');shot('autos-subtracted-db.png')
         choose('Autocorrelation data','Raw',autos)
         choose('Autocorrelation data','Static template',autos)
         assert autos.locator('.cal-auto-plot').count()==48

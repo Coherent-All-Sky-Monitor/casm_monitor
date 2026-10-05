@@ -23,6 +23,16 @@ it is labelled unavailable. No time samples are synthesized across gaps.
 
 ## Plots and references
 
+- Autocorrelation **Power** defaults to **Power (dB)**, with **Linear** available
+  in the grid and enlarged player. Power is the real auto diagonal, not the
+  modulus of a potentially negative sample. dB is `10 log10(P / 1 count)` after
+  native-power averaging. Non-positive values are blank only in dB. Spectra,
+  dynamic colourbars and downloads share the choice, including live views.
+  Axes say **Power (dB)** and hover values use **dB**, in live, history and zoom;
+  the reference convention is documented here rather than repeated on plots.
+  Changing units pauses at the same saved time and reuses the loaded data.
+  Phase, signed components, cross-correlations and the all-pairs matrix retain
+  their existing units/scales. The detailed stored-pair inspector is unchanged.
 - Spectrum: one integration, or an explicit rolling-window average. Magnitude
   averages magnitudes; Real/Imag average complex values; Phase is the angle of
   that complex mean. Exact-zero phase is undefined. Full cached frequency
@@ -127,6 +137,13 @@ Dated evidence is in
 `/home/casm/scratch/casm-observation-preview/screenshots/playback-20261005/visibility/`:
 `result.json`, `cross-dynamic.png` and downloaded spectrum/dynamic figures.
 The script's default output directory below is mutable across runs.
+
+The later power-units check used saved SNAP history, live/history visibility
+autos and the saved `sun_20260930_200911` inspection. Defaults, linear/dB
+switches, short hover labels, fixed timestamps, zoom fit and downloads passed with no page errors or
+non-GET requests. Evidence:
+`/home/casm/scratch/casm-observation-preview/screenshots/power-scales-20261005/result.json`.
+The full visibility playback suite also passed after the units change.
 
 ### 2026-09-30
 

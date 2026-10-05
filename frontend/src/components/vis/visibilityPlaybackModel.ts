@@ -5,7 +5,7 @@ export type MovieManifest = {
   times:number[];lst:(string|null)[];first_frame:number;freq_mhz:number[];preview_freq_mhz:number[];
   start:number;end:number;window_s:number;integration_s:number;chunk_size:number;
   selection:{mode:string;reference_input:number;reference:string;span_days:number;window_hours:number;end:number;fmin:number;fmax:number};
-  limits:{spectrum:Record<Quantity|'amp_log',[number,number]>;dynamic:Record<Quantity,[number,number]>}[];
+  limits:{spectrum:Record<Quantity|'amp_log'|'power'|'power_log',[number,number]>;dynamic:Record<Quantity|'power'|'power_db',[number,number]>}[];
   palettes:Record<string,number[][]>;availability:{start:number;end:number};
 };
 export type MovieChunk={base:number;count:number;pairs:number;channels:number;components:number;values:Float32Array;times:number[]};

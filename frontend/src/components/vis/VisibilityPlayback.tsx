@@ -8,10 +8,12 @@ import {Antenna,LayoutMap,location,QUANTITIES,Quantity,Spectrum,wiringLabel} fro
 import {chunkValue,Encoding,lowerBound,MovieManifest,movieOrder,RollingSpectra,VISIBILITY_SPEEDS,visibilityCompactColumns,visibilityDuration,windowFirst} from './visibilityPlaybackModel';
 import {MovieBuffer,useVisibilityFrames} from './useVisibilityFrames';
 import {VisibilityDynamic} from './VisibilityDynamic';
+import {PowerScale} from '../powerScale';
+import {PowerScaleControl} from '../PowerScaleControl';
 import '../../snap-playback.css';
 import '../../visibility-playback.css';
 
-export type MovieOptions={mode:string;view:string;quantity:Quantity;reference:string;referenceInput:number;arrangement:string;windowHours:number;statistic:'latest'|'mean';log:boolean;zone:PlaybackTimeZone;band:number[];selected:number[];end:number};
+export type MovieOptions={mode:string;view:string;quantity:Quantity;reference:string;referenceInput:number;arrangement:string;windowHours:number;statistic:'latest'|'mean';log:boolean;powerScale:PowerScale;zone:PlaybackTimeZone;band:number[];selected:number[];end:number};
 type Expanded={pair:number;a:Antenna;b:Antenna;conjugate:boolean};
 const MemoSpectrum=memo(Spectrum);
 
@@ -38,6 +40,7 @@ export function VisibilityPlayback({initial,inputs,onClose,onInspect}:{initial:M
   const cache=useMemo(()=>new MovieBuffer(),[]),manifests=useMemo(()=>new Map<string,MovieManifest>(),[]);
   const stage=useRef<HTMLDivElement>(null),deadline=useRef<number|null>(null),previousSpeed=useRef(speed);
   const mode=options.view==='matrix'?'matrix':options.mode;
+  const autoPower=mode==='auto'&&options.quantity==='amp';
   const query=new URLSearchParams({inputs:options.selected.join(','),mode,reference_input:String(mode==='matrix'?0:options.referenceInput),reference:options.reference,
     span_days:String(span),window_hours:String(options.windowHours),end:String(options.end),fmin:String(options.band[0]),fmax:String(options.band[1])}).toString();
   const manifest=useManifest(query,manifests,attempt),m=manifest.data;
@@ -53,13 +56,14 @@ export function VisibilityPlayback({initial,inputs,onClose,onInspect}:{initial:M
   const rolling=useMemo(()=>m?new RollingSpectra(m.pairs.length,m.freq_mhz.length):null,[m]);
   const spectra=useMemo(()=>{
     if(!m||!ready||encoding!=='complex')return [];
+    const quantity=autoPower?'real':options.quantity;
     if(options.statistic==='mean'){
       rolling!.update(first,index,i=>cache.get(m,i,'complex'));
-      return m.pairs.map((_,p)=>rolling!.spectrum(p,options.quantity));
+      return m.pairs.map((_,p)=>rolling!.spectrum(p,quantity));
     }
     const c=cache.get(m,index,'complex')!;
-    return m.pairs.map((_,p)=>m.freq_mhz.map((_,ch)=>chunkValue(c,index,p,ch,options.quantity)));
-  },[m,ready,index,first,encoding,options.statistic,options.quantity,rolling,cache]);
+    return m.pairs.map((_,p)=>m.freq_mhz.map((_,ch)=>chunkValue(c,index,p,ch,quantity)));
+  },[m,ready,index,first,encoding,options.statistic,options.quantity,autoPower,rolling,cache]);
   const change=(delta:Partial<MovieOptions>)=>{setPlaying(false);setExpanded(null);if(m)setCursor(m.times[index]);setOptions(o=>({...o,...delta}));};
   const seek=(i:number)=>{if(m){setPlaying(false);setCursor(m.times[i]);}};
   const toggle=()=>{if(playing)setPlaying(false);else{if(m&&index===m.times.length-1)setCursor(m.times[m.first_frame]);setPlaying(true);}};
@@ -91,7 +95,7 @@ export function VisibilityPlayback({initial,inputs,onClose,onInspect}:{initial:M
   const ref=antennas.find(a=>a.packet_idx===options.referenceInput);
   const compact=options.arrangement==='compact';
   const columns=compact?visibilityCompactColumns(ordered.length,size.width):playbackColumns(ordered.length||1,size.width,size.height),rows=Math.ceil(ordered.length/columns);
-  const at=m?.times[index],label=QUANTITIES.find(q=>q[0]===options.quantity)![1];
+  const at=m?.times[index],label=autoPower?'Power':QUANTITIES.find(q=>q[0]===options.quantity)![1];
   const day=new Date(options.end*1000).toISOString().slice(0,10);
   const error=manifest.error||buffer.error;
   const status=error?'Playback unavailable':!m?'Preparing saved sequence & fixed scales…':!ready?`Buffering ${buffer.loaded} / ${buffer.total} chunks…`:playing?'Playing':'Paused';
@@ -104,8 +108,8 @@ export function VisibilityPlayback({initial,inputs,onClose,onInspect}:{initial:M
   const open=(p:Expanded)=>{setPlaying(false);setExpanded(p);};
   const closeExpanded=()=>{setPlaying(false);setExpanded(null);};
   const plot=(p:Expanded,mini=false)=>!m?null:options.view==='spectrum'
-    ?<MemoSpectrum values={spectra[p.pair]??[]} freq={m.freq_mhz} quantity={options.quantity} log={options.log&&options.quantity==='amp'} range={m.limits[p.pair].spectrum[options.quantity==='amp'&&options.log?'amp_log':options.quantity]}/>
-    :<VisibilityDynamic manifest={m} chunks={chunks} index={index} pair={p.pair} quantity={options.quantity} zone={options.zone} mini={mini} conjugate={p.conjugate}/>;
+    ?<MemoSpectrum values={spectra[p.pair]??[]} freq={m.freq_mhz} quantity={options.quantity} log={!autoPower&&options.log&&options.quantity==='amp'} powerScale={autoPower?options.powerScale:undefined} range={m.limits[p.pair].spectrum[autoPower?(options.powerScale==='db'?'power_log':'power'):options.quantity==='amp'&&options.log?'amp_log':options.quantity]}/>
+    :<VisibilityDynamic manifest={m} chunks={chunks} index={index} pair={p.pair} quantity={options.quantity} zone={options.zone} mini={mini} conjugate={p.conjugate} powerScale={autoPower?options.powerScale:undefined}/>;
   const card=(a:Antenna)=>{
     const b=mode==='auto'?a:ref,p=b?pairFor(a,b):null;if(!p)return null;
     return <article className={`snap-movie-card vis-movie-card${a.beamforming?' in-beamforming':''}`} key={a.packet_idx} data-input={a.packet_idx}>
@@ -132,15 +136,16 @@ export function VisibilityPlayback({initial,inputs,onClose,onInspect}:{initial:M
       <div className="snap-movie-controls vis-movie-choices">
         <label>Correlation<select aria-label="Playback correlation" value={options.mode} onChange={e=>change({mode:e.target.value,view:e.target.value==='auto'?'spectrum':'dynamic'})}><option value="auto">Autocorrelations</option><option value="cross">Cross-correlations</option></select></label>
         {options.mode==='cross'&&options.view!=='matrix'&&<label>Reference<select aria-label="Playback reference antenna" value={options.referenceInput} onChange={e=>change({referenceInput:Number(e.target.value)})}>{antennas.map(a=><option key={a.packet_idx} value={a.packet_idx}>{a.station} · ant {a.antenna}</option>)}</select></label>}
-        <div className="snap-movie-range" aria-label="Playback quantity">{QUANTITIES.map(([q,l])=><button key={q} aria-pressed={q===options.quantity} onClick={()=>change({quantity:q})}>{l}</button>)}</div>
+        <div className="snap-movie-range" aria-label="Playback quantity">{QUANTITIES.map(([q,l])=><button key={q} aria-pressed={q===options.quantity} onClick={()=>change({quantity:q})}>{options.mode==='auto'&&q==='amp'?'Power':l}</button>)}</div>
+        {autoPower&&<PowerScaleControl value={options.powerScale} onChange={powerScale=>change({powerScale})}/>}
         <label>View<select aria-label="Playback view" value={options.view} onChange={e=>change({view:e.target.value,...(e.target.value==='matrix'?{mode:'cross'}:{})})}><option value="spectrum">Spectrum</option><option value="dynamic">Dynamic spectrum</option><option value="matrix">All pairs</option></select></label>
         <label>Order<select aria-label="Playback arrangement" value={options.arrangement} onChange={e=>change({arrangement:e.target.value})}><option value="compact">Compact panels</option><option value="snap">SNAP order</option><option value="physical">Station grid</option></select></label>
         <details className="vis-movie-settings"><summary>Plot options & antennas</summary><div>
           <label>Panel window<select aria-label="Playback panel window" value={options.windowHours} onChange={e=>change({windowHours:Number(e.target.value)})}>{[[.5,'30 min'],[2,'2 h'],[6,'6 h'],[24,'24 h']].map(([v,l])=><option value={v} key={v}>{l}</option>)}</select></label>
           <label>Processing<select value={options.reference} onChange={e=>change({reference:e.target.value})}><option value="raw">Raw</option><option value="sun">Sun fringe-stopped</option></select></label>
-          {options.view==='spectrum'&&<><label>Spectrum<select aria-label="Playback spectrum statistic" value={options.statistic} onChange={e=>change({statistic:e.target.value as 'latest'|'mean'})}><option value="latest">One integration</option><option value="mean">Window average</option></select></label><label>Amplitude scale<select value={options.log?'log':'linear'} onChange={e=>change({log:e.target.value==='log'})}><option value="log">Logarithmic</option><option value="linear">Linear</option></select></label></>}
+          {options.view==='spectrum'&&<><label>Spectrum<select aria-label="Playback spectrum statistic" value={options.statistic} onChange={e=>change({statistic:e.target.value as 'latest'|'mean'})}><option value="latest">One integration</option><option value="mean">Window average</option></select></label>{!autoPower&&options.quantity==='amp'&&<label>Amplitude scale<select value={options.log?'log':'linear'} onChange={e=>change({log:e.target.value==='log'})}><option value="log">Logarithmic</option><option value="linear">Linear</option></select></label>}</>}
           <label>Time labels<select aria-label="Visibility playback time zone" value={options.zone} onChange={e=>change({zone:e.target.value as PlaybackTimeZone})}><option value="America/Los_Angeles">OVRO local</option><option value="UTC">UTC</option></select></label>
-          <p>Fixed scales per baseline. Spectra retain cached channels; dynamic previews average frequency to ≤128 channels. No time interpolation or channel normalization.</p>
+          <p>Fixed scales per baseline. Spectra retain cached channels; dynamic previews average frequency to ≤128 channels. No time interpolation or channel normalization. Auto power uses Re(Vᵢᵢ); non-positive power is blank in dB.</p>
           <LayoutMap inputs={antennas} selected={options.selected} reference={options.referenceInput} mode={options.mode} onToggle={id=>{const selected=options.selected.includes(id)?options.selected.filter(i=>i!==id):[...options.selected,id];if(selected.length)change({selected});}}/>
           <button onClick={()=>change({selected:antennas.filter(a=>a.beamforming).map(a=>a.packet_idx)})} disabled={!antennas.some(a=>a.beamforming)}>Beamforming</button><button onClick={()=>change({selected:antennas.map(a=>a.packet_idx)})}>All wired</button>
         </div></details>
@@ -152,6 +157,7 @@ export function VisibilityPlayback({initial,inputs,onClose,onInspect}:{initial:M
       </div>
       {expanded&&m&&<FigureZoom title={`${expanded.a.station} × ${expanded.b.station} · ${label} · ${playbackStamp(at!,options.zone)}`} onClose={closeExpanded} onBeforeDownload={()=>setPlaying(false)} downloadDisabled={!ready}
         controls={<div className="vis-zoom-playback" aria-label="Zoomed baseline playback">
+          {autoPower&&<PowerScaleControl value={options.powerScale} onChange={powerScale=>{setPlaying(false);setOptions(o=>({...o,powerScale}));}}/>}
           <div><button className="vis-zoom-play" onClick={toggle} disabled={!!error||(!ready&&!playing)} aria-label={playing?'Pause baseline playback':'Play baseline playback'}>{playing?'Pause':index===m.times.length-1?'Replay':'Play'}</button>
             <label>Speed<select aria-label="Zoomed baseline playback speed" value={speed} onChange={e=>setSpeed(Number(e.target.value))}>{VISIBILITY_SPEEDS.map(s=><option key={s} value={s}>{s}× · ~{visibilityDuration(m.times.length-m.first_frame,s)}</option>)}</select></label>
             <label><input type="checkbox" aria-label="Loop zoomed baseline" checked={loop} onChange={e=>setLoop(e.target.checked)}/>Loop</label>

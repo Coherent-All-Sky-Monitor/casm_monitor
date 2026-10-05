@@ -1,18 +1,21 @@
 import { memo, useEffect, useId, useRef, useState } from 'react';
 import { niceTicks } from './vis/PlotTicks';
 import { dbOffset, SNAP_FREQ_LIMITS, SNAP_REFERENCE_POWER } from './snapPower';
+import {PowerScale,powerLabel} from './powerScale';
+import {number} from './vis/ArrayPlots';
+import {dbToLinear} from '../lib/spectrumUtils';
 
 type Value = number | null;
 export type SnapTrend = {start:number; end:number; gap_s:number; points:{ts:number;shard_id:number;power_db:Value;eq_epoch:string|null;zero_channels:number|null;error:string|null}[]};
 
 /** Native-channel trace: no rebinning or normalization. Missing values break it. */
-function SnapPlotView({freq, values, reference, range, trend, powerReference=SNAP_REFERENCE_POWER,onSelect,selectedAt,difference=false,markers=[],compact=false}:{freq:number[];values:Value[]|null;reference?:Value[]|null;range:[number,number];trend?:SnapTrend;powerReference?:number;onSelect?:(id:number,ts:number)=>void;selectedAt?:number;difference?:boolean;markers?:number[];compact?:boolean}) {
+function SnapPlotView({freq, values, reference, range, trend, powerReference=SNAP_REFERENCE_POWER,onSelect,selectedAt,difference=false,markers=[],compact=false,powerScale='db'}:{freq:number[];values:Value[]|null;reference?:Value[]|null;range:[number,number];trend?:SnapTrend;powerReference?:number;onSelect?:(id:number,ts:number)=>void;selectedAt?:number;difference?:boolean;markers?:number[];compact?:boolean;powerScale?:PowerScale}) {
   const host=useRef<HTMLDivElement>(null), clip=useId().replace(/:/g,'');
   const [width,setWidth]=useState(350),[fitHeight,setFitHeight]=useState(150),[hover,setHover]=useState('');
   useEffect(()=>{const measure=()=>{if(host.current){setWidth(Math.max(compact?200:250,host.current.clientWidth));setFitHeight(Math.max(105,host.current.clientHeight));}};const o=new ResizeObserver(measure);if(host.current){measure();o.observe(host.current);}return()=>o.disconnect();},[compact]);
   // Match the visibility autos' 324:192 frame; trends retain their compact strip.
   const height=trend?219:compact?fitHeight:width*192/324;
-  const [lo,hi]=range, left=compact?43:57,right=width-16,top=compact?7:16,bottom=height-(compact?33:48);
+  const [lo,hi]=range, left=powerScale==='linear'?(compact?65:75):(compact?43:57),right=width-16,top=compact?7:16,bottom=height-(compact?43:48);
   const t0=trend?.start??SNAP_FREQ_LIMITS[0],t1=trend?.end??SNAP_FREQ_LIMITS[1];
   const x=(v:number)=>left+(v-t0)/(t1-t0)*(right-left), y=(v:number)=>top+(hi-v)/(hi-lo)*(bottom-top);
   const trace=(axis:number[],line:Value[],epochs?:(string|null)[])=>{
@@ -23,7 +26,9 @@ function SnapPlotView({freq, values, reference, range, trend, powerReference=SNA
       d+=`${joined?'L':'M'}${x(axis[i]).toFixed(2)},${y(v).toFixed(2)} `;last=i;
     });return d;
   };
-  const shift=dbOffset(powerReference), display=(v:Value)=>v===null?null:v+shift;
+  const scale=difference?'db':powerScale;
+  const shift=dbOffset(powerReference), display=(v:Value)=>v===null||!Number.isFinite(v)?null:scale==='linear'?dbToLinear(v):v+shift;
+  const label=difference?'Δ Power (dB)':powerLabel(scale,'native');
   const axis=trend?trend.points.map(p=>p.ts):freq, line=(trend?trend.points.map(p=>p.power_db):values??[]).map(display);
   const finite=line.filter((v):v is number=>v!==null&&Number.isFinite(v));
   const clipped=finite.filter(v=>v<lo||v>hi).length;
@@ -31,18 +36,18 @@ function SnapPlotView({freq, values, reference, range, trend, powerReference=SNA
   const ticks=trend?Array.from({length:tickCount},(_,i)=>t0+(t1-t0)*i/(tickCount-1)):niceTicks(t0,t1,Math.min(14,(right-left)/42));
   const date=(t:number)=>new Date(t*1000).toISOString().slice(5,16).replace('T',' ');
   return <div className={`snap-plot${trend?' snap-trend':''}${compact?' snap-plot-compact':''}`} ref={host}>
-    <svg viewBox={`0 0 ${width} ${height}`} role="img" data-power-reference={powerReference} data-x-min={t0} data-x-max={t1} data-y-min={lo} data-y-max={hi} aria-label={trend?'Full-band power (dB) versus time (UTC)':difference?'Selected minus reference (dB) versus frequency (MHz)':'Power (dB) versus frequency (MHz), 4096 channels'}
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" data-power-scale={scale} data-power-reference={powerReference} data-x-min={t0} data-x-max={t1} data-y-min={lo} data-y-max={hi} aria-label={`${label} versus ${trend?'time (UTC)':'frequency (MHz), 4096 channels'}`}
       onMouseLeave={()=>setHover('')} onMouseMove={e=>{
         const r=e.currentTarget.getBoundingClientRect(),v=t0+((e.clientX-r.left)/r.width*width-left)/(right-left)*(t1-t0);
         let k=0;axis.forEach((a,i)=>{if(Math.abs(a-v)<Math.abs(axis[k]-v))k=i;});
-        setHover(axis.length?`${trend?date(axis[k])+' UTC':axis[k].toFixed(3)+' MHz'} · ${line[k]==null?'no positive power':line[k]!.toFixed(2)+' dB'}`:'');
+        setHover(axis.length?`${trend?date(axis[k])+' UTC':axis[k].toFixed(3)+' MHz'} · ${line[k]==null?'unavailable':(scale==='db'?line[k]!.toFixed(2)+' dB':number(line[k])+' native')}`:'');
       }}>
       <defs><clipPath id={clip}><rect x={left} y={top} width={right-left} height={bottom-top}/></clipPath></defs>
-      {niceTicks(lo,hi,compact?Math.max(2,(bottom-top)/28):6).map(v=><g key={v}><line className="snap-guide" x1={left} x2={right} y1={y(v)} y2={y(v)}/><text x={left-7} y={y(v)+4} textAnchor="end">{v}</text></g>)}
+      {niceTicks(lo,hi,compact?Math.min(8,Math.max(2,(bottom-top)/28)):6).map(v=><g key={v}><line className="snap-guide" x1={left} x2={right} y1={y(v)} y2={y(v)}/><text x={left-7} y={y(v)+4} textAnchor="end">{number(v)}</text></g>)}
       {ticks.map((v,i)=><g key={v}><line className="snap-guide" x1={x(v)} x2={x(v)} y1={top} y2={bottom}/><text x={x(v)} y={bottom+18} textAnchor={trend&&i===0?'start':trend&&i===ticks.length-1?'end':'middle'}>{trend?date(v):v}</text></g>)}
       <path className="snap-axis" d={`M${left},${top}V${bottom}H${right}`}/>
       <text x={(left+right)/2} y={height-7} textAnchor="middle">{trend?'Time (UTC)':'Frequency (MHz)'}</text>
-      <text transform={`translate(${compact?11:14} ${(top+bottom)/2}) rotate(-90)`} textAnchor="middle">{difference?'Δ Power (dB)':compact?'Power (dB)':powerReference===1?'Power (dB re 1 native)':'Power (dB re 10⁻¹⁰ native)'}</text>
+      <text transform={`translate(${compact?11:14} ${(top+bottom)/2}) rotate(-90)`} textAnchor="middle">{compact?(scale==='db'?'Power (dB)':'Power (native)'):label}</text>
       <g clipPath={`url(#${clip})`}>
         {difference&&<line className="snap-axis" x1={left} x2={right} y1={y(0)} y2={y(0)}/>}
         {markers.map(f=><line key={f} className="snap-feature-marker" x1={x(f)} x2={x(f)} y1={top} y2={bottom}><title>{f.toFixed(3)} MHz · fine-channel excursion</title></line>)}
@@ -51,8 +56,8 @@ function SnapPlotView({freq, values, reference, range, trend, powerReference=SNA
         {trend&&selectedAt!=null&&<line className="snap-selected-time" x1={x(selectedAt)} x2={x(selectedAt)} y1={top} y2={bottom}/>}
         {trend&&trend.points.map(p=>p.power_db===null?null:<g key={p.ts} role={onSelect?'button':undefined} tabIndex={onSelect?0:undefined} aria-label={`Open spectrum ${date(p.ts)} UTC`} className={onSelect?'snap-trend-point':''}
           onPointerDown={e=>{if(onSelect)e.stopPropagation();}} onDoubleClick={e=>e.stopPropagation()} onClick={()=>onSelect?.(p.shard_id,p.ts)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onSelect?.(p.shard_id,p.ts);}}}>
-          <circle cx={x(p.ts)} cy={y(p.power_db+shift)} r="9" fill="transparent"/>
-          <circle cx={x(p.ts)} cy={y(p.power_db+shift)} r="3" fill="#194fa3"><title>{date(p.ts)} UTC · {(p.power_db+shift).toFixed(2)} dB · EQ {p.eq_epoch??'unknown'}</title></circle>
+          <circle cx={x(p.ts)} cy={y(display(p.power_db)!)} r="9" fill="transparent"/>
+          <circle cx={x(p.ts)} cy={y(display(p.power_db)!)} r="3" fill="#194fa3"><title>{date(p.ts)} UTC · {number(display(p.power_db))} {scale==='db'?'dB':'native'} · EQ {p.eq_epoch??'unknown'}</title></circle>
         </g>)}
       </g>
       {!trend&&line.map((v,i)=>v===null||v>=lo&&v<=hi?null:<path key={i} fill="#b9540b" d={v>hi?`M${x(axis[i])-2},${top+5}l2,-4l2,4Z`:`M${x(axis[i])-2},${bottom-5}l2,4l2,-4Z`}/>)}

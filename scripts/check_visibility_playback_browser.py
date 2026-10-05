@@ -142,7 +142,7 @@ def main():
         assert float(at)==m['times'][m['first_frame']+4]
         # Quantity/order changes are local and retain the exact timestamp.
         before=len([u for u in requests if '/array/playback?' in u])
-        for quantity in ('Real(V)','Imag(V)','Phase','|V|'):
+        for quantity in ('Real(V)','Imag(V)','Phase','Power'):
             click(page.locator('[aria-label="Playback quantity"]').get_by_role('button',name=quantity,exact=True))
             ready();assert page.locator('.vis-movie .snap-clock-row').get_attribute('data-timestamp')==at
         select('Playback arrangement','snap');ready()

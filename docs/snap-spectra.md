@@ -32,6 +32,12 @@ spectra. Opening the page or browsing history never contacts hardware.
   Native channel centres are `500 - k*125/4096` MHz, descending: 500 through
   375.030518 MHz. The shared plot axis runs **374.9–500.1 MHz** left-to-right,
   leaving room at both edges without inventing samples outside the band.
+- **Power (dB)** is the default; **Linear** shows native power. The selection
+  applies to live/saved grids, comparisons, zoom and full-band trends, and
+  carries into playback. Both choices are also available inside zoom/playback.
+  Switching units pauses a movie without moving its saved timestamp. Linear
+  reverses the stored dB with `10**(stored_db/10)`, without the display offset.
+  Channels unavailable in the dB API remain gaps, not fabricated zeros.
 - Stored/API power is `10 log10(native linear power)`. The default display
   reference is **10⁻¹⁰ native power units**, a constant +100 dB offset for every
   antenna/date. The reference selector is removed. Negative original values
@@ -46,7 +52,9 @@ spectra. Opening the page or browsing history never contacts hardware.
   N16E1, requiring 75 dB; a hard 65 dB cap would clip five beamforming channels.
   There is no percentile clipping. Limits update with each saved
   spectrum or selection change, including all-ADC and individually shown inputs.
-  Expanded spectra use the same limits. Scale/refit controls are removed.
+  Expanded spectra use the same limits. Linear limits instead fit all finite
+  native powers with padding; the 65 dB preference applies only to dB. There
+  are no per-panel scale/refit controls. The units buttons do not normalize data.
   This supersedes the earlier pinned percentile scale and its orange clipping
   markers; data values and the fixed dB reference are unchanged.
 

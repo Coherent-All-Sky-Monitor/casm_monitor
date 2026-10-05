@@ -59,6 +59,14 @@ compact grid to the viewport; dense/all-ADC and small-screen views scroll inside
 the grid rather than making labels illegible. The usual History/zoom spectrum
 proportions are unchanged.
 
+**Power (dB)** and **Linear** are available in the grid and antenna player.
+They inherit the page's choice (default dB). Unit changes pause at the same
+saved read and recompute fixed limits from the already-loaded interval extrema;
+they do not fetch another manifest or re-read hardware. Linear removes the
+fixed display reference and shows native power. Existing unavailable channels
+stay blank. The spectrum-change evidence remains in dB because its thresholds
+and difference plots are defined in dB, independently of the spectrum viewer.
+
 Reads are pinned when playback opens. Each frame groups a sequential board pass,
 not simultaneous acquisitions. Missing boards remain blank, gaps are labelled,
 and timestamps always describe the displayed frame, including during buffering.

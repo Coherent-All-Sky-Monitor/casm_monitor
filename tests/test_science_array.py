@@ -70,6 +70,20 @@ def test_dynamic_raster_retains_actual_gaps_and_undefined_phase():
     np.testing.assert_equal(im[1,0],[29,35,43])
 
 
+def test_auto_power_tiles_use_ten_log_and_preserve_nonpositive_linear_values():
+    power=np.array([[-1.,0.,1.,10.,100.],[1.,10.,100.,1000.,10000.]])
+    stamps=np.array([0,2*array.DT_S])
+    db=array.image_tile(power,stamps,'amp',power_scale='db')
+    linear=array.image_tile(power,stamps,'amp',power_scale='linear')
+    np.testing.assert_allclose([db['min'],db['max']],np.percentile(10*np.log10(power[power>0]),[2,98]))
+    np.testing.assert_allclose([linear['min'],linear['max']],np.percentile(power,[2,98]))
+    assert not db['log'] and not linear['log']
+    pixels=lambda tile:np.asarray(Image.open(io.BytesIO(base64.b64decode(tile['src'].split(',')[1]))))
+    assert np.all(pixels(db)[:2,0]==[29,35,43])
+    assert np.all(pixels(db)[:,1]==[29,35,43])
+    assert not np.any(np.all(pixels(linear)[:2,0]==[29,35,43],axis=1))
+
+
 @pytest.mark.parametrize('q',['real','imag','amplitude','phase'])
 def test_detail_waterfall_contains_the_requested_values(q):
     import matplotlib.pyplot as plt

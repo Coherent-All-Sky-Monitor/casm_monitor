@@ -187,6 +187,7 @@ class PlaybackStore:
     def limits(self, entry):
         p = entry['public']; n = len(p['pairs'])
         low = np.full(n, np.inf); high = np.full(n, -np.inf); positive = np.full(n, np.inf)
+        power_low = np.full(n, np.inf); power_high = np.full(n, -np.inf); power_positive = np.full(n, np.inf)
         real = np.zeros(n); imag = np.zeros(n); samples = []
         # Bounded deterministic sample for fixed dynamic colour percentiles.
         stride = max(1, math.ceil(len(p['times'])/128))
@@ -195,6 +196,9 @@ class PlaybackStore:
             low = np.minimum(low, np.min(np.where(np.isfinite(a), a, np.inf), axis=(0, 2)))
             high = np.maximum(high, np.max(np.where(np.isfinite(a), a, -np.inf), axis=(0, 2)))
             positive = np.minimum(positive, np.min(np.where(a > 0, a, np.inf), axis=(0, 2)))
+            power_low = np.minimum(power_low, np.min(np.where(np.isfinite(z), z.real, np.inf), axis=(0, 2)))
+            power_high = np.maximum(power_high, np.max(np.where(np.isfinite(z), z.real, -np.inf), axis=(0, 2)))
+            power_positive = np.minimum(power_positive, np.min(np.where(np.isfinite(z) & (z.real > 0), z.real, np.inf), axis=(0, 2)))
             real = np.maximum(real, np.max(np.where(np.isfinite(z), np.abs(z.real), 0), axis=(0, 2)))
             imag = np.maximum(imag, np.max(np.where(np.isfinite(z), np.abs(z.imag), 0), axis=(0, 2)))
             sample = z[np.arange(len(z))[(np.arange(len(z))+base) % stride == 0]]
@@ -209,6 +213,11 @@ class PlaybackStore:
             spectrum = dict(amp=[max(0., lo-pad), hi+pad], amp_log=[float(positive[k])*.95 if math.isfinite(positive[k]) else 1., max(hi*1.05, float(positive[k])*1.01) if math.isfinite(positive[k]) else 10.],
                             real=[-max(float(real[k])*1.05, 1e-12), max(float(real[k])*1.05, 1e-12)],
                             imag=[-max(float(imag[k])*1.05, 1e-12), max(float(imag[k])*1.05, 1e-12)], phase=[-math.pi, math.pi])
+            pl, ph = (float(power_low[k]), float(power_high[k])) if math.isfinite(power_high[k]) else (0., 1.)
+            pad = max((ph-pl)*.05, abs(ph)*.01, 1e-12)
+            spectrum['power'] = [max(0., pl-pad) if pl >= 0 else pl-pad, ph+pad]
+            pp = float(power_positive[k])
+            spectrum['power_log'] = [pp*.95, max(ph*1.05, pp*1.01)] if math.isfinite(pp) else [1., 10.]
             dynamic = dict(phase=[-math.pi, math.pi])
             for c, name in enumerate(('real', 'imag', 'amp')):
                 values = samples[:, k, :, c]; values = values[np.isfinite(values)]
@@ -219,6 +228,10 @@ class PlaybackStore:
                 else:
                     h = max(float(np.percentile(np.abs(values), 98)) if len(values) else 1., 1e-12)
                     dynamic[name] = [-h, h]
+            values = samples[:, k, :, 0]; values = values[np.isfinite(values)]
+            for name, v in (('power', values), ('power_db', 10*np.log10(values[values > 0]))):
+                l, h = np.percentile(v, [2, 98]) if len(v) else (0., 1.)
+                dynamic[name] = [float(l), max(float(h), float(l)+max(abs(float(l))*.01, 1e-12))]
             out.append(dict(spectrum=spectrum, dynamic=dynamic))
         return out
 

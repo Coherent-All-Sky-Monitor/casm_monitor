@@ -74,12 +74,23 @@ def preview_values(z, max_channels=128):
                 amp=vis_ops.block_mean(np.abs(z), max_channels), phase=phase(mean))
 
 
-def image_tile(values, stamps, quantity):
+def image_tile(values, stamps, quantity, *, power_scale=None):
     from matplotlib import colormaps
     from PIL import Image
     a = np.asarray(values, dtype=float)
+    if power_scale == 'db':
+        # Autocorrelation power, relative to one native count. Never abs/floor
+        # signed or zero power merely to make its logarithm drawable.
+        with np.errstate(invalid='ignore', divide='ignore'):
+            a = np.where(a > 0, 10 * np.log10(a), np.nan)
     finite = a[np.isfinite(a)]
-    if quantity == 'phase':
+    if power_scale is not None:
+        if power_scale not in ('db', 'linear'):
+            raise ValueError('Unknown power scale')
+        lo, hi = np.percentile(finite, [2, 98]) if len(finite) else (0., 1.)
+        hi = max(float(hi), float(lo) + max(abs(float(lo)) * .01, 1e-12))
+        cmap, logarithmic = 'magma', False
+    elif quantity == 'phase':
         lo, hi, cmap, logarithmic = -np.pi, np.pi, 'twilight_shifted', False
     elif quantity == 'amp':
         positive = finite[finite > 0]
@@ -127,7 +138,10 @@ def make_panels(z, stamps, freq, inputs, pairs, reference_input, mode):
             sign = -1 if conjugate and q in ('imag','phase') else 1
             spectra[q] = dict(latest=finite_list(sign*latest[q][k]), mean=finite_list(sign*averaged[q][k]))
             images[q] = image_tile(sign*previews[q][:,k], stamps, q)
+        power_images = {scale: image_tile(previews['real'][:,k], stamps, 'amp', power_scale=scale)
+                        for scale in ('db', 'linear')} if mode == 'auto' else {}
         panels.append(dict(input=p, pair=list(pairs[k]), is_auto=pairs[k][0]==pairs[k][1],
+                           power_images=power_images,
                            spectra=spectra, images=images,
                            valid_fraction=float(np.mean(np.isfinite(z[:,k])))))
     return panels

@@ -99,11 +99,15 @@ local payload checks pass and remains explicitly **not uploaded**.
    exactly the quantity subtracted from the source-window auto average. It is
    not the night median used for noise weighting. The inspection response adds
    `antenna_panels[].static`; the existing `night` median is unchanged.
-   **Linear** is the default. **Signed log** maps counts `v` to
-   `sign(v) log10(1 + abs(v)/(1 count))` for display only; tick labels remain
-   counts. It preserves zero, negative residuals and every finite channel,
-   including peaks. Neither display mode clips percentiles, normalizes spectra
-   or changes the saved arrays. Separate y-axes compare shape, not equal heights.
+   **Power (dB)** is the default, with **Linear** available alongside it
+   (October 5). The dB display is `10 log10(P / 1 count)` after the saved
+   time average and static subtraction, never an average of logarithms or the
+   absolute value of a negative residual. Zero/negative samples are blank in
+   dB and counted beneath each affected plot; Linear retains signed counts.
+   The axis label is simply **Power (dB)**. The reference is documented here,
+   not repeated on plots. These are not dBm or calibrated flux. Neither mode
+   clips finite plotted peaks, normalizes spectra or changes saved arrays. Separate y-axes
+   compare shape, not equal heights. The former signed-log choice is removed.
 
    Processing is Raw, Static-subtracted, Geometric model (phase only),
    Fringe-stopped and **SVD-corrected**, replacing the old delay-fit stage.
@@ -216,13 +220,16 @@ and responsive layout with all non-GET API requests blocked. It never submits
 a solve, import, diagnostic or upload. Pure conversion cases are in
 `frontend/tests/time-zones.test.mjs`.
 `scripts/check_calibration_inspector_browser.py` exercises saved diagnostic
-buttons, isolated/overlaid autos, signed-log bounds, zoom/download, reference
+buttons, isolated/overlaid autos, dB/linear bounds, zoom/download, reference
 changes, all layouts and mobile widths, with every non-GET/HEAD API request
 blocked. October 2 screenshots are under
 `/home/casm/scratch/casm-observation-preview/screenshots/calibration-array-20261002/`.
+October 5 power-unit checks and screenshots are in
+`/home/casm/scratch/casm-observation-preview/screenshots/power-scales-20261005/`,
+from `scripts/check_power_scales_browser.py` (saved data, GET/HEAD only).
 `tests/test_calibration_inspection.py` checks mean-template versus noise-median
-identity and negative/missing residuals; `frontend/tests/calibration-curve-scale.test.mjs`
-checks invertibility, sign and peak preservation of the display transform.
+identity and negative/missing residuals; `frontend/tests/power-scale.test.mjs`
+checks power conversion, non-positive gaps and full linear ranges.
 Sky-planning acceptance includes September 18 (no fixed-cut interval, but a
 ranked night suggestion with explicit Cas A/Tau A warnings), May 16 (one fixed-cut
 interval), source-priority and full-window tests, all four canonical tracks,

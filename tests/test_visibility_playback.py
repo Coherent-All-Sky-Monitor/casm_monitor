@@ -88,6 +88,21 @@ def test_matrix_is_upper_triangle_with_full_data_spectral_limits(saved):
         assert limits['dynamic']['phase']==[-np.pi,np.pi]
 
 
+def test_power_limits_use_real_auto_not_magnitude_and_db_after_averaging(saved):
+    service,z,_,_=saved
+    m=service.manifest(inputs=[2,8,18],mode='auto')
+    for k,source in enumerate([0,3,5]):
+        values=z[:,source].real
+        valid=values[np.isfinite(values)]
+        spectrum=m['limits'][k]['spectrum']
+        assert spectrum['power'][0]<=valid.min()<0<valid.max()<=spectrum['power'][1]
+        positive=valid[valid>0]
+        assert spectrum['power_log'][0]<positive.min()<=positive.max()<spectrum['power_log'][1]
+        preview=preview_values(z[:,source:source+1])['real']
+        expected=10*np.log10(preview[preview>0])
+        np.testing.assert_allclose(m['limits'][k]['dynamic']['power_db'],np.percentile(expected,[2,98]),rtol=1e-6)
+
+
 def test_binary_budgets_eviction_and_unknown_session(saved,monkeypatch):
     service,_,_,_=saved
     monkeypatch.setattr(movie,'CACHE_BYTES',800000)

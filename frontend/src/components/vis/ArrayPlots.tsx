@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { frequencyLabel, niceTicks, timeTicks } from "./PlotTicks";
+import {PowerScale,powerValue,powerLabel} from '../powerScale';
 
 export type Quantity = "amp" | "real" | "imag" | "phase";
 export type Antenna = {packet_idx:number; antenna:number; station:string; position_enu_m:number[]; snap?:number|null; slot?:string|null; adc?:number|null; beamforming?:boolean|null};
 export function wiringLabel(a:Antenna) {return `SNAP ${a.snap??'—'} · SLOT ${a.slot??'—'} · ADC ${a.adc??'—'}`;}
 export type Tile = {src:string;scale:string;min:number;max:number;log:boolean;width:number;height:number};
-export type Panel = {input:number;pair:number[];is_auto:boolean;valid_fraction:number;spectra:Record<Quantity,{latest:(number|null)[];mean:(number|null)[]}>;images:Record<Quantity,Tile>};
+export type Panel = {input:number;pair:number[];is_auto:boolean;valid_fraction:number;spectra:Record<Quantity,{latest:(number|null)[];mean:(number|null)[]}>;images:Record<Quantity,Tile>;power_images?:Record<PowerScale,Tile>};
 export type Snapshot = {inputs:Antenna[];default_inputs:number[];membership:{status:string;product_id:string|null};reference_input:number;reference:string;mode:string;panels:Panel[];freq_mhz:number[];t0:number;t1:number;samples:number;integration_s:number;matrix:Record<Quantity,(number|null)[][]>;provenance:Record<string,unknown>};
 export const QUANTITIES: [Quantity,string][] = [["amp","|V|"],["real","Real(V)"],["imag","Imag(V)"],["phase","Phase"]];
 export function number(v:number|null|undefined) {if(v==null||!Number.isFinite(v))return "—";if(v===0)return "0";return Math.abs(v)>=1e4||Math.abs(v)<.01?v.toExponential(1):Number(v.toPrecision(3)).toString();}
@@ -21,10 +22,11 @@ export const quantityLabel = (q:Quantity) => QUANTITIES.find(([key])=>key===q)![
 export const quantityUnits = (q:Quantity) => q==='phase'?'rad':'counts';
 export const axisLabel = (q:Quantity) => `${quantityLabel(q)} (${quantityUnits(q)})`;
 
-export function Spectrum({values,freq,quantity,log=false,range}:{values:(number|null)[];freq:number[];quantity:Quantity;log?:boolean;range?:[number,number]}) {
+export function Spectrum({values,freq,quantity,log=false,range,powerScale}:{values:(number|null)[];freq:number[];quantity:Quantity;log?:boolean;range?:[number,number];powerScale?:PowerScale}) {
   const [hover,setHover]=useState<number|null>(null);
+  const label=powerScale?powerLabel(powerScale):axisLabel(quantity);
   const chart=useMemo(()=>{
-    const transform=(v:number|null)=>v==null||!Number.isFinite(v)||(log&&v<=0)?null:log?Math.log10(v):v;
+    const transform=(v:number|null)=>powerScale?powerValue(v,powerScale):v==null||!Number.isFinite(v)||(log&&v<=0)?null:log?Math.log10(v):v;
     const data=values.map(transform),finite=data.filter((v):v is number=>v!==null);
     let lo=range?transform(range[0])??0:Math.min(...finite),hi=range?transform(range[1])??1:Math.max(...finite);
     if(quantity==='phase'){lo=-Math.PI;hi=Math.PI;}
@@ -44,11 +46,11 @@ export function Spectrum({values,freq,quantity,log=false,range}:{values:(number|
     const longest=Math.max(...frequencyTicks.map(f=>frequencyLabel(f).length));
     const count=Math.floor(244/(longest*5+8))+1;
     if(frequencyTicks.length>count)frequencyTicks=niceTicks(f0,f1,count);
-    const label=(v:number)=>quantity==='phase'?(v===0?'0':v===Math.PI?'π':v===-Math.PI?'−π':v<0?'−π/2':'π/2'):number(log?10**v:v);
+    const label=(v:number)=>quantity==='phase'?(v===0?'0':v===Math.PI?'π':v===-Math.PI?'−π':v<0?'−π/2':'π/2'):number(log&&!powerScale?10**v:v);
     return {lo,hi,path,f0,f1,ticks,frequencyTicks,label};
-  },[values,freq,quantity,log,range]);
-  return <div className="array-spectrum">
-    <svg viewBox="0 0 324 192" role="img" aria-label={`${axisLabel(quantity)} versus Frequency (MHz)`}
+  },[values,freq,quantity,log,range,powerScale]);
+  return <div className="array-spectrum" data-power-scale={powerScale}>
+    <svg viewBox="0 0 324 192" role="img" aria-label={`${label} versus Frequency (MHz)`} data-y-min={chart.lo} data-y-max={chart.hi}
       onMouseLeave={()=>setHover(null)} onMouseMove={e=>{
         const r=e.currentTarget.getBoundingClientRect();
         const f=chart.f0+(((e.clientX-r.left)/r.width*324)-64)/244*(chart.f1-chart.f0);
@@ -62,10 +64,10 @@ export function Spectrum({values,freq,quantity,log=false,range}:{values:(number|
       </g>;})}
       {chart.frequencyTicks.map(f=>{const x=64+(f-chart.f0)/(chart.f1-chart.f0)*244;return <g key={f}><line x1={x} y1="149" x2={x} y2="152"/><text className="spectrum-x-tick" x={x} y="163" textAnchor="middle">{frequencyLabel(f)}</text></g>;})}
       <text className="axis-label" x="186" y="183" textAnchor="middle">Frequency (MHz)</text>
-      <text className="axis-label" transform="translate(14 80) rotate(-90)" textAnchor="middle">{axisLabel(quantity)}{log?' · log scale':''}</text>
+      <text className="axis-label" transform="translate(14 80) rotate(-90)" textAnchor="middle">{label}{log&&!powerScale?' · log scale':''}</text>
       <path d={chart.path}/>
     </svg>
-    <span className="spectrum-readout">{hover!==null?`${freq[hover].toFixed(3)} MHz · ${number(values[hover])} ${quantityUnits(quantity)}`:'Hover for values · click to enlarge'}</span>
+    <span className="spectrum-readout">{hover!==null?`${freq[hover].toFixed(3)} MHz · ${number(powerScale?powerValue(values[hover],powerScale):values[hover])} ${powerScale==='db'?'dB':quantityUnits(quantity)}`:powerScale==='db'&&values.some(v=>v!==null&&Number.isFinite(v)&&v<=0)?'Non-positive power is blank in dB · use Linear':'Hover for values · click to enlarge'}</span>
   </div>;
 }
 
