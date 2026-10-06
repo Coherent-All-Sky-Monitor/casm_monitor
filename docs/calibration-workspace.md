@@ -252,8 +252,8 @@ step complete. Forward navigation is disabled until the calibration is saved.
    preserved. Only newly solved workspace candidates can generate a grid.
 6. **Export & deploy** (October 5): write both generated CB/IB HDF5 files to a
    selected directory, run the upload dry run, inspect the saved pair, then
-   record a review. Live upload remains server-locked pending the operator's
-   separate deployment approval. See the exact sequence below.
+   record a review. Live upload requires separately armed server gates and
+   explicit confirmation of the reviewed product. See the exact sequence below.
 
 **Inspect recorded calibration** imports the ledger reference without a solve.
 It can produce new phase/transit diagnostics, but cannot become an uploadable
@@ -338,6 +338,18 @@ Each YAML setting AND its environment gate must be true. The environment keys ar
 `cal.workspace_allow_upload`. Arming only the older upload surface is insufficient.
 No service gates were enabled for this feature's acceptance.
 
+On October 6 the operator separately approved enabling the 8061 upload controls.
+The installed web and isolated calibration worker use
+`~/.config/casm-monitor/upload-enabled.yaml`, a copy of the repository config
+with only `cal.allow_upload` and `cal.workspace_allow_upload` changed to true.
+Each service's `50-upload-controls.conf` drop-in selects this profile and sets
+both environment gates to `1`. Repository defaults and the general job worker
+remain unarmed. This enables user-confirmed uploads; it does not submit one.
+Review this separate profile when changing the repository configuration; it is
+a snapshot, not an automatically merged overlay.
+To disarm, set both environment gates to `0` in those two drop-ins, reload
+systemd and restart the web/idle calibration worker. Check for active jobs first.
+
 An enabled upload requires same-origin protection, a CSRF cookie/header, the
 exact typed build ID, a second browser confirmation and a valid bound review.
 It reuses single-use authorization, the deploy lock and final file/layout/scale
@@ -347,6 +359,26 @@ streams. The confirmation repeats the selection, scales and default-saving choic
 Inspect transfer and registry receipts, verify runtime activation separately,
 and update the deployment ledger after a verified deployment. The current-cal
 cards follow that ledger, not the latest trial or a successful transfer alone.
+
+### Antenna and candidate metadata after an upload
+
+The Overview, Visibilities and SNAP widgets share the cached nonzero CB slot
+inspection, rather than a hard-coded antenna count. A new CB product is inspected
+by the figure worker; its six stream associations and the deployment ledger must
+agree before the widgets accept it. The uploader currently does not update the
+wiki ledger, so a verified deployment still needs that manual step. Calibration
+defaults also follow the ledger. Current wiring/layout changes remain separate.
+
+T2 event coordinates and new T3/Slack candidate figures use the event-time weights
+registry and embedded pointings. Existing archived figures/posts stay unchanged.
+Beam widths have an unresolved timing issue: the uploader records pointings first,
+then `t3-weights-watch` fills the geometry-derived widths. T2 caches registry products
+and clustering widths per product ID, so a first read before that update can retain
+fallback widths. A temporary-registry reproduction confirmed stale reads on October
+6. Publish widths before live events, or invalidate both caches, before claiming
+fully automatic antenna-change propagation. No T2/T3 fix or restart was performed
+as part of enabling the web controls. An IB-only upload does not change CB geometry;
+partial CB stream deployment has no single all-band product identity.
 
 ## API and checks
 
