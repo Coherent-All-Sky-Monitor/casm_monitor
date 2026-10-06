@@ -410,7 +410,7 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
     def index_response() -> Response:
         index = STATIC_DIR / "index.html"
         if index.is_file():
-            return FileResponse(index)
+            return FileResponse(index, headers={"Cache-Control": "no-cache"})
         return HTMLResponse(PLACEHOLDER_HTML)
 
     @app.get("/", include_in_schema=False, response_model=None)
@@ -427,7 +427,11 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
         except AttributeError:  # pragma: no cover - py<3.9
             inside = str(candidate).startswith(str(STATIC_DIR.resolve()))
         if inside and candidate.is_file():
-            return FileResponse(candidate)
+            # Vite fingerprints change with content. Cache those assets across
+            # refreshes (including the 4.9 MB photo), never mutable HTML or APIs.
+            fingerprinted = re.fullmatch(r"assets/[^/]+-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+", path)
+            policy = "public, max-age=31536000, immutable" if fingerprinted else "no-cache"
+            return FileResponse(candidate, headers={"Cache-Control": policy})
         return index_response()
 
     return app

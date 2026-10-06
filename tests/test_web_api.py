@@ -155,19 +155,27 @@ def test_spa_serves_real_file_from_static_dir(settings, tmp_path: Path, monkeypa
     assets_dir = static_dir / "assets"
     assets_dir.mkdir()
     (assets_dir / "app.js").write_text("console.log('hi');")
+    (assets_dir / "app-aB12_cdE.js").write_text("console.log('fingerprinted');")
 
     monkeypatch.setattr(app_module, "STATIC_DIR", static_dir)
     with make_client(settings) as client:
         root = client.get("/")
         assert root.status_code == 200 and "built spa" in root.text
+        assert root.headers["cache-control"] == "no-cache"
 
         asset = client.get("/assets/app.js")
         assert asset.status_code == 200
         assert "console.log" in asset.text
+        assert asset.headers["cache-control"] == "no-cache"
+        immutable = client.get("/assets/app-aB12_cdE.js")
+        assert immutable.headers["cache-control"] == "public, max-age=31536000, immutable"
+        assert "cache-control" not in client.get("/api/health").headers
 
         # unknown route still falls back to index.html, not a 404
         unknown = client.get("/some/client/route")
         assert unknown.status_code == 200 and "built spa" in unknown.text
+        assert unknown.headers["cache-control"] == "no-cache"
+        assert client.get("/assets/missing-aB12_cdE.js").headers["cache-control"] == "no-cache"
 
 
 def test_spa_path_traversal_cannot_escape_static_dir(

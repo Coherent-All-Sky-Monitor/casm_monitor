@@ -8,6 +8,36 @@ or Source history does not start acquisition, a calibration solve or a weights
 build. It does read caches and render plots. Preview-local plot/cache writes
 are allowed; the operational input stores remain read-only to these pages.
 
+## Status latency fix, October 6, 2026
+
+Latest-status reads previously grouped the entire scalar history for every poll.
+Several page requests shared a database lock, so these scans could also delay
+unrelated requests. The replacement seeks distinct names and their newest rows
+through the existing `(name, ts)` index. It returns the same 288 current values
+in the measured snapshot, including old keys; no retention, freshness policy,
+schema, production data or acquisition cadence changed. Equal timestamps now
+explicitly use the newest rowid, matching the single-scalar lookup.
+
+Local sequential GET measurements, three samples per endpoint:
+
+| Request | Before | After |
+| --- | --- | --- |
+| Overview | 2.09–2.31 s | 0.056–0.064 s warm; 1.18 s first request after restart |
+| Visibility/array catalogue | 1.23–2.05 s | 0.039–0.051 s |
+| SNAP beamforming membership | 1.20–1.23 s | 0.010–0.013 s |
+
+Only the 8061 web service restarted. These are local shared-host measurements,
+not complete browser load times or remote-network benchmarks. Scientific plot
+rendering and large spectrum transfers retain their existing costs. Fingerprinted
+frontend assets, including the unchanged 4.9 MB photo, now carry a one-year
+immutable browser-cache policy. HTML and unversioned files require revalidation;
+API responses do not inherit that policy. New builds use new asset filenames.
+
+Evidence: `/home/casm/scratch/casm-observation-preview/`
+`status-performance-20261006-before.json` and `status-performance-20261006-after.json`.
+Reproduce with `PYTHONPATH=. python scripts/measure_status_reads.py --output <private-path>`
+in the offline environment. It uses read-only SQLite and local GETs only.
+
 ## Measured September 24, 2026
 
 The [capture report](screenshots/2026-09-24/measurements.json) records UTC times,

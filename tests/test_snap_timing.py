@@ -205,7 +205,7 @@ def test_operator_accepted_latest_minus_one_keeps_both_frames():
 
 def test_other_two_frame_variations_still_need_attention():
     from casm_monitor.web.snap_timing_status import apply_baseline
-    for before,after in [('-1','-2'),('-3','-1'),('0','-1'),('-2','-3')]:
+    for before,after in [('-1','-2'),('-3','-1'),('0','-1'),('-2','-3'),('-1','0')]:
         boards=baseline_boards()
         boards[1]['pps_status'].update(state='unknown',delta_ticks_before=before,
             delta_ticks=after,detail='Inconsistent cross-board TT delta; alignment unverified')

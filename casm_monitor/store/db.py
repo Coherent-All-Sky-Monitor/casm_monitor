@@ -203,13 +203,22 @@ class Store:
         return {"ts": r["ts"], "name": r["name"], "tags": _jload(r["tags"]), "value": r["value"]}
 
     def latest_scalars(self) -> dict[str, dict[str, Any]]:
-        """Newest row per scalar name (ordered by ts, like ``latest_scalar``,
-        so a back-dated write with a larger rowid cannot make the two
-        disagree about which row is "latest")."""
+        """Newest row per name by (ts, rowid), matching ``latest_scalar``.
+
+        Walk distinct names with index seeks, then seek each name's last row.
+        GROUP BY / DISTINCT would scan every retained historical sample on
+        each status poll. This uses the existing (name, ts) index without a
+        schema change, cached values or a freshness window that drops old keys.
+        """
         rows = self.query(
-            "SELECT s.ts, s.name, s.tags, s.value FROM scalars s "
-            "JOIN (SELECT name, MAX(ts) AS max_ts FROM scalars GROUP BY name) m "
-            "ON s.name = m.name AND s.ts = m.max_ts"
+            "WITH RECURSIVE names(name) AS ("
+            "SELECT MIN(name) FROM scalars UNION ALL "
+            "SELECT (SELECT MIN(name) FROM scalars WHERE name > names.name) "
+            "FROM names WHERE name IS NOT NULL) "
+            "SELECT s.ts, s.name, s.tags, s.value FROM names "
+            "JOIN scalars s ON s.rowid = ("
+            "SELECT rowid FROM scalars WHERE name = names.name "
+            "ORDER BY ts DESC, rowid DESC LIMIT 1)"
         )
         return {
             r["name"]: {

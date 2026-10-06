@@ -38,6 +38,43 @@ def test_scalars_roundtrip_and_latest(store: Store):
     assert "/mnt/nvme3" in first[0]["tags"]
 
 
+def test_latest_scalars_empty_ties_backdated_and_new_names(store: Store):
+    assert store.latest_scalars() == {}
+    for name in ("", "old.only", "z", "α"):
+        store.put_scalar(name, 1, ts=10, tags={"version": 1})
+    store.put_scalar("z", 2, ts=20)
+    store.put_scalar("z", 3, ts=20, tags={"version": 3})
+    store.put_scalar("z", 0, ts=5)  # Larger rowid must not override newer time.
+    assert store.latest_scalars() == {
+        name: store.latest_scalar(name) for name in ("", "old.only", "z", "α")
+    }
+    store.put_scalar("new", None, ts=30)
+    assert store.latest_scalars()["new"] == store.latest_scalar("new")
+    assert store.latest_scalars()["z"]["value"] == 3
+
+
+def test_latest_scalars_read_only_index_seeks(settings, store: Store):
+    # A deterministic SQLite instruction budget catches an accidental history
+    # scan without relying on flaky wall-clock performance assertions.
+    store.put_scalars((("repeated", i, None) for i in range(20000)), ts=10)
+    store.put_scalar("old.only", 42, ts=1)
+    readonly = Store(settings.db_path, store_root=settings.store_root, read_only=True)
+    steps = 0
+    def budget():
+        nonlocal steps
+        steps += 1000
+        return int(steps > 50000)
+    readonly._conn.set_progress_handler(budget, 1000)
+    try:
+        result = readonly.latest_scalars()
+        assert result["repeated"]["value"] == 19999
+        assert result["old.only"]["value"] == 42
+        assert readonly._conn.total_changes == 0
+    finally:
+        readonly._conn.set_progress_handler(None, 0)
+        readonly.close()
+
+
 def test_scalars_series_decimation(store: Store):
     for i in range(1000):
         store.put_scalar("gpu.util_pct", float(i), ts=1000.0 + i)
