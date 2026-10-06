@@ -357,28 +357,43 @@ checks before invoking the canonical uploader. **Save as defaults** is
 checked by default and can be disabled; it affects only the selected kinds and
 streams. The confirmation repeats the selection, scales and default-saving choice.
 Inspect transfer and registry receipts, verify runtime activation separately,
-and update the deployment ledger after a verified deployment. The current-cal
-cards follow that ledger, not the latest trial or a successful transfer alone.
+and update the deployment ledger after a verified deployment. New current-cal
+cards follow a successful immutable upload receipt matched to the registry;
+legacy deployments use the ledger. Neither is a GPU-activation acknowledgement.
 
 ### Antenna and candidate metadata after an upload
 
 The Overview, Visibilities and SNAP widgets share the cached nonzero CB slot
 inspection, rather than a hard-coded antenna count. A new CB product is inspected
-by the figure worker; its six stream associations and the deployment ledger must
-agree before the widgets accept it. The uploader currently does not update the
-wiki ledger, so a verified deployment still needs that manual step. Calibration
-defaults also follow the ledger. Current wiring/layout changes remain separate.
+by the figure worker; its six stream associations and cached file identity must
+agree before the widgets accept it. A stale wiki ledger stays a warning, not a
+membership veto. The uploader never edits that ledger. Calibration defaults use
+the successful upload's frozen calibration path/hash, selected kinds/streams and
+SCALE values. CB receipts must match the current per-stream event times; IB uses
+its last successful per-stream monitor receipt, with labelled ledger fallback.
+Mixed scales have no single default. Trials, exports, dry runs and failed uploads
+cannot select a new reference. Exported report/calibration hashes preserve recipe
+identity after scratch cleanup. Current wiring/layout changes remain separate.
 
 T2 event coordinates and new T3/Slack candidate figures use the event-time weights
 registry and embedded pointings. Existing archived figures/posts stay unchanged.
-Beam widths have an unresolved timing issue: the uploader records pointings first,
-then `t3-weights-watch` fills the geometry-derived widths. T2 caches registry products
-and clustering widths per product ID, so a first read before that update can retain
-fallback widths. A temporary-registry reproduction confirmed stale reads on October
-6. Publish widths before live events, or invalidate both caches, before claiming
-fully automatic antenna-change propagation. No T2/T3 fix or restart was performed
-as part of enabling the web controls. An IB-only upload does not change CB geometry;
-partial CB stream deployment has no single all-band product identity.
+The uploader now supplies widths before its live events, using the same read-only
+helper as the watcher: the established lambda/D ellipse at mean saved frequency,
+from nonzero CB slots across all channels/polarizations/beams. This is a union
+ellipse, not an exact response or a separate fit per factorial beam. Registry
+readers invalidate changed JSON files; T2 refreshes cached clustering widths too.
+Full-six-stream payload hashes define the product ID even for a partial upload;
+only selected streams get live events. Missing/mixed stream evidence has no single
+all-band pointing. IB-only uploads leave CB geometry unchanged.
+
+Future `UTC_START` remains a limitation: the registry records transfer time, not
+future activation, and the UI warns about that interval. T2/watcher source fixes
+need their processes reloaded; this is separate from refreshing the monitor.
+External CLI changes have no monitor receipt: a same-payload SCALE repush can
+leave an older saved receipt as the last recorded default. Independently verify
+such changes; the receipt is not node readback. `scale_source` summarizes both
+CB and IB sources together. The isolated receipts are visible only to services
+configured with that observation root (8061); retired 8060 is not re-enabled.
 
 ## API and checks
 

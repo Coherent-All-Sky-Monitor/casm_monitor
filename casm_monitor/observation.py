@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
 from .collectors.weights import load_product
@@ -51,6 +52,8 @@ def recorded_product(settings, latest):
         result["error"] = "Live-event product record unavailable"
         return result
     result["path"] = product["h5_path"]
+    result['ledger_agrees'] = not bool(result.get('registry_mismatch'))
+    result['weights_basename'] = Path(product['h5_path']).name
     return result
 
 
@@ -72,10 +75,10 @@ def latest_stream_events(path):
             event = json.loads(line)
             stream = int(event.get("stream", -1))
             stamp = parse_iso(event.get("utc"))
-            if stream not in range(6) or stamp is None:
+            if stream not in range(6) or stamp is None or stamp > time.time():
                 continue
             if stream not in found or stamp >= found[stream][0]:
-                found[stream] = (stamp, {k: event.get(k) for k in ("stream", "node", "utc", "source", "product_id", "payload_md5", "evidence")})
+                found[stream] = (stamp, {k: event.get(k) for k in ("stream", "node", "utc", "source", "product_id", "payload_md5", "evidence", "meta")})
         except (ValueError, TypeError):
             continue
     return [found[s][1] for s in sorted(found)]
@@ -96,8 +99,7 @@ def inspected_deployment(settings, latest):
                     and cached.get("identity") == file_identity(product["path"])
                     and cached.get("product_id") == product.get("product_id")
                     and cached.get("path") == product.get("path")
-                    and cached.get("inspection_state") == "complete"
-                    and not product.get("registry_mismatch"))
+                    and cached.get("inspection_state") == "complete")
     except OSError:
         matching = False
     return ({**cached, **product} if matching else

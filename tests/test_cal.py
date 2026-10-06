@@ -837,6 +837,9 @@ def test_upload_writes_audit_row_and_event(staged, monkeypatch):
         assert len(row["hashes"]["files_before"]) == 12
         assert set(row["hashes"]["sources"]) == {"weights_h5", "ib_h5"}
         assert row["hashes"]["layout_snapshot_sha256"] == row["hashes"]["layout_sha256"]
+        assert row['hashes']['deployment']['kind'] == 'both'
+        assert row['hashes']['deployment']['scale'] == 8064
+        assert row['hashes']['completed_utc_unix'] >= row['ts']
         events = store.events(kind="weights_uploaded")
         assert events and events[0]["detail"]["tag"] == tag
         # and the inhibit marker is gone once the upload is over
@@ -1248,7 +1251,7 @@ def test_payload_regeneration_mismatch_is_evented(staged, monkeypatch):
     settings, tag = staged
     settings = allow(settings)
     monkeypatch.setattr(dep, "load_settings", lambda _p=None: settings)
-    monkeypatch.setattr(dep, "ensure_registered", lambda s, st: {"product_id": "p"})
+    monkeypatch.setattr(dep, 'ensure_registered', lambda *a: pytest.fail('Drifted payload must not enter fallback registration'))
     sdir = dep.stage_dir(settings, tag)
 
     def rewrite(argv, timeout=0.0):
@@ -1275,6 +1278,7 @@ def test_payload_regeneration_mismatch_is_evented(staged, monkeypatch):
         # every other file's payload survived the header rewrite untouched
         assert row["hashes"]["files_after"] != row["hashes"]["files_before"]
         assert len(row["hashes"]["payload_drift"]) == 1
+        assert row['registry'] == 'skipped'
     finally:
         store.close()
 

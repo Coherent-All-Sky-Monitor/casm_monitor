@@ -239,9 +239,9 @@ Header: `X-CSRF-Token: <the casm_monitor_csrf cookie GET /api/cal/status set>`
 - `confirm_tag` must equal `tag` in the URL (belt-and-suspenders on top of
   the frontend's own match-before-enable check). `400
   {"detail": "confirm_tag does not match"}` otherwise.
-- `save_defaults`: if true, the backend also updates the ledger row
-  (`GET /api/cal/status` -> `ledger_row`) so this becomes the recorded
-  default cal/weights for future reads.
+- `save_defaults`: adds `--save-defaults`, updating the selected node restart
+  defaults. It never edits the human-maintained wiki ledger. Successful monitor
+  upload receipts supply new recorded calibration defaults (see below).
 - Response `200 {"job_id": 123, "auth_id": 45, "tag": "..."}` on success:
   `auth_id` is the single-use authorization the job must consume.
 - `403 {"detail": "uploads are disabled on this service (CASM_MONITOR_ALLOW_UPLOAD)"}`

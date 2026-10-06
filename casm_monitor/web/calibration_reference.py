@@ -27,7 +27,16 @@ def recipe_for(calibration: Path, *, max_duration_s: float = 3600) -> tuple[dict
     Phase comparison keeps its one-hour budget; workspace defaults allow the
     same four-hour window that its solve form supports.
     """
-    for report in islice(sorted(calibration.parent.glob('report_*.json')), 64):
+    candidates = [(report, calibration) for report in islice(sorted(calibration.parent.glob('report_*.json')), 64)]
+    from ..deployment_metadata import manifest_for, exported_file
+    bound = manifest_for(calibration, 'cal_h5')
+    if bound:
+        root, manifest = bound
+        original = next(e['source'] for e in manifest['files'] if e['role'] == 'cal_h5')
+        for entry in manifest['files']:
+            if Path(entry['relative']).name.startswith('report_') and entry['relative'].endswith('.json'):
+                candidates.append((exported_file(root, entry), Path(original)))
+    for report, output_identity in candidates:
         if report.is_symlink():
             continue
         body = read_json(report)
@@ -35,7 +44,7 @@ def recipe_for(calibration: Path, *, max_duration_s: float = 3600) -> tuple[dict
         if not isinstance(params, dict) or not params.get('out_dir') or not params.get('tag'):
             continue
         expected = Path(params['out_dir']) / f"cal_{params['tag']}.h5"
-        if expected.resolve() != calibration.resolve() or params.get('cal_path'):
+        if expected.resolve() != output_identity.resolve() or params.get('cal_path'):
             continue
         if str(params.get('cal_source', '')).lower() != 'sun':
             continue
@@ -52,7 +61,7 @@ def recipe_for(calibration: Path, *, max_duration_s: float = 3600) -> tuple[dict
         if not isinstance(antennas, list) or not antennas or any(type(a) is not int for a in antennas):
             continue
         return dict(params=params, antennas=antennas, t0=t0, t1=t1), report
-    raise ValueError(f'No adjacent Sun report proves the calibration output identity and a solve window of at most {max_duration_s / 3600:g} hours. The date is not inferred from the filename.')
+    raise ValueError(f'No bound Sun report proves the calibration output identity and a solve window of at most {max_duration_s / 3600:g} hours. The date is not inferred from the filename.')
 
 
 def references(settings, comparison_date: str = '', now: datetime | None = None) -> dict:

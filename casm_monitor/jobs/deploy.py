@@ -1129,6 +1129,7 @@ def upload_refusal(
 def _registry_product_id(stage: dict[str, Any]) -> str | None:
     """Deterministic registry product id of the staged CB payloads."""
     from casm_t2.weights_registry import product_id_from_payloads
+    from bf_weights_generator.beam_metadata import cb_payload_md5s
 
     payloads = {
         int(name.rsplit(".", 1)[1]): md5
@@ -1137,7 +1138,7 @@ def _registry_product_id(stage: dict[str, Any]) -> str | None:
     }
     if len(payloads) != len((stage.get('options') or {}).get('streams', STREAMS)):
         return None
-    return product_id_from_payloads(payloads)
+    return product_id_from_payloads(cb_payload_md5s(stage['weights_h5'], payloads))
 
 
 def ensure_registered(settings: Settings, stage: dict[str, Any]) -> dict[str, Any]:
@@ -1157,6 +1158,7 @@ def ensure_registered(settings: Settings, stage: dict[str, Any]) -> dict[str, An
 
     import h5py
     from casm_t2.weights_registry import Registry
+    from bf_weights_generator.beam_metadata import beam_fwhm_from_h5, cb_payload_md5s
 
     result: dict[str, Any] = {"product_id": None, "registered_here": False}
     pid = _registry_product_id(stage)
@@ -1177,12 +1179,18 @@ def ensure_registered(settings: Settings, stage: dict[str, Any]) -> dict[str, An
     with h5py.File(stage["weights_h5"], "r") as f:
         alt = [float(x) for x in f["pointings/alt_deg"][:]]
         az = [float(x) for x in f["pointings/az_deg"][:]]
+    all_payloads = cb_payload_md5s(stage['weights_h5'], payloads)
+    try:
+        fx, fy = beam_fwhm_from_h5(stage['weights_h5'])
+    except (OSError, ValueError, KeyError):
+        fx, fy = None, None
     registry = Registry(settings.registry_dir)
     registered = registry.record_product(
         h5_path=str(stage["weights_h5"]),
-        stream_md5=payloads,
+        stream_md5=all_payloads,
         alt_deg=alt,
         az_deg=az,
+        beam_fwhm_x_deg=fx, beam_fwhm_y_deg=fy,
         meta={
             "scale": int(stage["scale"]),
             "ib_scale": int(stage["ib_scale"]),
@@ -1304,6 +1312,11 @@ def _upload_locked(
     started = time.time()
     hashes = dict(plan["hashes"])
     hashes["stage_digest"] = plan["stage_digest"]
+    from ..deployment_metadata import upload_snapshot
+    try:
+        hashes['deployment'] = upload_snapshot(plan)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise DeployError(f'Could not bind deployment metadata: {exc}', code='export_binding') from exc
     # The audit row exists BEFORE the first byte moves: a worker killed mid
     # upload still leaves the record that it might have.
     upload_id = store.add_upload(
@@ -1370,7 +1383,7 @@ def _upload_locked(
 
     registry: dict[str, Any] = {}
     registry_state = "skipped"
-    if code == 0:
+    if code == 0 and not payload_drift:
         try:
             registry = ensure_registered(
                 settings, {**stage, "payload_md5s": after_payloads or stage.get("payload_md5s")}
@@ -1400,7 +1413,10 @@ def _upload_locked(
                 },
             )
 
+    if payload_drift:
+        registry = {'error': 'Monitor fallback registration skipped: regenerated payloads differ from the reviewed stage.'}
     state = "done" if code == 0 and registry_state != "failed" and not payload_drift else "failed"
+    hashes['completed_utc_unix'] = time.time()
     store.update_upload(
         upload_id,
         state=state,

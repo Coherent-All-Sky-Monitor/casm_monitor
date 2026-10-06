@@ -99,6 +99,7 @@ export default function CalibrationDeployment({tag,detail,deployment,deployDetai
         <fieldset disabled={disabled}><legend>Streams</legend><div className="cal-deploy-streams">{[0,1,2,3,4,5].map(s=><label className="cal-check" key={s}><input type="checkbox" checked={streams.includes(s)} onChange={e=>setStreams(current=>e.target.checked?[...current,s].sort():current.filter(v=>v!==s))}/>{s} · corr{s<3?'1':'2'}</label>)}</div></fieldset>
         <label>UTC_START · blank for upload time<input value={utc} disabled={disabled} placeholder="YYYY-MM-DD-HH:MM:SS" onChange={e=>setUtc(e.target.value)} spellCheck={false}/></label>
         <p className="cal-caption">This is the uploader’s UTC_START header, not a scheduled webpage job. A supplied time must still be in the future when uploading.</p>
+        {utc.trim()&&<p className="cal-transit-warning">The registry records transfer time, not future activation. Antenna and beam displays may switch before this UTC_START; avoid interpreting that interval as a verified active configuration.</p>}
         <p className="cal-caption">HDF5 inputs come from the verified export. Each dry run gets a fresh payload directory. IB destination: /tmp/incohweights.fifo.{'{stream}'}. Registry recording is required for live CB uploads; dry runs use --no-registry.</p>
         {stage&&<><p className="cal-path">{stage.stage_dir}</p><pre className="cal-upload-command">{stage.command}{defaults?' --save-defaults':''}</pre></>}
       </details>

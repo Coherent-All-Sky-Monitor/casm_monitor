@@ -34,10 +34,10 @@ date-based fallback and the defaults when choosing a different day:
   read.
 * **ref ant** = 9 when it is in the set (the reference every deployed cal since
   Aug-15 used), else the lowest antenna in the set.
-* **deployed product** = the LAST ROW of ``deployed_weights.csv``, which is the
-  standing authority for what is live, cross-read with the weights registry for
-  the product id. The SCALE pairing is parsed out of that row's notes and is
-  never hardcoded here.
+* **deployed product** = six agreeing registry stream associations. Successful
+  monitor upload receipts bind calibration paths and header scales, including
+  saved-default reloads. Legacy values come from ``deployed_weights.csv`` with
+  explicit source labels. Neither establishes fresh GPU activation.
 
 Read-only: this module opens the layout CSV, the ledger and the registry for
 reading and writes nothing.
@@ -49,15 +49,14 @@ import csv
 import hashlib
 import re
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from .config import Settings
 from .collectors.weights import (
     load_product,
-    newest_product,
     read_last_ledger_row,
-    read_live_events,
 )
 
 #: Sources the Calibration tab offers. Only the ones in
@@ -200,19 +199,40 @@ def layout_info(path: str | Path) -> dict[str, Any]:
     }
 
 
-#: Channel the populated-slot check reads (mid-band; matches the same check
-#: ``jobs/deploy.py`` runs at stage time, ``_weights_slots``).
+#: Retained legacy channel constant; deployed membership now scans all channels.
 DEPLOYED_CB_CHECK_CHAN = 1500
+
+
+@lru_cache(maxsize=4)
+def _populated_antennas(path, size, mtime_ns):
+    import h5py
+    import numpy as np
+    with h5py.File(path, 'r') as f:
+        ids = np.asarray(f['array_config/antenna_ids'][:], dtype=int)
+        weights = f['weights_int8']
+        if weights.ndim != 5 or weights.shape[0] != 2 or weights.shape[-1] > len(ids):
+            raise ValueError('Weights slot metadata disagrees with payload')
+        if weights.size * weights.dtype.itemsize > 400 * 1024**2:
+            raise ValueError('Weights exceed the 400 MiB inspection budget')
+        populated = np.zeros(weights.shape[-1], dtype=bool)
+        for channel in range(0, weights.shape[1], 64):
+            populated |= np.any(weights[:, channel:channel+64] != 0, axis=(0,1,2,3))
+        ants = tuple(sorted(int(a) for a in ids[:len(populated)][populated]))
+        if any(a <= 0 for a in ants):
+            raise ValueError('Populated slots have no valid antenna identity')
+    after = Path(path).stat()
+    if (after.st_size, after.st_mtime_ns) != (size, mtime_ns):
+        raise ValueError('Weights changed during inspection')
+    return ants
 
 
 def deployed_cb_antennas(weights_h5: str | Path | None) -> dict[str, Any]:
     """Antennas actually populated in the DEPLOYED CB weights file.
 
-    Reads ``array_config/antenna_ids`` (the slot -> antenna map the driver
-    baked in from the layout at build time, i.e. "slot -> packet_idx ->
-    antenna via the layout" already resolved) and ``weights_int8`` at
-    :data:`DEPLOYED_CB_CHECK_CHAN`, the same check ``jobs/deploy.py``'s
-    ``_weights_slots`` runs at stage time. This is what is actually LIVE,
+    Reads ``array_config/antenna_ids`` (the saved slot-to-antenna map) and
+    nonzero ``weights_int8`` slots over every channel, polarization and beam.
+    Results are cached by file identity with a 400 MiB inspection budget.
+    This is what the recorded product contains,
     which is not always the layout's ``include_in_beamforming`` column (that
     column can be edited after the last build without a rebuild — 2026-09-09
     finding: the layout gate lists 18 antennas, adds 12 and 33, lacks 18,
@@ -231,16 +251,8 @@ def deployed_cb_antennas(weights_h5: str | Path | None) -> dict[str, Any]:
         result["error"] = f"deployed weights file {weights_h5} does not exist"
         return result
     try:
-        import h5py
-        import numpy as np
-
-        with h5py.File(path, "r") as f:
-            ids = np.asarray(f["array_config/antenna_ids"][:], dtype=int)
-            n_chan = int(f["weights_int8"].shape[1])
-            chan = min(DEPLOYED_CB_CHECK_CHAN, n_chan - 1)
-            sl = np.abs(np.asarray(f["weights_int8"][:, chan, :, :, :], dtype=np.int32))
-        populated = np.where(sl.max(axis=(0, 1, 2)) > 0)[0]
-        result["antennas"] = sorted(int(ids[i]) for i in populated)
+        stat = path.stat()
+        result['antennas'] = list(_populated_antennas(str(path.resolve()), stat.st_size, stat.st_mtime_ns))
     except Exception as exc:  # noqa: BLE001 - surfaced as a note, not fatal
         result["error"] = f"{type(exc).__name__}: {exc}"
     return result
@@ -259,7 +271,7 @@ def build_tag(date: str, when_utc: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# The deployed product: ledger last row + registry
+# The deployed product: registry + successful receipts, legacy ledger fallback
 # ---------------------------------------------------------------------------
 
 def _first_path(field: str | None) -> str | None:
@@ -314,36 +326,100 @@ def parse_scale_pairing(row: dict[str, str] | None) -> dict[str, Any]:
 
 
 def deployed_product(settings: Settings) -> dict[str, Any]:
-    """What is live now: the ledger's last row plus the registry product id."""
+    """Recorded deployment: six agreeing streams, with a bound cal reference.
+
+    The ledger remains a legacy reference, not a veto on a newer deployment.
+    A consistent registry product and successful receipt bind a saved calibration;
+    a different/unidentified product never inherits the previous calibration.
+    """
+    from .observation import latest_stream_events
+    from .deployment_metadata import successful_uploads, digest
+    from .util import parse_iso
     row = read_last_ledger_row(settings.deployed_weights_csv)
-    events = read_live_events(Path(settings.registry_dir) / "live_events.jsonl")
+    events = latest_stream_events(Path(settings.registry_dir) / "live_events.jsonl")
     product_id = None
-    if events:
-        newest = events[-1]
-        product_id = newest.get("product_id")
     product = None
-    if product_id:
-        product = load_product(settings.registry_dir, str(product_id))
-    if product is None:
-        product = newest_product(settings.registry_dir)
-        if product is not None and not product_id:
-            product_id = product.get("product_id")
+    ids = {e.get('product_id') for e in events}
+    consistent = len(events) == 6 and len(ids) == 1 and None not in ids
+    if consistent:
+        product_id = next(iter(ids))
+        product = load_product(settings.registry_dir, product_id)
+    weights_file = product.get('h5_path') if product else None
+    ledger_weights = _first_path((row or {}).get('weights_file'))
+    ledger_matches = bool(weights_file and ledger_weights and
+                          Path(weights_file).resolve() == Path(ledger_weights).resolve())
+    legacy = not events
+    cal_file = _first_path((row or {}).get('cal_file')) if ledger_matches or legacy else None
+    reference_error = None
     try:
         pairing: dict[str, Any] | None = parse_scale_pairing(row)
         pairing_error = None
     except ValueError as exc:
         pairing, pairing_error = None, str(exc)
+    receipts = successful_uploads(settings)
+    # Product metadata is first-write-only: SCALE changes do not change payload
+    # hashes. Bind CB receipts to the current per-stream upload timestamps.
+    cb_receipts = []
+    def matches_load(receipt, event, stamp):
+        if receipt['kind'] not in ('cb', 'both') or event['stream'] not in receipt['streams']:
+            return False
+        if receipt['product_id'] != event['product_id']:
+            return False
+        if event.get('source') == 'defaults':
+            return receipt['save_defaults'] and receipt['completed'] <= stamp
+        return (event.get('source') == 'upload'
+                and receipt['ts'] - 1 <= stamp <= receipt['completed'] + 1)
+    for event in events:
+        stamp = parse_iso(event['utc'])
+        receipt = next((r for r in receipts if matches_load(r, event, stamp)), None)
+        cb_receipts.append(receipt)
+    cb_values = [r['scale'] if r else (pairing['scale'] if pairing and ledger_matches else None)
+                 for r in cb_receipts]
+    cb_scale = (cb_values[0] if len(cb_values) == 6 and None not in cb_values and len(set(cb_values)) == 1
+                else pairing['scale'] if legacy and pairing else None)
+    reference_source = 'ledger' if cal_file else 'unavailable'
+    deployed_date = (row or {}).get('date_deployed') if ledger_matches or legacy else None
+    if consistent and any(cb_receipts):
+        receipt = max((r for r in cb_receipts if r), key=lambda r: r['ts'])
+        deployed_date = _utc(receipt['ts'])
+        # A new export alone never becomes the current reference; this path is
+        # reached only through a successful upload bound to live associations.
+        cal_file = None
+        try:
+            candidate = receipt.get('cal_h5')
+            if not candidate or not receipt.get('cal_sha256') or digest(candidate) != receipt['cal_sha256']:
+                raise ValueError('Saved upload calibration is missing or has changed')
+            cal_file = candidate
+            reference_source = 'successful_upload'
+        except (OSError, ValueError) as exc:
+            reference_error = str(exc)
+    # IB has no CB-pointing registry. Its last successful per-stream receipt is
+    # explicit recorded evidence, not a claim to have re-read node RAM/defaults.
+    ib_receipts = [next((r for r in receipts if r['kind'] in ('ib', 'both')
+                         and stream in r['streams']), None) for stream in range(6)]
+    ib_values = [r['ib_scale'] if r else pairing['ib_scale'] if pairing else None for r in ib_receipts]
+    ib_paths = [r['ib_h5'] if r else _ib_path((row or {}).get('weights_file')) for r in ib_receipts]
+    ib_scale = ib_values[0] if None not in ib_values and len(set(ib_values)) == 1 else None
+    ib_file = ib_paths[0] if None not in ib_paths and len(set(ib_paths)) == 1 else None
+    if cb_scale is None or ib_scale is None:
+        pairing_error = 'No single recorded SCALE pairing across all six streams; review the deployment records.'
     return {
-        "cal_file": _first_path((row or {}).get("cal_file")),
-        "weights_file": _first_path((row or {}).get("weights_file")),
-        "ib_file": _ib_path((row or {}).get("weights_file")),
-        "date_deployed": (row or {}).get("date_deployed"),
-        "n_ant_set": (row or {}).get("n_ant_set"),
-        "scale": None if pairing is None else pairing["scale"],
-        "ib_scale": None if pairing is None else pairing["ib_scale"],
+        "cal_file": cal_file,
+        "weights_file": weights_file or (ledger_weights if legacy else None),
+        "ib_file": ib_file,
+        "date_deployed": deployed_date,
+        "last_load_utc": max(e['utc'] for e in events) if product else None,
+        "n_ant_set": (row or {}).get("n_ant_set") if ledger_matches or legacy else None,
+        "scale": cb_scale,
+        "ib_scale": ib_scale,
         "scale_error": pairing_error,
         "product_id": product_id,
         "ledger_row": dict(row) if row else None,
+        "reference_error": reference_error,
+        "reference_source": reference_source,
+        "scale_source": 'successful_upload_and_ledger' if any(cb_receipts) or any(ib_receipts) else 'ledger',
+        "source": 'live_event' if product else 'ledger_only' if legacy else 'unknown',
+        "ledger_matches": ledger_matches,
     }
 
 

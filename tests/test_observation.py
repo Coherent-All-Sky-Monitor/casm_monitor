@@ -70,6 +70,9 @@ def test_worker_caches_membership_and_get_does_not_open_hdf5(settings, store, tm
     store.put_scalar("weights.product_id", "fixture")
     store.put_scalar("weights.product_source", "live_event")
     render_observation(store, settings, now=1789315200)
+    # The human ledger can lag behind an approved deployment. That warning
+    # must not hide independently inspected, six-stream-consistent membership.
+    store.put_scalar('weights.registry_mismatch', True)
     def forbidden(*args, **kwargs):
         raise AssertionError("GET must not read weights payload")
     monkeypatch.setattr(h5py, "File", forbidden)
