@@ -66,7 +66,7 @@ export default function CalibrationComparisonPage() {
         <p><strong>Calibration day:</strong> {clock(reference.source_window[0])} – {clock(reference.source_window[1])}</p>
         <p><strong>Selected day:</strong> {clock(reference.comparison_window[0])} – {clock(reference.comparison_window[1])}</p>
         <p className="muted">Window comes from the saved recipe report, not the filename. Both days are Sun fringe-stopped independently. The saved calibration is not applied to either curve.</p>
-        <p className="muted">Recorded product {reference.product_id ?? "ID unknown"} · {reference.antennas.length} reported calibration antennas: {reference.antennas.join(", ")}</p>
+        <p className="muted">Recorded calibration · {reference.antennas.length} antennas: {reference.antennas.join(", ")}</p>
         <details><summary>Product, report and layout evidence</summary><Evidence value={reference} /></details>
         {!currentPlan && <p role="status">Updating comparison day…</p>}
         {reference.reason && <Notice>{reference.reason}</Notice>}

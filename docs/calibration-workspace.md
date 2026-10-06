@@ -356,6 +356,11 @@ It reuses single-use authorization, the deploy lock and final file/layout/scale
 checks before invoking the canonical uploader. **Save as defaults** is
 checked by default and can be disabled; it affects only the selected kinds and
 streams. The confirmation repeats the selection, scales and default-saving choice.
+Deployment cards show the calibration date/source and upload time. Product IDs,
+export UUIDs and file hashes remain in API/download metadata, not routine labels.
+The export card offers **Copy folder path**. A conflicting six-stream registry
+is reported as a registry inconsistency, not as an absent upload.
+
 Inspect transfer and registry receipts, verify runtime activation separately,
 and update the deployment ledger after a verified deployment. New current-cal
 cards follow a successful immutable upload receipt matched to the registry;

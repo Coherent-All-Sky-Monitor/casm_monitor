@@ -28,7 +28,7 @@ export function CurrentCalibration({value}:{value:Json|null}) {
         <div><span>Calibrator · {value.source==='sun'?'Sun':value.source}</span><strong>{display(value.source_window[0],zone,'date')}</strong><small>Calibration observation</small></div>
         <div><span>Solve window</span><strong className="cal-current-time">{display(value.source_window[0],zone,'time').replace(/ (PDT|PST|UTC)$/,'')} – {display(value.source_window[1],zone,'time')}</strong><small>{value.antennas?.length} calibration antennas</small></div>
         <div><span>Last uploaded</span><strong>{display(value.date_uploaded,zone,'date')}</strong><small>{display(value.date_uploaded,zone,'time')}</small></div>
-      </div><p className="cal-caption">Recorded deployed product · {value.product_id??'ID unavailable'}. New trials leave it unchanged.</p>
+      </div>
     </>:<Notice>{value?.reason??'Loading recorded deployment…'}</Notice>}
   </section>;
 }
@@ -46,6 +46,7 @@ export default function CalibrationDeployment({tag,detail,deployment,deployDetai
   const [ibScale,setIbScale]=useState('');
   const [streams,setStreams]=useState<number[]>([0,1,2,3,4,5]);
   const [utc,setUtc]=useState('');
+  const [copyStatus,setCopyStatus]=useState('Copy folder path');
   const item=detail.export, stage=deployDetail.stage;
   useEffect(()=>{setAccept(false);setConfirm('');setDefaults(true);},[tag,item?.export_id]);
   useEffect(()=>{
@@ -65,7 +66,7 @@ export default function CalibrationDeployment({tag,detail,deployment,deployDetai
   const reviewed=Boolean(staged&&detail.review?.accepted&&detail.review.export_id===item?.export_id&&detail.review.stage_digest===stage?.digest);
   const canUpload=reviewed&&deployment.allow_upload&&!deployment.casm_track_running&&!disabled&&confirm===tag;
   const upload=()=>{
-    if(!canUpload||!window.confirm(`Upload ${target} for ${tag}?\nStreams: ${streams.join(', ')}\nCB SCALE ${scale} · IB SCALE ${ibScale}\nExport: ${item.export_id}\n${defaults?'Also replace restart defaults for this selection.':'Restart defaults will remain unchanged.'}\nThis changes the running beamformer.`))return;
+    if(!canUpload||!window.confirm(`Upload ${target} for ${tag}?\nStreams: ${streams.join(', ')}\nCB SCALE ${scale} · IB SCALE ${ibScale}\nExport saved: ${stamp(item.created_utc)}\n${defaults?'Also replace restart defaults for this selection.':'Restart defaults will remain unchanged.'}\nThis changes the running beamformer.`))return;
     const cookie=document.cookie.split('; ').find(row=>row.startsWith('casm_monitor_csrf='))?.split('=').slice(1).join('=')??'';
     return perform(`${ROOT}/deployment/builds/${tag}/upload`,{confirm_tag:confirm,save_defaults:defaults,note,stage_digest:stage.digest},
       'Upload requested for the reviewed product. Check the job and transfer receipts.',{'X-CSRF-Token':decodeURIComponent(cookie)});
@@ -76,13 +77,14 @@ export default function CalibrationDeployment({tag,detail,deployment,deployDetai
       <p className="cal-caption">Save CB & IB, a complete calibration record notebook, solve and grid reports, static template and diagnostic arrays in a new dated directory. The notebook includes ordered replay cells through writing both weights to disk.</p>
       <label>Export parent directory<input list="cal-export-roots" value={parent} onChange={e=>setParent(e.target.value)} spellCheck={false}/></label>
       <datalist id="cal-export-roots">{roots.map(root=><option key={root} value={root}/>)}</datalist>
-      <p className="cal-caption">Folder: calibration date / build ID + export time + unique ID. Choose a listed root or a subdirectory within it.</p>
+      <p className="cal-caption">Each export gets its own dated folder. Choose a listed root or a subdirectory within it.</p>
       <button className="cal-primary" disabled={disabled||!ready||!parent} onClick={()=>perform(`${ROOT}/builds/${tag}/export`,{parent},'Weight export queued. No upload requested.')}>Write CB & IB to disk</button>
       {!ready&&<p className="cal-caption">Generate the 512 beams and matching IB in step 4 first.</p>}
-      {item&&<div className="cal-export-receipt"><strong>{item.directory}</strong><p className="cal-caption">Written {stamp(item.created_utc)} · ID {item.export_id}</p>
+      {item&&<div className="cal-export-receipt"><strong>Saved weights · {tag}</strong><p className="cal-caption">Written {stamp(item.created_utc)}</p>
+        <button onClick={()=>{if(!navigator.clipboard){setCopyStatus('Full path is in metadata below');return;}navigator.clipboard.writeText(item.directory).then(()=>setCopyStatus('Folder path copied')).catch(()=>setCopyStatus('Full path is in metadata below'));}}>{copyStatus}</button>
         {(detail.artifacts??[]).filter((a:Json)=>a.name==='calibration_record.ipynb'&&a.relative.includes(item.export_id)).map((a:Json)=><p key={a.id}><a className="cal-primary" href={a.url} download>Download full calibration notebook</a></p>)}
         {!item.files.some((f:Json)=>f.role==='calibration_record')&&<p className="cal-caption">This older export has the grid notebook only. Write a new export to include the full calibration record; the existing export will be preserved.</p>}
-        <div className="cal-export-files">{item.files.filter((f:Json)=>['CB','IB','cal_h5'].includes(f.role)).map((file:Json)=><div key={file.role}><b>{file.role==='cal_h5'?'Calibration':file.role}</b><code>{file.relative}</code><small>SHA-256 {file.sha256.slice(0,16)}…</small></div>)}</div>
+        <div className="cal-export-files">{item.files.filter((f:Json)=>['CB','IB','cal_h5'].includes(f.role)).map((file:Json)=><div key={file.role}><b>{file.role==='cal_h5'?'Calibration':file.role}</b><code>{file.relative}</code></div>)}</div>
         <p className="cal-caption">Full paths and hashes are in manifest.json. Inspect these files before approving deployment.</p><Evidence value={item}/>
       </div>}
     </section>
@@ -109,7 +111,7 @@ export default function CalibrationDeployment({tag,detail,deployment,deployDetai
         <p className="cal-caption">Build and check {target} payloads for {streams.length} streams from this export. Nothing is transferred or saved as telescope defaults.</p>
         <button disabled={disabled||!item||!ready||!valid} onClick={()=>perform(`${ROOT}/deployment/builds/${tag}/stage`,{export_id:item.export_id,save_defaults:false,options},'Dry run queued for this selection. Nothing is sent to the telescope.')}>Run {target} dry run</button>
         {stage&&!sameOptions&&<p className="cal-transit-warning">Selection changed or the previous dry run predates these controls. Run a new dry run and review it.</p>}
-        {stage&&<><p className="cal-caption">{staged?'Passed for this export.':'This dry run is failed or belongs to an earlier export.'}</p><p className="cal-path">{stage.stage_dir}</p>
+        {stage&&<><p className="cal-caption">{staged?'Passed for this export.':'This dry run is failed or belongs to an earlier export.'}</p>
           <div className="cal-checklist">{stage.checks?.map((check:Json)=><p key={check.name}><span className={check.ok?'complete':''}>{check.ok?'✓':'!'}</span>{check.name.replaceAll('_',' ')}</p>)}</div><Evidence value={stage}/></>}
       </section>
       <section className="cal-card"><div className="cal-section-heading"><h3>Your review</h3><span>{reviewed?'Approved':'3 · Inspect & approve'}</span></div>

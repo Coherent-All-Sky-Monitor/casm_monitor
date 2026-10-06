@@ -82,7 +82,7 @@ export function Geometry({ data }: { data: Overview }) {
         {" "}Membership uses inspected weights; unresolved slot identities are not highlighted.</p>
       <p className="note">Blue: deployed in selection. Grey: wired. Dark outline: intended. Hollow: other layout positions.</p>
       <p>{data.layout.counts.wired} wired · {data.layout.counts.intended} intended · {data.layout.counts.deployed_union ?? "unknown"} in the deployed union</p>
-      <p className="note">{data.deployment.product_id ?? "Deployment identity unavailable"} · {data.deployment.inspection_state}</p>
+      <p className="note">{data.deployment.product_id ? "Current deployed weights" : "Deployment identity unavailable"} · {data.deployment.inspection_state}</p>
       <details>
         <summary>Membership evidence</summary>
         <p className="note">{data.deployment.evidence}</p>

@@ -47,7 +47,8 @@ def workspace_defaults(settings, date: str = '') -> dict:
     try:
         product = deployed_product(settings)
         if not product.get('cal_file') or not product.get('weights_file'):
-            raise ValueError('No uploaded calibration and weights recorded in the deployment ledger')
+            raise ValueError(product.get('reference_error') or
+                             'No calibration file is linked to the current weights. Check the upload records.')
         calibration = Path(product['cal_file'])
         if not calibration.is_file():
             raise ValueError('The uploaded calibration file is unavailable')

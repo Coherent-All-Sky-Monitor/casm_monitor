@@ -80,6 +80,7 @@ def test_mixed_streams_and_scale_receipts_are_not_one_configuration(settings, tm
     (settings.registry_dir/'live_events.jsonl').write_text('\n'.join(map(json.dumps, events)))
     result = cd.deployed_product(settings)
     assert result['product_id'] is None and result['cal_file'] is None
+    assert 'conflicting stream records' in result['reference_error']
 
 
 def test_saved_defaults_reload_retains_scale_and_deployment_date(settings, tmp_path, monkeypatch):

@@ -369,6 +369,15 @@ def test_explicit_other_date_uses_date_based_windows(uploaded_recipe):
     assert defaults['current_calibration']['source_window'][0] == '2026-09-17T19:17:00+00:00'
 
 
+def test_registry_conflict_is_not_reported_as_missing_upload(uploaded_recipe, monkeypatch):
+    _, client, _, _ = uploaded_recipe
+    reason = 'Weights registry has incomplete or conflicting stream records; current calibration cannot be identified.'
+    monkeypatch.setattr(workspace, 'deployed_product', lambda settings: dict(reference_error=reason))
+    current = client.get('/api/calibration?date=2026-09-20').json()['defaults']['current_calibration']
+    assert current['unavailable'] and current['reason'] == reason
+    assert 'No uploaded' not in current['reason']
+
+
 @pytest.mark.parametrize('change', [{'tag': 'wrong'}, {'static_window': ['bad', 'bad']},
                                   {'static_window': None, 'static_path': 'unknown-static.npz'}])
 def test_unbound_or_invalid_uploaded_recipe_is_labelled_fallback(uploaded_recipe, change):

@@ -351,6 +351,10 @@ def deployed_product(settings: Settings) -> dict[str, Any]:
     legacy = not events
     cal_file = _first_path((row or {}).get('cal_file')) if ledger_matches or legacy else None
     reference_error = None
+    if events and not consistent:
+        reference_error = 'Weights registry has incomplete or conflicting stream records; current calibration cannot be identified.'
+    elif consistent and not product:
+        reference_error = 'The recorded weights product is unavailable; current calibration cannot be identified.'
     try:
         pairing: dict[str, Any] | None = parse_scale_pairing(row)
         pairing_error = None
