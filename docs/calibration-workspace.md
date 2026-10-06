@@ -13,8 +13,13 @@ it no longer restores a candidate from browser storage. Select a saved candidate
 or open `/cal/{tag}` explicitly to see its saved progress. **New calibration**
 also clears review/completion state. Opening a step does not complete it. An imported reference does
 not count as a new solve/grid; green sky validation means a saved independent
-transit to review, not scientific acceptance. Upload turns green only after
-local payload checks pass and remains explicitly **not uploaded**.
+transit to review, not scientific acceptance. Export & deploy turns green after
+local payload checks pass and says **not uploaded** until a successful upload
+receipt exists. Transfer success still requires separate runtime verification.
+The Prepare header has large **Current deployed calibration** cards for the
+calibrator/observation date, solve window and last upload date/time. OVRO local
+is the default, with a UTC toggle. These follow the ledger's bound report and
+stay fixed when a trial date changes; missing metadata is labelled unavailable.
 From Solve & inspect onward, a persistent bottom bar provides **Proceed to…**
 and **Back to…** controls. It shows the selected subtraction mode and antenna
 count, and returns the view/focus to the next step's heading. Navigation retains
@@ -241,13 +246,10 @@ step complete. Forward navigation is disabled until the calibration is saved.
    beams and the matching IB mask using the configured hash-pinned generator.
    Minimum elevation is editable; custom/factorial cells are explicitly not
    preserved. Only newly solved workspace candidates can generate a grid.
-6. **Upload dry run**: require a produced notebook with executed, error-free
-   code cells, independent-source transit, CB/IB product and human review note.
-   Stage through the existing deploy dry run, with `--no-registry`, no `--upload`
-   and no `--save-defaults`. The workspace forces upload authority off and its
-   middleware rejects upload requests even if parent configuration is armed.
-   There is no live-upload button. Stage checks verify 512 payload beams and
-   matching metadata/pointing counts, as well as CB/IB formats and populated slots.
+6. **Export & deploy** (October 5): write both generated CB/IB HDF5 files to a
+   selected directory, run the upload dry run, inspect the saved pair, then
+   record a review. Live upload remains server-locked pending the operator's
+   separate deployment approval. See the exact sequence below.
 
 **Inspect recorded calibration** imports the ledger reference without a solve.
 It can produce new phase/transit diagnostics, but cannot become an uploadable
@@ -268,7 +270,57 @@ and a 64 GiB address-space cap. The
 service also has a 64 GiB aggregate memory limit, CPU quota and reduced priority.
 Cancellation uses the existing worker process-group termination. Interrupted
 jobs fail by lease reconciliation; they are never silently reported complete.
-This workspace is offline-only. Do not arm its worker.
+The shipped workspace is unarmed. Do not enable upload during preparation or
+interface testing; wait for the operator to vet the exported files and explicitly
+approve a deployment.
+
+## Export, dry run and deployment
+
+**Write CB & IB to disk** copies existing products; it never solves, generates
+weights, registers a trial or sends files to a node. The configurable
+`cal.export_roots` initially permits `/home/casm/software/vishnu/beamforming_weights`
+and `/mnt/nvme3/vishnu/beamforming_weights`, including their subdirectories.
+The first is the UI default. Absolute paths are required; escaping roots,
+symlink components and destinations inside the workspace store are refused.
+
+Each export creates `YYYYMMDD/<build-tag>__<UTC-export-time>_<UUID>/`, where the
+date is the calibration observation's UTC date. `CB/`, `IB/`, `calibration/`
+and `recipe/` contain the HDF5 pair, calibration, executed notebook, report,
+request, summary and frozen layouts. `manifest.json` records source paths,
+full SHA-256 hashes, sizes, antenna selection, solve/static windows and the
+comparison deployment. Existing exports are preserved. A failed copy leaves
+an explicitly `.incomplete` directory without a completed receipt; no automatic
+export retention/deletion policy is installed. Files and their originals are
+rehashed before staging and upload.
+
+**Upload dry run** invokes the existing deploy tool with `--no-registry`, no
+`--upload` and no `--save-defaults`. It produces six CB and six IB DADA files
+inside `cal_builds/<tag>/stage/`, separately from the immutable HDF5 export.
+Staging checks 512 payload beams, matching metadata/pointing counts, CB/IB
+formats and populated slots. Scales come from the deployment ledger.
+
+**Your review** follows export and dry run, so the operator can inspect exactly
+what would be sent. It requires a note, explicit acceptance, an executed
+error-free notebook and saved independent-source transit. Approval binds the
+summary hash, export ID/manifest hash and stage digest. Changing the product or
+stage requires another review.
+
+**Upload to the system** is visible but locked by default. Both `allow_upload`
+and the independent `cal_workspace_allow_upload` setting must be enabled in the
+web and calibration worker processes, only after separate operator approval.
+The environment overrides are `CASM_MONITOR_ALLOW_UPLOAD` and
+`CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD`; the YAML keys are `cal.allow_upload` and
+`cal.workspace_allow_upload`. Arming only the older upload surface is insufficient.
+No service gates were enabled for this feature's acceptance.
+
+An enabled upload requires same-origin protection, a CSRF cookie/header, the
+exact typed build ID, a second browser confirmation and a valid bound review.
+It reuses single-use authorization, the deploy lock and final file/layout/scale
+checks before invoking the canonical uploader. **Save as restart defaults** is
+unchecked by default and changes both nodes only when explicitly selected.
+Inspect transfer and registry receipts, verify runtime activation separately,
+and update the deployment ledger after a verified deployment. The current-cal
+cards follow that ledger, not the latest trial or a successful transfer alone.
 
 ## API and checks
 
@@ -288,7 +340,10 @@ This workspace is offline-only. Do not arm its worker.
   It performs no raw visibility reads and submits no jobs.
 - `POST /api/calibration/builds/{tag}/trial`: explicit `reviewed=true`, new tag,
   antennas and reference create a child solve. Same-origin protection applies.
-- `POST /api/calibration/builds/{tag}/review`: explicit scientific acceptance.
+- `POST /api/calibration/builds/{tag}/export`: `parent` directory; queues a local
+  copy bound to the current summary hash. Detail returns the latest export.
+- `POST /api/calibration/builds/{tag}/review`: explicit acceptance and note,
+  plus `export_id` and `stage_digest` from the inspected export/dry run.
 - `GET /api/calibration/builds/{tag}/subtraction`: related solution revisions;
   `POST` with boolean `static` and `reviewed=true` prepares/retries the missing
   solution. A ready revision is reused. Antenna trials start a new family.
@@ -303,8 +358,9 @@ This workspace is offline-only. Do not arm its worker.
   read-only cached redraw of completed history arrays, with short legends and
   current/previous deployment labels. It does not submit an analysis job.
 - `GET /api/calibration/jobs/{id}/log`, `POST .../{id}/cancel`: durable job control.
-- `/api/calibration/deployment`: the existing guarded calibration deployment
-  router with isolated settings, review gate and live uploads forced off.
+- `/api/calibration/deployment`: existing guarded deployment router with isolated
+  settings. `POST builds/{tag}/stage` requires an `export_id`; the upload route
+  remains blocked unless both server gates and the bound human review pass.
 - `GET /api/calibration/builds/{tag}/sky?date=YYYY-MM-DD`: cached schematic
   sky view for an OVRO local date; metadata includes the zone, display label
   and local/UTC window bounds. PNGs are in `calibration/sky_views/`, outside
@@ -313,6 +369,20 @@ This workspace is offline-only. Do not arm its worker.
 All workspace POSTs require the loopback same-origin request and
 `X-CASM-Workspace: 1`. Generic job submission cannot invoke this privileged kind.
 Artifact URLs are catalogued, contained and reject escaping symlinks.
+
+October 5 export/display acceptance: `tests/test_calibration_export.py` covers
+immutable copies, interrupted copies, path containment, tampering, exact review
+binding, both upload gates, CSRF and mocked single-use upload. The browser script
+`scripts/check_calibration_release_browser.py --dom-only` checks local/UTC cards,
+responsive widths and simulated export/dry-run/review/upload controls. Its
+non-GET requests are intercepted; no real product was exported or uploaded.
+Recorded calibration, weights, ledger and registry hashes stayed unchanged.
+Evidence: `/home/casm/scratch/casm-observation-preview/screenshots/calibration-release-20261005/result.json`.
+Screenshots remain unverified: both installed Chromium renderers timed out even
+on a blank local test page. The rendered DOM/control checks passed.
+Central docs build, link and export checks pass. Snapshot refresh remains
+blocked by the three missing configured `casm_calibrator` modules and existing
+cross-repository drift; no partial API snapshot was installed.
 
 Acceptance: `tests/test_calibration_workspace.py`, existing `tests/test_cal.py`,
 `casm_vis_analysis/tests/test_calibration_checks.py`, frontend production build,

@@ -147,6 +147,12 @@ cal:
   # CASM_MONITOR_ALLOW_UPLOAD=1 is set in the unit environment. Decision
   # record: casm-wiki decisions/2026-09-09-monitor-upload-button.md.
   allow_upload: false
+  # Independent opt-in for the 8061 Calibration workspace. Leave both gates off
+  # until the exported CB/IB pair has been vetted and deployment is approved.
+  workspace_allow_upload: false
+  export_roots:
+    - "/home/casm/software/vishnu/beamforming_weights"
+    - "/mnt/nvme3/vishnu/beamforming_weights"
 
 # The M0 spelling of cal.allow_upload, kept so an older config still gates the
 # upload. The cal section wins when both are present.

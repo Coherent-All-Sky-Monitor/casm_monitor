@@ -6,18 +6,22 @@ export function calibrationProgress(detail: RecordValue | null, deployment: Reco
   const imported = Boolean(detail?.request?.imported);
   const actions: RecordValue[] = detail?.actions ?? [];
   const independent = actions.some(a => a.action === 'transit' && a.selection?.source && a.selection.source !== 'sun');
+  const exported = detail?.export;
+  const staged = Boolean(exported && deployment?.stage?.checks_ok && deployment.stage.export_id === exported.export_id
+    && deployment.stage.export_manifest_sha256 === exported.manifest_sha256);
+  const uploaded = (deployment?.uploads??[]).some((row:RecordValue)=>row.state==='done'&&row.exit_code===0);
   const done = [Boolean(detail?.request) || reviewed,
     Boolean(detail?.summary?.paths?.cal_h5) && !imported,
     independent, Boolean(detail?.summary?.has_weights) && !imported,
-    Boolean(deployment?.stage?.checks_ok) && !imported];
+    staged && !imported];
   const labels = [detail?.request ? 'Recipe saved' : reviewed ? 'Selection reviewed' : 'Windows & membership',
     imported ? 'Recorded reference' : done[1] ? 'Calibration saved' : 'SVD & phase progression',
     independent ? 'Transit saved · review results' : 'Independent-source transit',
     done[3] ? '512 beams + IB saved' : '512-point sky view',
-    done[4] ? 'Dry run passed · not uploaded' : 'Review & local payloads'];
+    uploaded ? 'Upload completed · check activation' : done[4] ? 'Dry run passed · not uploaded' : exported ? 'Weights exported · review next' : 'Write weights · test · review'];
   const jobs: RecordValue[] = detail?.jobs ?? [];
   return done.map((complete, index) => {
-    const kinds = [[], ['solve', 'inspect', 'phase', 'history'], ['transit'], ['grid'], ['deploy_stage']][index];
+    const kinds = [[], ['solve', 'inspect', 'phase', 'history'], ['transit'], ['grid'], ['export','deploy_stage','deploy_upload']][index];
     const latest = jobs.filter(j => kinds.includes(j.params?.action ?? j.kind)).sort((a, b) => b.id - a.id)[0];
     const state: CalibrationStepState = latest?.state === 'running' || latest?.state === 'queued' ? 'running'
       : latest?.state === 'failed' || latest?.state === 'cancelled' ? 'failed' : complete ? 'complete' : 'pending';

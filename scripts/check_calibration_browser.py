@@ -41,8 +41,8 @@ def main():
         page.get_by_role('heading', name='A source crossing a stationary beam').wait_for()
         assert page.get_by_role('button', name='Run stationary transit check').is_enabled()
         page.screenshot(path=str(output / 'calibration-transit.png'), full_page=True)
-        page.get_by_role('button', name='05Upload dry run').click()
-        assert page.get_by_role('button', name='Upload reviewed product', exact=True).count() == 0
+        page.get_by_role('button', name='05Export & deploy').click()
+        assert page.get_by_role('button', name='Upload reviewed CB & IB', exact=True).is_disabled()
         assert page.get_by_role('button', name='Run upload dry run', exact=True).is_disabled()
         page.screenshot(path=str(output / 'calibration-deploy.png'), full_page=True)
         for width in (1280, 768, 390):

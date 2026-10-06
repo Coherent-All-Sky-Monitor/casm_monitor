@@ -4,8 +4,8 @@ Date: 2026-09-22. Requested by Vishnu for the port-8061 workspace.
 Status: approved design; first implementation described in
 `calibration-workspace.md`. The detailed controls below remain the target design;
 the implementation manual identifies supported controls and explicit limitations.
-September 25 authority supersedes the proposed deployment controls: the workspace
-is now dry-run-only, with no upload button and server-side upload denial. The
+October 5 adds dated CB/IB export, local dry run, bound review and a locked upload
+control. Deployment remains disabled until separate operator approval. The
 ellipse sky view is display-only; scientific generation remains exact. See the
 implementation manual for current behavior; the deployment sections below are
 the earlier design, not permission to enable them.

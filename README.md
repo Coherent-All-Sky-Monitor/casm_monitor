@@ -18,7 +18,8 @@ Click plots to enlarge and zoom.
 
 The [Calibration workspace](docs/calibration-workspace.md) provides saved solar
 solves, phase and transit checks, and 512-beam CB/IB generation with an ellipse
-sky view. Upload testing is local dry run only; deployed weights stay unchanged.
+sky view, dated CB/IB exports and upload dry runs. Live upload stays locked
+until the exported weights are reviewed and deployment is explicitly enabled.
 
 ## Run
 

@@ -328,7 +328,7 @@ def deploy_inhibit(settings: Settings, detail: dict[str, Any]) -> Iterator[Path]
 
 
 def stage_digest(stage: dict[str, Any]) -> str:
-    """sha256 over the staged file md5s and the recorded upload command.
+    """sha256 over staged MD5s, upload command and workspace export identity.
 
     This is what the browser route binds an authorization to and what the
     worker re-derives from the stage.json it reads: an edited stage — a file
@@ -339,6 +339,8 @@ def stage_digest(stage: dict[str, Any]) -> str:
         {
             "md5s": sorted((str(k), str(v)) for k, v in (stage.get("md5s") or {}).items()),
             "command": [str(x) for x in (stage.get("upload_command") or [])],
+            "export_id": stage.get('export_id'),
+            "export_manifest_sha256": stage.get('export_manifest_sha256'),
         },
         sort_keys=True,
     )
@@ -675,6 +677,13 @@ def run_stage(params: dict[str, Any]) -> dict[str, Any]:
     # fails and says so rather than falling back to the documented 32/32.
     pairing = parse_scale_pairing(ledger)
 
+    export_binding = {}
+    if summary.get('kind') == 'calibration_workspace':
+        from .calibration_export import verify_export
+        item = verify_export(settings, tag, params.get('export_id'))
+        if item['manifest_sha256'] != params.get('export_manifest_sha256'):
+            raise DeployError('Export changed since dry-run submission', code='export_drift')
+        export_binding = dict(export_id=item['export_id'], export_manifest_sha256=item['manifest_sha256'])
     sdir = stage_dir(settings, tag)
     sdir.mkdir(parents=True, exist_ok=True)
     no_symlinks_inside(sdir, Path(settings.cal_builds_root))
@@ -729,6 +738,7 @@ def run_stage(params: dict[str, Any]) -> dict[str, Any]:
 
     layout_now = layout_info(settings.layout_csv)
     stage = {
+        **export_binding,
         "build_tag": tag,
         "staged_utc": iso(started),
         "stage_dir": str(sdir),
@@ -869,6 +879,14 @@ def upload_plan(
             f"the staged product failed its checks ({', '.join(failed) or 'unknown'})",
             code="checks_failed",
         )
+    if summary.get('kind') == 'calibration_workspace':
+        if not settings.cal_workspace_allow_upload:
+            raise DeployError('Calibration workspace live upload is locked', code='disabled')
+        from .calibration_export import verify_review
+        try:
+            verify_review(settings, tag, stage)
+        except (ValueError, OSError, KeyError) as exc:
+            raise DeployError(str(exc), code='review_changed') from exc
 
     sdir = no_symlinks_inside(bdir / "stage", root)
     if str(Path(str(stage.get("stage_dir") or ""))) != str(sdir):

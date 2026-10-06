@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, Response
 
 from ..cal_defaults import cal_defaults, deployed_product, layout_info, sha256_file
 from ..jobs.cal_build import build_dir, validate, _window
+from ..jobs.deploy import DeployError
 from ..observation import read_json
 
 KIND = 'calibration_workspace'
@@ -63,7 +64,9 @@ def workspace_defaults(settings, date: str = '') -> dict:
                         source_window=[recipe['t0'].isoformat(), recipe['t1'].isoformat()],
                         static_window=None if static is None else [utc(t).isoformat() for t in static],
                         report=str(report), report_sha256=sha256_file(report),
-                        date_uploaded=product.get('date_deployed'))
+                        date_uploaded=product.get('date_deployed'), source=params.get('cal_source'),
+                        product_id=product.get('product_id'), calibration_path=str(calibration),
+                        antennas=recipe['antennas'])
     except (ValueError, OSError, TypeError) as exc:
         reason = str(exc)
     if not date:
@@ -87,6 +90,7 @@ def workspace_defaults(settings, date: str = '') -> dict:
             label='Computed windows for selected date' if recorded else 'Uploaded recipe unavailable · date-based fallback',
             reason=reason)
     defaults['wired_antennas'] = layout_info(settings.layout_csv)['wired_antennas']
+    defaults['current_calibration'] = recorded or dict(unavailable=True, reason=reason)
     return defaults
 
 
@@ -99,9 +103,10 @@ def workspace_settings(settings):
         raise ValueError('Calibration workspace root must not be a symlink')
     if Path(settings.store_root).resolve() in (root.resolve(), *root.resolve().parents):
         raise ValueError('Calibration workspace must be outside the production store')
-    # This workspace is deliberately offline, even if another deployment
-    # surface is armed in the parent config or environment.
-    return dataclasses.replace(settings, store_root=root, allow_upload=False)
+    # Arming another surface is insufficient. Workspace upload needs its own
+    # explicit server gate as well; both remain off during development/review.
+    return dataclasses.replace(settings, store_root=root,
+        allow_upload=settings.allow_upload and settings.cal_workspace_allow_upload)
 
 
 def save_json(path, value):
@@ -142,20 +147,31 @@ def artifact_entries(settings, tag):
 
 
 def review_gate(settings, tag):
-    root = build_dir(settings, tag)
-    summary = read_json(root / 'summary.json') or {}
-    review = read_json(root / 'review.json') or {}
-    if not review.get('accepted') or not summary.get('has_weights'):
-        raise HTTPException(409, 'Review the solve, independent transit and exact-grid product before staging')
-    if review.get('summary_sha256') != sha256_file(root / 'summary.json'):
-        raise HTTPException(409, 'Product changed since review; review this revision again')
+    from ..jobs.calibration_export import verify_review
+    try:
+        verify_review(settings, tag)
+    except (ValueError, OSError, KeyError, DeployError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+def export_stage_gate(settings, tag, body):
+    from ..jobs.calibration_export import verify_export
+    try:
+        item = verify_export(settings, tag, body.get('export_id'))
+        return dict(export_id=item['export_id'], export_manifest_sha256=item['manifest_sha256'])
+    except (ValueError, OSError, KeyError, DeployError) as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 def action_params(body, record):
     action = body.get('action')
-    if action not in {'inspect', 'phase', 'transit', 'history', 'grid'}:
+    if action not in {'inspect', 'phase', 'transit', 'history', 'grid', 'export'}:
         raise ValueError('Unknown analysis action')
     params = dict(action=action)
+    if action == 'export':
+        if not re.fullmatch(r'[0-9a-f]{64}', str(body.get('summary_sha256', ''))):
+            raise ValueError('Missing generated-product fingerprint')
+        return dict(action=action, parent=str(body['parent']), summary_sha256=body['summary_sha256'])
     if action == 'grid':
         altitude = float(body.get('alt_min', 20))
         if not math.isfinite(altitude) or not 10 <= altitude <= 60:
@@ -240,6 +256,7 @@ def build_router(settings, store):
                     antennas=record['params']['antennas'], has_cal=bool(summary.get('paths', {}).get('cal_h5')),
                     has_weights=bool(summary.get('has_weights')), imported=bool(record.get('imported'))))
         return dict(defaults=defaults, builds=builds, jobs=store.list_jobs(limit=60),
+                    export_roots=[str(root) for root in settings.cal_export_roots],
                     isolation=str(settings.store_root), upload_armed=bool(settings.allow_upload),
                     runtime_activation='Unverified — no consumer identity acknowledgement',
                     budget='One durable worker · 64 GiB process cap · 60-minute execution deadline (not data duration)')
@@ -419,6 +436,7 @@ def build_router(settings, store):
         actions.sort(key=lambda item: item.get('finished', ''))
         jobs = [job for job in store.list_jobs(limit=300) if job['params'].get('tag', job['params'].get('build_tag')) == tag]
         return dict(request=record, summary=read_json(root / 'summary.json'), actions=actions,
+                    export=next((a['result'] for a in reversed(actions) if a.get('action') == 'export'), None),
                     review=read_json(root / 'review.json'), artifacts=artifact_entries(settings, tag), jobs=jobs,
                     reference_label=reference_label(settings, dict(path=record.get('reference'), sha256=record.get('reference_sha256'))))
 
@@ -493,6 +511,20 @@ def build_router(settings, store):
         except (ValueError, OSError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @router.post('/builds/{tag}/export')
+    def export(tag: str, body: dict):
+        from ..jobs.calibration_export import export_parent
+        try:
+            root = build_dir(settings, tag)
+            record = request_record(settings, tag)
+            summary = read_json(root/'summary.json') or {}
+            if record.get('imported') or not summary.get('has_weights'):
+                raise ValueError('Generate the paired CB and IB product first')
+            parent = export_parent(settings, str(body.get('parent', '')))
+            return queue(tag, 'export', dict(action='export', parent=str(parent), summary_sha256=sha256_file(root/'summary.json')))
+        except (ValueError, OSError, KeyError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @router.post('/builds/{tag}/review')
     def review(tag: str, body: dict):
         root = build_dir(settings, tag)
@@ -506,7 +538,16 @@ def build_router(settings, store):
         failures = summary.get('numbers', {}).get('diagnostic_failures') or summary.get('numbers', {}).get('diagnostics_error')
         if failures:
             raise HTTPException(409, f'Required diagnostics reported failures: {failures}')
-        record = dict(accepted=True, note=str(body['note'])[:4000], at=datetime.now(timezone.utc).isoformat(), summary_sha256=sha256_file(root / 'summary.json'))
+        from ..jobs.deploy import load_stage, stage_digest
+        stage = load_stage(settings, tag)
+        binding = export_stage_gate(settings, tag, body)
+        if not stage or not stage.get('checks_ok') or stage.get('export_id') != binding['export_id'] or stage.get('export_manifest_sha256') != binding['export_manifest_sha256']:
+            raise HTTPException(409, 'Run a successful dry run for this export before saving your review')
+        digest = stage_digest(stage)
+        if body.get('stage_digest') != digest:
+            raise HTTPException(409, 'Dry run changed while reviewing; reload and review the current product')
+        record = dict(accepted=True, note=str(body['note'])[:4000], at=datetime.now(timezone.utc).isoformat(),
+                      summary_sha256=sha256_file(root / 'summary.json'), stage_digest=digest, **binding)
         save_json(root / 'review.json', record)
         return record
 

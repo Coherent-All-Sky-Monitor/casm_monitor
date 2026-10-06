@@ -354,6 +354,8 @@ def test_initial_windows_follow_uploaded_recipe_not_newer_build(uploaded_recipe)
         assert defaults['defaults_basis']['report'] == str(report)
         assert defaults['window_center_offset_min'] == 0
         assert defaults['antennas'] == [9, 10]
+        assert defaults['current_calibration']['source'] == 'sun'
+        assert defaults['current_calibration']['date_uploaded'] == '2026-09-18 07:51:57 UTC'
     assert store.list_jobs() == before
 
 
@@ -363,6 +365,8 @@ def test_explicit_other_date_uses_date_based_windows(uploaded_recipe):
     assert defaults['date'] == '2026-09-20'
     assert defaults['source_window'][0] == '2026-09-20T19:00:00Z'
     assert defaults['defaults_basis']['kind'] == 'date_based'
+    assert defaults['current_calibration']['date'] == '2026-09-17'
+    assert defaults['current_calibration']['source_window'][0] == '2026-09-17T19:17:00+00:00'
 
 
 @pytest.mark.parametrize('change', [{'tag': 'wrong'}, {'static_window': ['bad', 'bad']},
@@ -373,6 +377,7 @@ def test_unbound_or_invalid_uploaded_recipe_is_labelled_fallback(uploaded_recipe
     defaults = client.get('/api/calibration?date=2026-09-20').json()['defaults']
     assert defaults['defaults_basis']['kind'] == 'fallback'
     assert defaults['defaults_basis']['reason']
+    assert defaults['current_calibration']['unavailable']
     assert defaults['source_window'][0] == '2026-09-20T19:00:00Z'
 
 

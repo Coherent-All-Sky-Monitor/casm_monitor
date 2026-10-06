@@ -167,7 +167,10 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
     @app.middleware("http")
     async def refuse_writes(request, call_next):
         local_route = re.fullmatch(r"/api/(?:science/(?:render|transit)|snap-workspace/(?:render|acquire)|review(?:/[A-Za-z0-9_-]+/request)?|commissioning/(?:stage|[0-9a-f]{32}/start))", request.url.path)
-        calibration_route = re.fullmatch(r"/api/calibration/(?:builds|import-reference|builds/[A-Za-z0-9_.-]+/(?:actions|review|trial|subtraction)|jobs/[0-9]+/cancel|deployment/builds/[A-Za-z0-9_.-]+/stage)", request.url.path)
+        calibration_route = re.fullmatch(r"/api/calibration/(?:builds|import-reference|builds/[A-Za-z0-9_.-]+/(?:actions|review|trial|subtraction|export)|jobs/[0-9]+/cancel|deployment/builds/[A-Za-z0-9_.-]+/stage)", request.url.path)
+        upload_route = re.fullmatch(r'/api/calibration/deployment/builds/[A-Za-z0-9_.-]+/upload', request.url.path)
+        if workspace and upload_route and calibration_settings.allow_upload:
+            calibration_route = upload_route
         local_route = local_route or calibration_route
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             if read_only or local_route:
@@ -196,10 +199,10 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
     # three POSTs that insert a job row.
     app.include_router(build_cal_router(reader, writer, settings))
     if calibration_store is not None:
-        from .calibration_workspace import build_router as build_calibration_workspace_router, review_gate
+        from .calibration_workspace import build_router as build_calibration_workspace_router, review_gate, export_stage_gate
         app.include_router(build_calibration_workspace_router(calibration_settings, calibration_store))
         app.include_router(build_cal_router(calibration_store, calibration_store, calibration_settings,
-                           prefix='/api/calibration/deployment', review_gate=review_gate))
+                           prefix='/api/calibration/deployment', review_gate=review_gate, stage_gate=export_stage_gate))
     app.include_router(build_search_router(reader, settings))
     app.include_router(build_figures_router(settings))
     app.include_router(build_observation_router(settings, reader))

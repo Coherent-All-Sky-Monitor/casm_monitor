@@ -23,6 +23,7 @@ def test_load_shipped_defaults(monkeypatch):
         "CASM_MONITOR_WEB_HOST",
         "CASM_MONITOR_WEB_PORT",
         "CASM_MONITOR_ALLOW_UPLOAD",
+        "CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD",
         "CASM_MONITOR_CONFIG",
     ):
         monkeypatch.delenv(key, raising=False)
@@ -38,6 +39,8 @@ def test_load_shipped_defaults(monkeypatch):
     assert "casm_antenna_bp" in s.kafka_topics
     assert s.zapdos_ssh == "zapdos"
     assert s.allow_upload is False
+    assert s.cal_workspace_allow_upload is False
+    assert s.cal_export_roots[0] == Path('/home/casm/software/vishnu/beamforming_weights')
     assert s.cadence("sky") == 60.0
     assert s.db_path == s.store_root / "monitor.sqlite"
 
@@ -69,6 +72,20 @@ def test_missing_file_falls_back_to_defaults(tmp_path, monkeypatch):
     s = load_settings(tmp_path / "nope.yaml")
     assert s.config_path is None
     assert s.store_root == Settings().store_root
+
+
+def test_calibration_export_roots_and_independent_upload_gate(tmp_path, monkeypatch):
+    config = tmp_path/'monitor.yaml'
+    config.write_text('cal:\n  allow_upload: true\n  workspace_allow_upload: false\n  export_roots:\n    - /tmp/test-export-root\n')
+    monkeypatch.delenv('CASM_MONITOR_ALLOW_UPLOAD', raising=False)
+    monkeypatch.delenv('CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD', raising=False)
+    settings = load_settings(config)
+    assert settings.allow_upload and not settings.cal_workspace_allow_upload
+    assert settings.cal_export_roots == (Path('/tmp/test-export-root'),)
+    monkeypatch.setenv('CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD','1')
+    assert load_settings(config).cal_workspace_allow_upload
+    monkeypatch.setenv('CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD','0')
+    assert not load_settings(config).cal_workspace_allow_upload
 
 
 def test_read_medusa_cfg(tmp_path):

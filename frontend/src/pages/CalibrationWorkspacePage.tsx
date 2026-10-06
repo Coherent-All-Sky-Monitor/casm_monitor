@@ -5,13 +5,14 @@ import CalibrationTimeField from "../components/CalibrationTimeField";
 import CalibrationSkyPlanner from "../components/CalibrationSkyPlanner";
 import CalibrationSolutions from "../components/CalibrationSolutions";
 import CalibrationTransit from "../components/CalibrationTransit";
+import CalibrationDeployment, {CurrentCalibration} from '../components/CalibrationDeployment';
 import { calibrationProgress } from "../components/calibrationProgress";
 import { LOCAL, wallTime } from "../components/timeZones";
 import { playbackStamp, type PlaybackTimeZone } from "../components/snapPlaybackModel";
 import "../calibration.css";
 
 const ROOT = "/api/calibration";
-const STEPS = ["Prepare", "Solve & inspect", "Validate on sky", "Generate beams", "Upload dry run"];
+const STEPS = ["Prepare", "Solve & inspect", "Validate on sky", "Generate beams", "Export & deploy"];
 const SOURCES = [["sun", "Sun"], ["cyg-a", "Cyg A"], ["cas-a", "Cas A"]];
 const human = (value: unknown) => typeof value === "number" ? value.toFixed(2) : value == null ? "—" : String(value);
 
@@ -90,8 +91,6 @@ export default function CalibrationWorkspacePage() {
   const [historyRef, setHistoryRef] = useState(0);
   const [altitude, setAltitude] = useState(20);
   const [plainGrid, setPlainGrid] = useState(false);
-  const [reviewNote, setReviewNote] = useState("");
-  const [accept, setAccept] = useState(false);
   const [logId, setLogId] = useState<number | null>(null);
   const [log, setLog] = useState("");
   const {data: stations} = useResource("/api/science/catalog");
@@ -110,7 +109,7 @@ export default function CalibrationWorkspacePage() {
     setReviewed(false);
   }).catch(reason => setError(reason.message)); return () => {active = false;};}, [date, formRevision]);
   useEffect(() => {
-    setDetail(null); setSolutions(null); setDeployDetail({}); setAccept(false); setHistoryRef(0);
+    setDetail(null); setSolutions(null); setDeployDetail({}); setHistoryRef(0);
     if (!tag) return;
     let active = true;
     const load = () => Promise.all([api(`${ROOT}/builds/${tag}`),api(`${ROOT}/builds/${tag}/subtraction`)]).then(([result,versions]) => {if (active) {setDetail(result);setSolutions(versions);}}).catch(reason => {if (active) setError(reason.message);});
@@ -171,11 +170,12 @@ export default function CalibrationWorkspacePage() {
   };
 
   return <div className="cal-workspace">
-    <header className="cal-hero"><div><h2>Calibration</h2><p>Solar solve · sky validation · 512 beams</p></div><span className="cal-safety"><span/> Upload testing · dry run only</span></header>
+    <header className="cal-hero"><div><h2>Calibration</h2><p>Solar solve · sky validation · 512 beams</p></div><span className="cal-safety"><span/> {deployment?.allow_upload?'Deployment enabled · review required':'Live upload locked'}</span></header>
     <div className="cal-context"><label>Saved candidate<select value={tag} onChange={event => chooseCandidate(event.target.value)}><option value="">New calibration</option>{(overview?.builds ?? []).map((item: Json) => <option key={item.tag} value={item.tag}>{item.tag}{item.imported ? " · recorded reference" : item.has_weights ? " · 512 beams" : item.has_cal ? " · solved" : " · pending"}</option>)}</select></label><button onClick={() => chooseCandidate("")}>New calibration</button><button disabled={busy} onClick={() => perform(ROOT + "/import-reference", {date: overview?.defaults?.date}, "Recorded reference loaded for offline diagnostics; not a new solve.").then(result => {if (result) setStep(1);})}>Inspect deployed calibration</button><span className="cal-context-note">{candidate ? `${candidate.antennas.length} antennas · reference ${candidate.ref_ant}` : "Start from deployed antennas"}</span></div>
     <nav className="cal-steps" aria-label="Calibration workflow">{STEPS.map((name, index) => <button key={name} className={`${progress[index].state}${step === index ? " selected" : ""}`} data-state={progress[index].state} onClick={() => goToStep(index)} aria-current={step === index ? "step" : undefined}><span>{String(index + 1).padStart(2, "0")}</span>{name}<small>{progress[index].label}</small></button>)}</nav>
     {step===2&&tag&&<label className="cal-check cal-subtraction-validation"><input type="checkbox" checked={compareReady&&compareSubtraction} disabled={!compareReady} onChange={e=>setCompareSubtraction(e.target.checked)}/>Compare both subtraction solutions in transit checks{!compareReady&&<small> · prepare both solutions first</small>}</label>}
     {(error || message) && <div className={error ? "cal-feedback error" : "cal-feedback"} role="status">{error || message}<button onClick={() => {setError(""); setMessage("");}} aria-label="Dismiss message">×</button></div>}
+    {step === 0 && <CurrentCalibration value={overview?.defaults?.current_calibration??null}/>}
     {step === 0 && <div className="cal-columns"><section className="cal-card"><div className="cal-section-heading"><h3>Prepare a solar solve</h3><span>Phase-only · per-channel SVD</span></div>{form ? <>
       <div className="cal-fields"><label>Solar date<input type="date" value={date || overview?.defaults?.date || ""} onChange={event => {setReviewed(false); setDate(event.target.value);}}/></label><label>Calibrator<select value="sun" disabled><option value="sun">Sun</option><option disabled>Cyg A · solve not enabled</option><option disabled>Cas A · solve not enabled</option></select></label></div>
       {form.defaults_basis && <p className="cal-caption" aria-label="Calibration starting point">Starting point: {form.defaults_basis.label}{form.defaults_basis.date_uploaded ? ` · uploaded ${form.defaults_basis.date_uploaded.slice(0, 10)}` : ""}.</p>}
@@ -215,24 +215,7 @@ export default function CalibrationWorkspacePage() {
       {latestTransit && <details><summary>Original saved files</summary><p className="cal-caption">Original files retain their original background and scale. Plots above are recalculated from the saved arrays.</p><Gallery title="Data files" items={stageItems(["transit"]).filter(item=>item.kind!=="image")}/><Evidence value={latestTransit.result}/></details>}
     </>}
     {step === 3 && tag && <><BeamSky key={tag} tag={tag} date={wallTime(candidate?.source_window?.[0] ?? "", LOCAL).slice(0, 10) || overview?.defaults?.date || ""}/><section className="cal-card"><div className="cal-section-heading"><h3>Generate 512 beams</h3><span>Saved calibration → CB + IB</span></div><p className="cal-caption">Reuse this calibration and antenna selection. Generate the coherent beams and matching incoherent mask together.</p><div className="cal-fields"><label>Minimum elevation · degrees<input type="number" min={10} max={60} value={altitude} onChange={event => setAltitude(Number(event.target.value))}/></label><label>Grid objective<input value="Exact rate coverage · full azimuth" readOnly/></label></div><label className="cal-check"><input type="checkbox" checked={plainGrid} onChange={event => setPlainGrid(event.target.checked)}/>Build a new plain grid; do not preserve custom / factorial cells in the recorded product.</label><button className="cal-primary" disabled={disabled || !hasCal || hasWeights || !plainGrid || detail?.request?.imported} onClick={() => runAction("grid", {alt_min: altitude, replace_custom_cells: plainGrid})}>Generate 512 beams + matching IB →</button>{detail?.request?.imported && <p className="cal-caption">Recorded calibrations are diagnostic references. Create a new reviewed solve revision to generate uploadable products.</p>}</section><details><summary>Exact-response checks & product files</summary><Gallery title="Product checks" items={stageItems(["grid"])}/></details></>}
-    {step === 4 && tag && <div className="cal-columns">
-      <section className="cal-card"><h3>Review this calibration</h3>
-        <div className="cal-checklist">{[[hasCal, "Calibration saved"], [Boolean(detail?.summary?.notebook_executed), "Diagnostics notebook complete"], [transitResults.some(item => item.selection.source !== "sun"), "Independent-source transit saved"], [hasWeights, "512 beams + matching IB saved"]].map(([done, text]) => <p key={String(text)}><span className={done ? "complete" : ""}>{done ? "✓" : "○"}</span>{text}</p>)}</div>
-        <label>Review note<textarea value={reviewNote} onChange={event => setReviewNote(event.target.value)} placeholder="What did the phase and transit checks show?"/></label>
-        <label className="cal-check"><input type="checkbox" checked={accept} onChange={event => setAccept(event.target.checked)}/>I inspected and accept this revision.</label>
-        <button disabled={disabled || !hasWeights || !accept || !reviewNote.trim()} onClick={() => perform(`${ROOT}/builds/${tag}/review`, {accepted: accept, note: reviewNote}, "Review saved for this revision.")}>Save review</button>
-        <hr/><h3>Test the upload files</h3><p className="cal-caption">Build and inspect local CB / IB payloads. Nothing is sent to the telescope.</p>
-        <button className="cal-primary" disabled={disabled || !detail?.review?.accepted || !hasWeights || Boolean(detail?.request?.imported)} onClick={() => perform(`${ROOT}/deployment/builds/${tag}/stage`, {save_defaults: false}, "Dry run queued. Deployed weights, registry and restart defaults are unchanged.")}>Run upload dry run</button>
-        {deployDetail?.stage && <><p className="cal-caption">{deployDetail.stage.checks_ok ? "Payload checks passed." : "Inspect the payload checks below."}</p><Evidence value={deployDetail.stage}/></>}
-      </section>
-      <aside><section className="cal-card"><h3>Current deployed weights</h3><div className="cal-receipts">
-        <div><strong>Last recorded upload</strong><span>{deployment?.deployed?.date_deployed ?? "Unavailable"}</span></div>
-        <div><strong>Antennas</strong><span>{deployment?.deployed?.n_ant_set ?? "Unknown"}</span></div>
-        <div><strong>Product</strong><span>{deployment?.deployed?.product_id ?? "Unknown"}</span></div>
-        <div><strong>CB / IB scale</strong><span>{deployment?.deployed?.scale ?? "—"} / {deployment?.deployed?.ib_scale ?? "—"}</span></div>
-      </div><p className="cal-caption">The last uploaded product stays the reference. Trial calibrations do not replace it.</p><Evidence value={deployment?.deployed}/></section>
-      <section className="cal-card"><h3>Dry run only</h3><p className="cal-caption">Live upload is unavailable here. A successful dry run does not activate weights.</p></section></aside>
-    </div>}
+    {step === 4 && tag && detail && <CalibrationDeployment key={tag} tag={tag} detail={detail} deployment={deployment??{}} deployDetail={deployDetail} roots={overview?.export_roots??[]} disabled={disabled} perform={perform}/>}
     {tag && <section className="cal-card cal-jobs"><div className="cal-section-heading"><h3>Jobs & files</h3><span>Saved between visits</span></div>{jobs.length ? jobs.map(job => <div className="cal-job" key={job.id}><span className={`cal-job-state ${job.state}`}>{job.state}</span><strong>{job.params.action ?? job.kind}</strong><span>{stamp(job.created)}</span><button onClick={() => setLogId(job.id)}>View log #{job.id}</button>{["queued", "running"].includes(job.state) && <button onClick={() => perform(`${ROOT}/jobs/${job.id}/cancel`, {}, "Cancellation requested; the worker terminates the process group.")}>Cancel</button>}</div>) : <p className="cal-caption">No new job submitted for this reference.</p>}{logId != null && <details open className="cal-log"><summary>Worker log #{logId}<button onClick={() => setLogId(null)}>Close</button></summary><pre>{log}</pre></details>}<Evidence value={{request: detail?.request, summary: detail?.summary, isolated_store: overview?.isolation}}/></section>}
     {tag && candidate && step > 0 && <nav className="cal-step-navigation" aria-label="Calibration step navigation">
       <button type="button" onClick={() => goToStep(step - 1)}>← Back to {STEPS[step - 1]}</button>

@@ -44,7 +44,7 @@ def run(params):
         selection = action_params(selection, record)
     print(f'[{tag}] {action}: {json.dumps(selection)}', flush=True)
     from importlib.util import find_spec
-    modules = ('casm_monitor.jobs.calibration_workspace', 'casm_vis_analysis.calibration_checks',
+    modules = ('casm_monitor.jobs.calibration_workspace', 'casm_monitor.jobs.calibration_export', 'casm_vis_analysis.calibration_checks',
                'casm_vis_analysis.beam_power', 'casm_vis_analysis.fringe_stop',
                'casm_vis_analysis.delay', 'casm_vis_analysis.calibration_inspection',
                'casm_vis_analysis.calibration_transit',
@@ -54,7 +54,10 @@ def run(params):
         path = find_spec(module).origin
         code[module] = dict(path=path, sha256=sha256_file(path))
     started = time.time()
-    if action in {'solve', 'grid'}:
+    if action == 'export':
+        from .calibration_export import export_product
+        output = export_product(settings, root, dest, record, selection)
+    elif action in {'solve', 'grid'}:
         output = build_product(settings, root, dest, record, action, selection)
     else:
         output = diagnose(settings, root, dest, record, action, selection)

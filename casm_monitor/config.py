@@ -152,6 +152,11 @@ class Settings:
     # An empty pin is not "no check": it is a refusal.
     cal_ib_generator_sha256: str = ""
     allow_upload: bool = False
+    cal_workspace_allow_upload: bool = False
+    cal_export_roots: tuple[Path, ...] = (
+        Path('/home/casm/software/vishnu/beamforming_weights'),
+        Path('/mnt/nvme3/vishnu/beamforming_weights'),
+    )
     config_path: Path | None = None
 
     # --- derived paths -------------------------------------------------
@@ -305,6 +310,8 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         allow_upload=_as_bool(
             cal.get("allow_upload", raw.get("allow_upload", defaults.allow_upload))
         ),
+        cal_workspace_allow_upload=_as_bool(cal.get('workspace_allow_upload', False)),
+        cal_export_roots=tuple(Path(value) for value in cal.get('export_roots', defaults.cal_export_roots)),
         config_path=p if p.is_file() else None,
     )
 
@@ -318,6 +325,8 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         kw["web_port"] = int(os.environ["CASM_MONITOR_WEB_PORT"])
     if os.environ.get("CASM_MONITOR_ALLOW_UPLOAD"):
         kw["allow_upload"] = _as_bool(os.environ["CASM_MONITOR_ALLOW_UPLOAD"])
+    if os.environ.get('CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD'):
+        kw['cal_workspace_allow_upload'] = _as_bool(os.environ['CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD'])
 
     return Settings(**kw)
 

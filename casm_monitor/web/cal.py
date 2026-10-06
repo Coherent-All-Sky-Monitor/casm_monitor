@@ -186,6 +186,7 @@ def stage_view(stage: dict[str, Any] | None) -> dict[str, Any] | None:
     if stage is None:
         return None
     view = dict(stage)
+    view['digest'] = stage_digest(stage)
     view["files"] = [
         {
             "name": name,
@@ -298,7 +299,7 @@ def build_row(
     }
 
 
-def build_router(reader: Store, writer: Store, settings: Settings, *, prefix="/api/cal", review_gate=None) -> APIRouter:
+def build_router(reader: Store, writer: Store, settings: Settings, *, prefix="/api/cal", review_gate=None, stage_gate=None) -> APIRouter:
     """Router over the app's existing handles (reader for GET, writer for POST)."""
     router = APIRouter(prefix=prefix, tags=["cal"])
 
@@ -476,14 +477,15 @@ def build_router(reader: Store, writer: Store, settings: Settings, *, prefix="/a
     # -- stage / upload --------------------------------------------------
     @router.post("/builds/{tag}/stage")
     def post_stage(tag: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        if review_gate is not None:
+        binding = stage_gate(settings, tag, body or {}) if stage_gate is not None else {}
+        if review_gate is not None and stage_gate is None:
             review_gate(settings, tag)
         summary = _require_summary(settings, tag)
         if not summary.get("has_weights"):
             raise HTTPException(
                 status_code=409, detail=f"build {tag!r} produced no weights file to stage"
             )
-        params = {"build_tag": tag, "save_defaults": bool((body or {}).get("save_defaults", False))}
+        params = {"build_tag": tag, "save_defaults": bool((body or {}).get("save_defaults", False)), **binding}
         job_id, refusal = writer.submit_job_atomic(STAGE_KIND, params, refuse_if_pending=True)
         if refusal is not None:
             raise HTTPException(
@@ -503,8 +505,6 @@ def build_router(reader: Store, writer: Store, settings: Settings, *, prefix="/a
         tag: str, request: Request, body: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         body = dict(body or {})
-        if review_gate is not None:
-            review_gate(settings, tag)
         # CSRF double-submit BEFORE anything else: this is the one route that
         # can put bytes on the correlator nodes, and it must be reachable only
         # from something that read GET /api/cal/status first.
@@ -536,6 +536,8 @@ def build_router(reader: Store, writer: Store, settings: Settings, *, prefix="/a
                 status_code=400,
                 detail=f"confirm_tag {confirm!r} does not match the build tag {tag!r}",
             )
+        if review_gate is not None:
+            review_gate(settings, tag)
         stage = load_stage(settings, tag)
         if stage is None:
             raise HTTPException(
