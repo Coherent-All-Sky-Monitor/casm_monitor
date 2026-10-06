@@ -136,6 +136,12 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
         # Hella gulp ledger: workspace only, and only if the log is there to
         # tail. Its own sqlite file, never the production store.
         refresher = None
+        membership_refresher = None
+        if workspace:
+            from ..figures.observation import MembershipRefresher
+            membership_refresher = MembershipRefresher(settings)
+            membership_refresher.start()
+            _app.state.membership_refresher = membership_refresher
         hella_path = hella_log.log_path_from_env()
         if workspace and hella_path.is_file():
             ledger = hella_log.HellaLogLedger(
@@ -146,6 +152,8 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
         yield
         if refresher is not None:
             refresher.stop()
+        if membership_refresher is not None:
+            membership_refresher.stop()
         # Cancel outstanding WS handlers before tearing down the DB handles
         # they read/write through, otherwise a handler still mid-tick can
         # touch a closed connection.

@@ -360,6 +360,9 @@ Deployment cards show the calibration date/source and upload time. Product IDs,
 export UUIDs and file hashes remain in API/download metadata, not routine labels.
 The export card offers **Copy folder path**. A conflicting six-stream registry
 is reported as a registry inconsistency, not as an absent upload.
+The workspace checks its antenna-membership cache every 30 seconds and inspects
+saved weights when the recorded product changes. It does not reread an unchanged
+payload or contact hardware. This replaces the preview's manual-only refresh.
 
 Inspect transfer and registry receipts, verify runtime activation separately,
 and update the deployment ledger after a verified deployment. New current-cal

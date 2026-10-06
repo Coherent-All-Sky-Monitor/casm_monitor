@@ -1,15 +1,17 @@
-"""Bounded observation products, executed only by the existing figure worker."""
+"""Bounded saved-weight membership and observation products; no hardware writes."""
 from __future__ import annotations
 
 import json
+import logging
 import os
+import threading
 import time
 
 import numpy as np
 
 from ..collectors.rowmap import read_layout
 from ..collectors.vis import DT_S, STREAM_AVG8
-from ..observation import cache_dir, file_identity, read_json, recorded_product
+from ..observation import cache_dir, file_identity, inspected_deployment, read_json, recorded_product
 from ..store.shards import ensure_contained
 from ..util import iso
 
@@ -17,6 +19,49 @@ MAX_WEIGHT_BYTES = 400 * 1024**2
 MAX_SOLAR_SAMPLES = 1024
 MAX_SOLAR_CELLS = 1024 * 384
 SOLAR_ANTENNAS = (9, 19)
+
+
+class MembershipRefresher:
+    """Refresh a workspace's small membership cache after a deployment changes.
+
+    Production SQLite is opened read-only on the background thread. An unchanged
+    product needs no HDF5 read and no cache write. No hardware calls or job queues.
+    """
+
+    def __init__(self, settings, interval_s=30.0):
+        if settings.observation_cache_root is None:
+            raise ValueError('Membership refresher requires an isolated output root')
+        self.settings = settings
+        self.interval_s = interval_s
+        self.stopped = threading.Event()
+        self.thread = threading.Thread(target=self._run, name='membership-preview', daemon=True)
+
+    def refresh_once(self):
+        from ..store import Store
+        store = Store(self.settings.db_path, store_root=self.settings.store_root, read_only=True)
+        try:
+            state = inspected_deployment(self.settings, store.latest_scalars())
+            if state.get('path') and state['inspection_state'] != 'complete':
+                return refresh_membership(store, self.settings)
+            return state
+        finally:
+            store.close()
+
+    def _run(self):
+        while not self.stopped.is_set():
+            try:
+                self.refresh_once()
+            except Exception:
+                logging.getLogger(__name__).exception('Membership preview refresh failed')
+            if self.stopped.wait(self.interval_s):
+                return
+
+    def start(self):
+        self.thread.start()
+
+    def stop(self):
+        self.stopped.set()
+        self.thread.join(timeout=2.0)
 
 
 def inspect_membership(path):

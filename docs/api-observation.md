@@ -55,6 +55,13 @@ The retained investigation queue also mirrors newly seen misses locally on
 refresh. These exceptions do not enable operational writes; see `api-review.md`
 and `api-commissioning.md`.
 
+The workspace also refreshes its small antenna-membership cache on startup and
+checks for a new, consistent deployment every 30 seconds. This background thread
+opens the production Store read-only and reads the saved HDF5 only after its
+product/file identity changes (400 MiB inspection limit). Unchanged products
+cause no payload read or cache write. It contacts no hardware and queues no jobs.
+GET handlers still read only small metadata; an in-progress inspection is pending.
+
 Mean LST uses installed offline Earth-orientation tables with downloads disabled.
 It is a display clock, not a precision calibration astrometry contract.
 

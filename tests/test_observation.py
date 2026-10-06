@@ -101,6 +101,41 @@ def test_stream_evidence_mixed_or_missing_is_not_one_deployment(settings, tmp_pa
     assert len(result["per_stream"]) == 6
 
 
+def test_workspace_membership_refreshes_new_products_without_mutating_store(settings, store, tmp_path, monkeypatch):
+    from casm_monitor.figures import observation
+    settings = replace(isolated(settings, tmp_path), observation_cache_root=tmp_path/'preview')
+    path = tmp_path/'weights.h5'
+    product(path)
+    products = settings.registry_dir/'products'
+    products.mkdir(parents=True)
+    (products/'first.json').write_text(json.dumps(dict(h5_path=str(path))))
+    def associate(pid):
+        store.put_scalar('weights.product_id', pid)
+        store.put_scalar('weights.product_source', 'live_event')
+        (settings.registry_dir/'live_events.jsonl').write_text('\n'.join(json.dumps(dict(
+            stream=s, product_id=pid, utc='2026-09-13T00:00:00Z')) for s in range(6)))
+    associate('first')
+    refresher = observation.MembershipRefresher(settings)
+    before = store.latest_scalars()
+    assert refresher.refresh_once()['antennas'] == [9, 19]
+    assert store.latest_scalars() == before
+    cache = settings.observation_cache_root/'membership.json'
+    original = cache.stat().st_mtime_ns
+    inspect = observation.inspect_membership
+    monkeypatch.setattr(observation, 'inspect_membership', lambda p: (_ for _ in ()).throw(AssertionError('Unchanged product reread')))
+    assert refresher.refresh_once()['inspection_state'] == 'complete'
+    assert cache.stat().st_mtime_ns == original
+    monkeypatch.setattr(observation, 'inspect_membership', inspect)
+    new = tmp_path/'new.h5'
+    product(new)
+    with h5py.File(new, 'r+') as f:
+        f['weights_int8'][0, 0, 0, 0, 2] = 1
+    (products/'second.json').write_text(json.dumps(dict(h5_path=str(new))))
+    associate('second')
+    assert refresher.refresh_once()['antennas'] == [9, 19, 26]
+    assert json.loads(cache.read_text())['product_id'] == 'second'
+
+
 def test_preview_refuses_posts_and_uses_readonly_store(settings, store, tmp_path):
     settings = isolated(settings, tmp_path)
     with TestClient(create_app(settings, read_only=True)) as client:
