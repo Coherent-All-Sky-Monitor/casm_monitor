@@ -1,5 +1,21 @@
 # Search tab API contract (M2b)
 
+## Current observation workspace
+
+The 8061 Search (T1) page uses `GET /api/t1?t0=...&t1=...&time_tz=...` for its
+dated plots and `GET /api/t1/status` for independent live stream boxes. The
+latter reads only the gulp ledger and includes current gulp count/rate, age,
+cap hits and ledger-read time; it does not build candidate arrays or plots.
+Empty-gulp fractions remain part of the full dated snapshot. Status checks run
+every 30 seconds while visible; plot windows roll every five minutes.
+
+Exact-window results use an eight-entry, five-minute server LRU. Completed
+plot products are immutable and browser-cacheable. The frontend restores
+recent plots and controls across tab navigation, coalesces matching reads,
+and retains the previous labelled interval during rolling refresh. Expired or
+failed live status is Unknown. JSON compression is lossless. The endpoints
+below describe the older Search API retained alongside this workspace.
+
 Written by the frontend agent for the backend agent implementing these routes
 concurrently, per `docs/plan.md` section "4b. Search". The frontend
 (`frontend/src/lib/api.ts`, `frontend/src/lib/types.ts`) is built exactly

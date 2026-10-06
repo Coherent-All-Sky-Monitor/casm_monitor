@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, Evidence, initialWindow, isoInput, Json, LOCAL, Notice, TimeWindow, TimeZone } from "../components/Workspace";
+import { Evidence, initialWindow, isoInput, Json, LOCAL, Notice, TimeWindow, TimeZone } from "../components/Workspace";
+import {useCachedResource, useTabState} from '../components/CachedResource';
 import { InjectionPanel, localStamp, OverviewImage, VisibilityPreview } from "../components/OverviewPlots";
 import { FigureZoom } from "../components/FigureZoom";
 import { snapHealthLabel } from "../components/SnapHealth";
@@ -11,9 +12,7 @@ import "../overview.css";
 
 type Health = "ok"|"late"|"silent"|"unknown"|"yellow"|"orange";
 function useLive(url:string,period=30000) {
-  const [data,setData]=useState<Json|null>(null),[error,setError]=useState('');
-  useEffect(()=>{let active=true,busy=false;const load=async()=>{if(busy)return;busy=true;try{const value=await api(url);if(active){setData(value);setError('');}}catch(e){if(active)setError((e as Error).message);}finally{busy=false;}};void load();const timer=globalThis.setInterval(()=>{if(!document.hidden)void load();},period);return()=>{active=false;globalThis.clearInterval(timer);};},[url,period]);
-  return {data,error};
+  return useCachedResource(url,period,{allowStale:false});
 }
 function secondsSince(value:string|number|null|undefined,now:number) {if(value==null)return null;const t=typeof value==='number'?value*1000:Date.parse(value);return Number.isFinite(t)?Math.max(0,(now-t)/1000):null;}
 function ageText(seconds:number|null) {return seconds==null?'Unknown':seconds<90?`${Math.round(seconds)} s`:`${Math.round(seconds/60)} min`;}
@@ -39,19 +38,13 @@ function ArrayContext({catalog,observation}:{catalog:Json;observation:Json|null}
 
 export default function OperationsPage() {
   const [photoOpen,setPhotoOpen]=useState(false);
-  const live=useLive('/api/observation'),search=useLive('/api/t1/status'),catalog=useLive('/api/science/catalog',300000),snaps=useLive('/api/snap-workspace/health');
-  const [now,setNow]=useState(Date.now()),[window,setWindow]=useState(initialWindow()),[zone,setZone]=useState(LOCAL),[rolling,setRolling]=useState(true);
-  const [history,setHistory]=useState<Json|null>(null),[activity,setActivity]=useState<Json|null>(null),[historyError,setHistoryError]=useState(''),[activityError,setActivityError]=useState('');
+  const live=useLive('/api/observation'),search=useLive('/api/t1/status'),catalog=useCachedResource('/api/science/catalog',300000),snaps=useLive('/api/snap-workspace/health');
+  const [now,setNow]=useState(Date.now()),[window,setWindow]=useTabState('overview.window',initialWindow),[zone,setZone]=useTabState('overview.zone',LOCAL),[rolling,setRolling]=useTabState('overview.rolling',true);
   const t0=isoInput(window.t0),t1=isoInput(window.t1),query=new URLSearchParams({t0,t1,time_tz:zone}).toString();
   useEffect(()=>{const timer=globalThis.setInterval(()=>{if(!document.hidden)setNow(Date.now());},10000);return()=>globalThis.clearInterval(timer);},[]);
-  useEffect(()=>{if(!rolling)return;const timer=globalThis.setInterval(()=>{if(!document.hidden)setWindow(initialWindow());},120000);return()=>globalThis.clearInterval(timer);},[rolling]);
-  useEffect(()=>{
-    let active=true;setHistory(null);setActivity(null);setHistoryError('');setActivityError('');
-    const timer=globalThis.setTimeout(()=>{
-      api('/api/observation/injections?'+query).then(d=>{if(active)setHistory(d);}).catch(e=>{if(active)setHistoryError(e.message);});
-      api('/api/t1?compact=true&'+query).then(d=>{if(active)setActivity(d);}).catch(e=>{if(active)setActivityError(e.message);});
-    },350);return()=>{active=false;globalThis.clearTimeout(timer);};
-  },[query]);
+  useEffect(()=>{if(!rolling)return;const update=()=>{if(!document.hidden&&Date.now()-Date.parse(isoInput(window.t1))>=120000)setWindow(initialWindow());};update();const timer=globalThis.setInterval(update,30000);return()=>globalThis.clearInterval(timer);},[rolling,window.t1,setWindow]);
+  const {data:history,error:historyError}=useCachedResource('/api/observation/injections?'+query,0,{maxAge:120000,debounce:150,keepPrevious:rolling});
+  const {data:activity,error:activityError}=useCachedResource('/api/t1?compact=true&'+query,0,{maxAge:120000,debounce:150,keepPrevious:rolling});
   const data=live.data,inj=data?.injections,c=inj?.counts??{};
   const liveAge=secondsSince(data?.clock?.utc,now),stateAge=secondsSince(data?.observation?.state?.observed_at,now),state=data?.observation?.state?.value;
   const obsHealth:Health=live.error?'late':stateAge==null||state==null?'unknown':stateAge>120?'late':state==='running'?'ok':'silent';
@@ -95,7 +88,7 @@ export default function OperationsPage() {
     <section className="overview-controls"><div className="overview-control-line"><strong>{rolling?'Rolling 24 hours':'Historical interval'}</strong><span>{localStamp(t0,zone)} – {localStamp(t1,zone)}</span><div className="overview-history-actions"><TimeZone value={zone} onChange={setZone}/><button className={rolling?'active':''} onClick={()=>{setRolling(true);setWindow(initialWindow());}}>Live · rolling 24 h</button></div></div>
       <details><summary>Change history interval</summary><TimeWindow value={window} timeZone={zone} onChange={w=>{setRolling(false);setWindow(w);}}/></details><p>{rolling?'History plots refresh every 2 min.':'History is paused.'} Live status and configuration remain current.</p>
     </section>
-    <div className="overview-main-grid"><section className="overview-panel overview-injections" aria-label="Injection recovery history">{history?<InjectionPanel data={history} zone={zone}/>:historyError?<Notice>{historyError}</Notice>:<p className="overview-loading">Loading injection history…</p>}</section>
+    <div className="overview-main-grid"><section className="overview-panel overview-injections" aria-label="Injection recovery history">{historyError&&<Notice>{historyError}{history?' Showing the last successful interval.':''}</Notice>}{history?<InjectionPanel data={history} zone={zone}/>:!historyError&&<p className="overview-loading">Loading injection history…</p>}</section>
       <section className="overview-panel overview-array">{catalog.data?<ArrayContext catalog={catalog.data} observation={live.error||catalog.error?null:data}/>:<Notice>{catalog.error||'Loading array configuration…'}</Notice>}{catalog.error&&catalog.data&&<Notice>Configuration refresh failed; the map may be stale.</Notice>}</section></div>
     <div className="overview-diagnostics"><section className="overview-panel overview-search"><div className="overview-panel-heading"><h3>Search activity</h3><span>8 streams</span></div>
       {activityError&&<Notice>{activityError}</Notice>}{!activity&&!activityError&&<p className="overview-loading">Loading search activity…</p>}

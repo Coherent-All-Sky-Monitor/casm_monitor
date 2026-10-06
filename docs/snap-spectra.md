@@ -78,7 +78,16 @@ visibility autos 21–26 seconds away. Noncentral features at 400.665 and
 ## History and acquisition
 
 **Live** shows the latest saved spectra, refreshed every minute; acquisition
-status polls every ten seconds. **History** opens the paused saved-data viewer
+status polls every ten seconds. Entry waits for that small status response before
+requesting spectra, avoiding a duplicate unversioned download. Exact-key saved
+responses and controls survive tab switches in bounded browser memory. Returning
+within the refresh interval needs no second spectrum download; an acquisition
+revision change requests the new saved read. JSON is compressed losslessly.
+Health and membership have separate 30-second freshness checks; expired or
+failed checks cannot inherit a cached green verdict. A failed spectrum refresh
+keeps its last successful plot with its actual acquisition timestamp and warning.
+Leaving the tab stops its polling; hidden browser tabs pause periodic reads.
+**History** opens the paused saved-data viewer
 directly, pinning exact saved read IDs. Select a UTC date and scrub, step or Play.
 Choosing an empty date explicitly shows no data. Missing boards in a selected
 read stay blank; they never borrow another read. Per-board timestamps remain

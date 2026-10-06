@@ -168,6 +168,8 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
             calibration_store.close()
 
     app = FastAPI(title="casm_monitor", version=__version__, lifespan=lifespan)
+    from .compression import TextCompression
+    app.add_middleware(TextCompression)
     app.state.settings = settings
     app.state.reader = reader
     app.state.writer = writer

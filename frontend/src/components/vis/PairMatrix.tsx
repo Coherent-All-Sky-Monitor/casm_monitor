@@ -16,6 +16,7 @@ export function PairMatrix({data,selected,quantity,onSelect}:{data:Snapshot;sele
   const seeded=useMemo(()=>{
     const found=new Map<string,PairTile>();
     for(const p of data.panels){
+      if(!p.images[quantity])continue;
       const i=p.input,j=p.is_auto?p.input:data.reference_input;
       found.set(pairKey(i,j),{pair:[i,j],stored_pair:p.pair,tile:p.images[quantity],valid_fraction:p.valid_fraction});
     }

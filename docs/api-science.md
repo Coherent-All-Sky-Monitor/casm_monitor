@@ -54,7 +54,9 @@ for positive real autos; phase at exactly zero visibility is undefined.
 
 `GET /api/science/array` accepts `mode=auto|cross`, `reference=raw|sun`,
 `reference_input` (packet index, default 8), `hours` (0.1–24, default 24),
-`fmin`/`fmax` in MHz (390.625/484.375). It anchors to the newest cached sample,
+`fmin`/`fmax` in MHz (390.625/484.375), and `images`:
+`all` (backward-compatible default), `none`, `real`, `imag`, `amp`, `phase`,
+`power_db`, or `power_linear`. It anchors to the newest cached sample,
 returns its actual date/time and sample count, and never substitutes wall time
 for stale data. Autos and crosses share this rolling 24-hour default. The
 browser polls every minute while visible. Spectra still explicitly select
@@ -66,10 +68,21 @@ The gzip JSON contains geometry (including nullable `snap`, `slot`, `adc` and
 inspection time and unresolved slots), spectra for all four
 quantities (latest and window mean), PNG data-URI previews, the latest-band
 all-pairs scalar matrix (retained for API compatibility, no longer displayed),
-and selection/provenance. Ordinary panel quantity/view/antenna toggles use
-already loaded data; matrix batches load separately. Reference, processing,
-window and band changes request a new snapshot. A four-entry in-memory cache
-avoids repeated array reads.
+and selection/provenance. The browser requests `images=none` for spectra and
+the matrix; dynamic mode requests only its selected quantity or auto-power
+scale. Unrequested `images`/`power_images` entries are absent, while all spectral
+quantities, input identities and cached channels remain present. Switching
+spectral quantity, input selection or panel order uses existing data. A new
+dynamic quantity can require one lazy request; matrix batches load separately.
+Each response includes its own complete axes/timestamps, so variants from
+different integrations are never combined. Reference, processing, window and
+band changes request a new snapshot. Four numerical snapshots (256 MB cube
+budget) share lazy image variants, bounded to 32 MB encoded variants per entry;
+an individual bounded response is retained even if it exceeds that variant budget.
+Membership, layout and shard changes invalidate the numerical cache.
+The browser remembers the selected controls on tab return, restores exact-key
+plots immediately, and revalidates after 60 seconds or explicit Refresh.
+Completed scientific product URLs have private immutable HTTP caching.
 At most 32 wired inputs, 24 hours and the existing 12-million-cell budget are
 admitted. Reads use only `vis_avg8`, without acquisition or native fallback.
 Layout identities, membership evidence and source shards enter the cache key.

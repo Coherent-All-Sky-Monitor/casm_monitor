@@ -1,7 +1,7 @@
 """Bounded live array overview, reusing the visibility cache and reference transform.
 
-Small raster previews and full cached-channel spectra travel together, so changing
-quantity needs no new data read. No observing, acquisition or persistent writes.
+Full cached-channel spectra and lazy, selected-quantity raster previews share one
+bounded numerical cache. No observing, acquisition or persistent writes.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from .vis import VisStore
 
 # Legacy explicit inspection preset for the detailed inspector, not the default.
 INSPECTION_ANTENNAS = (9, 10, 15, 18, 19, 22, 23, 24, 26, 30, 32, 36, 38, 40, 42, 44, 45)
-_CACHE: OrderedDict[tuple, bytes] = OrderedDict()
+_CACHE: OrderedDict[tuple, dict] = OrderedDict()
 _LOCK = threading.Lock()
 _PAIR_CACHE: OrderedDict[tuple, bytes] = OrderedDict()
 PAIR_BATCH_SIZE = 16
@@ -124,8 +124,29 @@ def image_tile(values, stamps, quantity, *, power_scale=None):
                 width=image.width, height=image.height)
 
 
-def make_panels(z, stamps, freq, inputs, pairs, reference_input, mode):
-    previews = preview_values(z)
+IMAGE_VIEWS = ('all', 'none', 'real', 'imag', 'amp', 'phase', 'power_db', 'power_linear')
+
+
+def panel_images(z, stamps, inputs, reference_input, mode, images='all'):
+    if images not in IMAGE_VIEWS:
+        raise HTTPException(400, 'Unknown array image view')
+    previews = preview_values(z) if images != 'none' else None
+    result = []
+    for k, entry in enumerate(inputs):
+        conjugate = mode == 'cross' and entry['packet_idx'] > reference_input
+        tiles = {}
+        for q in ('real', 'imag', 'amp', 'phase'):
+            if images in ('all', q):
+                sign = -1 if conjugate and q in ('imag', 'phase') else 1
+                tiles[q] = image_tile(sign*previews[q][:, k], stamps, q)
+        power = {scale: image_tile(previews['real'][:, k], stamps, 'amp', power_scale=scale)
+                 for scale in ('db', 'linear') if mode == 'auto' and images in ('all', 'power_'+scale)}
+        result.append(dict(images=tiles, power_images=power))
+    return result
+
+
+def make_panels(z, stamps, freq, inputs, pairs, reference_input, mode, images='all'):
+    tiles = panel_images(z, stamps, inputs, reference_input, mode, images)
     latest, averaged = components(z[-1]), components(z, axis=0)
     panels = []
     for k, entry in enumerate(inputs):
@@ -133,16 +154,11 @@ def make_panels(z, stamps, freq, inputs, pairs, reference_input, mode):
         # All cross tiles represent V(target, reference), regardless of packet order.
         conjugate = mode == 'cross' and p > reference_input
         spectra = {}
-        images = {}
         for q in ('real', 'imag', 'amp', 'phase'):
             sign = -1 if conjugate and q in ('imag','phase') else 1
             spectra[q] = dict(latest=finite_list(sign*latest[q][k]), mean=finite_list(sign*averaged[q][k]))
-            images[q] = image_tile(sign*previews[q][:,k], stamps, q)
-        power_images = {scale: image_tile(previews['real'][:,k], stamps, 'amp', power_scale=scale)
-                        for scale in ('db', 'linear')} if mode == 'auto' else {}
         panels.append(dict(input=p, pair=list(pairs[k]), is_auto=pairs[k][0]==pairs[k][1],
-                           power_images=power_images,
-                           spectra=spectra, images=images,
+                           **tiles[k], spectra=spectra,
                            valid_fraction=float(np.mean(np.isfinite(z[:,k])))))
     return panels
 
@@ -162,10 +178,28 @@ def matrix_values(z, pairs, inputs):
     return result
 
 
+def snapshot_body(entry, images):
+    """Render one selected view without rereading or changing the numerical data."""
+    bodies = entry['bodies']
+    if images not in bodies:
+        result = entry['result']
+        if images != 'none':
+            tiles = panel_images(entry['z'], entry['t'], result['inputs'],
+                                 result['reference_input'], result['mode'], images)
+            result = dict(result, panels=[dict(p, **tile) for p, tile in zip(result['panels'], tiles)])
+        bodies[images] = gzip.compress(json.dumps(result, allow_nan=False, separators=(',', ':')).encode(), compresslevel=3)
+        # Bound encoded variants as well as numerical cubes. The requested body
+        # survives eviction even if it alone exceeds the normal variant budget.
+        while len(bodies) > 1 and sum(map(len, bodies.values())) > 32_000_000:
+            bodies.popitem(last=False)
+    bodies.move_to_end(images)
+    return bodies[images]
+
+
 def snapshot(settings, reader, *, hours=24., reference_input=8, mode='auto', reference='raw',
-             fmin=390.625, fmax=484.375):
+             fmin=390.625, fmax=484.375, images='all'):
     from .science import geometry, select_layout, bounded_rows, load_selection
-    if mode not in ('auto','cross') or reference not in ('raw','sun'):
+    if mode not in ('auto','cross') or reference not in ('raw','sun') or images not in IMAGE_VIEWS:
         raise HTTPException(400, 'Unknown visibility mode or reference')
     if not np.isfinite([hours,fmin,fmax]).all() or not .1 <= hours <= 24 or not 0 < fmin < fmax < 1000:
         raise HTTPException(400, 'Choose 0.1–24 hours and increasing frequency bounds')
@@ -194,10 +228,10 @@ def snapshot(settings, reader, *, hours=24., reference_input=8, mode='auto', ref
     with _LOCK:
         if key in _CACHE:
             _CACHE.move_to_end(key)
-            return _CACHE[key]
+            return snapshot_body(_CACHE[key], images)
         req = SimpleNamespace(pairs=pairs,reference=reference,resolution='avg8',fmin=fmin,fmax=fmax)
         z,t,f,evidence,_ = load_selection(vstore,req,t0,t1,layout)
-        panels = make_panels(z,t,f,inputs,pairs,reference_input,mode)
+        panels = make_panels(z,t,f,inputs,pairs,reference_input,mode,images='none')
         # All-pairs summary uses only the newest integration, not the history cube.
         ids = sorted(i['packet_idx'] for i in inputs)
         matrix_pairs = [(i,j) for k,i in enumerate(ids) for j in ids[k:]]
@@ -225,11 +259,11 @@ def snapshot(settings, reader, *, hours=24., reference_input=8, mode='auto', ref
                                       previews='Frequency-only reduction to at most 128 channels; every time integration retained',
                                       baseline_convention='V(target, reference); reversed stored pairs are conjugated',
                       membership=membership))
-        body = gzip.compress(json.dumps(result,allow_nan=False,separators=(',',':')).encode(),compresslevel=3)
-        _CACHE[key] = body
-        while len(_CACHE)>4:
+        entry = dict(result=result, z=z, t=t, bodies=OrderedDict())
+        _CACHE[key] = entry
+        while len(_CACHE)>1 and (len(_CACHE)>4 or sum(e['z'].nbytes for e in _CACHE.values())>256_000_000):
             _CACHE.popitem(last=False)
-        return body
+        return snapshot_body(entry, images)
 
 
 def pair_snapshot(settings, reader, *, pairs, t0, t1, quantity='amp', reference='raw',
@@ -302,7 +336,7 @@ def register_routes(router,settings,reader):
 
     @router.get('/array')
     def array(hours:float=24, reference_input:int=8, mode:str='auto', reference:str='raw',
-              fmin:float=390.625, fmax:float=484.375):
+              fmin:float=390.625, fmax:float=484.375, images:str='all'):
         body=snapshot(settings,reader,hours=hours,reference_input=reference_input,mode=mode,
-                      reference=reference,fmin=fmin,fmax=fmax)
+                      reference=reference,fmin=fmin,fmax=fmax,images=images)
         return Response(body,media_type='application/json',headers={'Content-Encoding':'gzip','Cache-Control':'no-cache'})

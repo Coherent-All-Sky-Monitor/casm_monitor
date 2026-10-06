@@ -29,6 +29,7 @@ import statistics
 import threading
 import tempfile
 import time
+from collections import OrderedDict
 from typing import Literal
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,7 +48,7 @@ MAX_ROWS = 700000
 TIME_BINS = 480
 N_STREAMS = hella_log.N_STREAMS
 REFRESH_S = 300
-CACHE_TTL_S = 120
+CACHE_TTL_S = 300
 # Liveness thresholds on the age of a stream's newest ledger gulp.
 OK_AGE_S = 60.0
 LATE_AGE_S = 600.0
@@ -440,8 +441,9 @@ def render_t1(data, *, compact=False):
 
 def build_router(reader, settings):
     router = APIRouter(prefix="/api/t1", tags=["t1"])
-    cache = {}
+    cache = OrderedDict()
     lock = threading.Lock()
+    plot_lock = threading.Lock()
     ledger_db = hella_log.ledger_path(settings.observation_cache_root)
 
     def get(t0, t1, time_tz):
@@ -449,12 +451,14 @@ def build_router(reader, settings):
         key = (t0, t1, time_tz)
         with lock:
             if key in cache and time.monotonic() - cache[key][0] < CACHE_TTL_S:
+                cache.move_to_end(key)
                 return cache[key][1]
             result = build_t1(reader, t0=t0, t1=t1, ledger_db=ledger_db)
             result["time_tz"] = time_tz
-            if len(cache) > 2:
-                cache.clear()
             cache[key] = (time.monotonic(), result)
+            cache.move_to_end(key)
+            while len(cache) > 8:
+                cache.popitem(last=False)
             return result
 
     @router.get("")
@@ -462,6 +466,10 @@ def build_router(reader, settings):
                  compact: bool = False,
                  time_tz: Literal["America/Los_Angeles", "UTC"] = "America/Los_Angeles"):
         data = get(t0, t1, time_tz)
+        with plot_lock:
+            return with_plot(data, compact)
+
+    def with_plot(data, compact):
         plot_key = "activity_plot_url" if compact else "plot_url"
         if settings.observation_cache_root and plot_key not in data:
             content = render_t1(data, compact=compact)
@@ -485,14 +493,17 @@ def build_router(reader, settings):
                 finally:
                     temporary.unlink(missing_ok=True)
             data[plot_key] = f"/api/t1/products/{digest}.png"
-        return data
+        # A simultaneous compact/full request can add the other plot URL. Keep
+        # that cache mutation separate from this response's JSON serialization.
+        return dict(data)
 
     @router.get("/status")
     def live_status():
         now = time.time()
         info = hella_log.ledger_info(ledger_db)
         rows = stream_rows(ledger_db, {}, end=now, read_unix=info.get("last_tick_unix"))
-        fields = ("stream", "node", "status", "last_gulp_unix", "last_gulp_age_s", "cap_hits_last_hour")
+        fields = ("stream", "node", "status", "last_gulp_unix", "last_gulp_age_s", "cap_hits_last_hour",
+                  "gulps_last_hour", "expected_gulps_per_hour")
         return {"checked_utc": iso(now), "ledger": info,
                 "streams": [{key:row[key] for key in fields} for row in rows]}
 

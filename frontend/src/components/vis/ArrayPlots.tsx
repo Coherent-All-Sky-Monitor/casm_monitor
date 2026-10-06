@@ -6,7 +6,7 @@ export type Quantity = "amp" | "real" | "imag" | "phase";
 export type Antenna = {packet_idx:number; antenna:number; station:string; position_enu_m:number[]; snap?:number|null; slot?:string|null; adc?:number|null; beamforming?:boolean|null};
 export function wiringLabel(a:Antenna) {return `SNAP ${a.snap??'—'} · SLOT ${a.slot??'—'} · ADC ${a.adc??'—'}`;}
 export type Tile = {src:string;scale:string;min:number;max:number;log:boolean;width:number;height:number};
-export type Panel = {input:number;pair:number[];is_auto:boolean;valid_fraction:number;spectra:Record<Quantity,{latest:(number|null)[];mean:(number|null)[]}>;images:Record<Quantity,Tile>;power_images?:Record<PowerScale,Tile>};
+export type Panel = {input:number;pair:number[];is_auto:boolean;valid_fraction:number;spectra:Record<Quantity,{latest:(number|null)[];mean:(number|null)[]}>;images:Partial<Record<Quantity,Tile>>;power_images?:Partial<Record<PowerScale,Tile>>};
 export type Snapshot = {inputs:Antenna[];default_inputs:number[];membership:{status:string;product_id:string|null};reference_input:number;reference:string;mode:string;panels:Panel[];freq_mhz:number[];t0:number;t1:number;samples:number;integration_s:number;matrix:Record<Quantity,(number|null)[][]>;provenance:Record<string,unknown>};
 export const QUANTITIES: [Quantity,string][] = [["amp","|V|"],["real","Real(V)"],["imag","Imag(V)"],["phase","Phase"]];
 export function number(v:number|null|undefined) {if(v==null||!Number.isFinite(v))return "—";if(v===0)return "0";return Math.abs(v)>=1e4||Math.abs(v)<.01?v.toExponential(1):Number(v.toPrecision(3)).toString();}

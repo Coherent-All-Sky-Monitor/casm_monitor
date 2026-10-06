@@ -3,7 +3,17 @@ import { FigureZoom } from "./FigureZoom";
 
 export type Json = Record<string, any>;
 let renderQueue: Promise<unknown> = Promise.resolve();
+const pendingGets = new Map<string, Promise<unknown>>();
 export function api<T = Json>(url: string, body?: unknown, headers: Record<string,string> = {}): Promise<T> {
+  // Deduplicate overlapping reads only. POSTs and their fresh CSRF checks are
+  // never reused as completed responses by this low-level API.
+  if (body === undefined) {
+    const key = url + JSON.stringify(headers);
+    const pending = pendingGets.get(key);
+    if (pending) return pending as Promise<T>;
+    const request = requestApi<T>(url, body, headers).finally(() => pendingGets.delete(key));
+    pendingGets.set(key, request); return request;
+  }
   if (url !== "/api/science/render") return requestApi<T>(url,body,headers);
   const next = renderQueue.then(()=>requestApi<T>(url,body,headers));
   renderQueue = next.catch(()=>undefined);
@@ -16,7 +26,7 @@ async function requestApi<T = Json>(url: string, body?: unknown, headers: Record
 }
 export function useResource(url: string, interval = 0) {
   const [data, setData] = useState<Json | null>(null), [error, setError] = useState("");
-  useEffect(() => { let active = true; const load = () => api(url).then(d => {if(active) {setData(d); setError("");}}).catch(e => {if(active) setError(e.message);}); load(); const timer = interval ? window.setInterval(load, interval) : 0; return () => {active = false; window.clearInterval(timer);}; }, [url, interval]);
+  useEffect(() => { let active = true; const load = () => api(url).then(d => {if(active) {setData(d); setError("");}}).catch(e => {if(active) setError(e.message);}); load(); const visible=()=>{if(!document.hidden)void load();}; const timer = interval ? window.setInterval(visible, interval) : 0; if(interval)document.addEventListener('visibilitychange',visible); return () => {active = false; window.clearInterval(timer);document.removeEventListener('visibilitychange',visible);}; }, [url, interval]);
   return {data, error};
 }
 export function stamp(value: string | number | null | undefined) {

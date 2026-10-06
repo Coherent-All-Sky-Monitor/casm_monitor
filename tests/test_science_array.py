@@ -137,6 +137,9 @@ def test_snapshot_payload_and_cache(monkeypatch,settings):
     assert len(body['panels'])==2
     monkeypatch.setattr(science,'load_selection',lambda *a:pytest.fail('cached snapshot reread data'))
     assert array.snapshot(settings,reader)==encoded
+    core=json.loads(gzip.decompress(array.snapshot(settings,reader,images='none')))
+    assert core['panels'][0]['spectra']==body['panels'][0]['spectra']
+    assert not core['panels'][0]['images']
     # A deployment/membership change must invalidate even unchanged vis shards.
     monkeypatch.setattr(science,'load_selection',lambda *a:(cube,times,freq,[],0))
     deployment.update(product_id='second',positions=[dict(slot=8,antenna=9)])
@@ -144,6 +147,44 @@ def test_snapshot_payload_and_cache(monkeypatch,settings):
     assert changed['default_inputs']==[8]
     assert changed['membership']['product_id']=='second'
     array._CACHE.clear()
+
+
+@pytest.mark.parametrize('mode',['auto','cross'])
+@pytest.mark.parametrize('images',['none','real','imag','amp','phase','power_db','power_linear'])
+def test_lazy_panels_preserve_all_numerical_values_and_only_render_selected_tiles(monkeypatch,mode,images):
+    inputs=[dict(packet_idx=8),dict(packet_idx=18)]
+    z=np.array([[[1+2j,0j,-3-4j],[1+3j,2+1j,4+1j]],
+                [[4+0j,3+1j,2-1j],[2+3j,0j,-2-5j]]])
+    t=np.array([1000,1000+array.DT_S]);f=np.array([430,420,410]);pairs=[(8,8),(8,18)]
+    expected=array.make_panels(z,t,f,inputs,pairs,8,mode)
+    calls=[];render=array.image_tile
+    def tile(*args,**kwargs):
+        calls.append((args[2],kwargs.get('power_scale')))
+        return render(*args,**kwargs)
+    monkeypatch.setattr(array,'image_tile',tile)
+    selected=array.make_panels(z,t,f,inputs,pairs,8,mode,images=images)
+    for old,new in zip(expected,selected):
+        assert old['spectra']==new['spectra']
+        for name in ('input','pair','is_auto','valid_fraction'):
+            assert old[name]==new[name]
+        for name in ('images','power_images'):
+            for key,value in new[name].items():
+                assert old[name][key]==value
+    expected_count=0 if images=='none' or (mode=='cross' and images.startswith('power_')) else 2
+    assert len(calls)==expected_count
+
+
+def test_snapshot_variants_reuse_cube_without_mutating_core():
+    from collections import OrderedDict
+    import gzip,json
+    inputs=[dict(packet_idx=8)];t=np.array([0,array.DT_S]);z=np.ones((2,1,3),complex)
+    core=dict(inputs=inputs,reference_input=8,mode='auto',panels=array.make_panels(z,t,[],inputs,[(8,8)],8,'auto',images='none'))
+    entry=dict(result=core,z=z,t=t,bodies=OrderedDict())
+    plain=array.snapshot_body(entry,'none');db=array.snapshot_body(entry,'power_db')
+    assert array.snapshot_body(entry,'none')==plain
+    assert not core['panels'][0]['images'] and not core['panels'][0]['power_images']
+    full=json.loads(gzip.decompress(db))
+    assert set(full['panels'][0]['power_images'])=={'db'} and not full['panels'][0]['images']
 
 
 @pytest.mark.parametrize('deployment',[

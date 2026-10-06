@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { FigureZoom } from "../components/FigureZoom";
-import { api, Evidence, initialWindow, isoInput, Json, Notice, SaveInvestigation, TimeWindow, TimeZone, LOCAL } from "../components/Workspace";
+import { Evidence, initialWindow, isoInput, Json, Notice, SaveInvestigation, TimeWindow, TimeZone, LOCAL } from "../components/Workspace";
+import {useCachedResource, useTabState} from '../components/CachedResource';
+import {localStamp} from '../components/OverviewPlots';
 import "../search.css";
 
 function ageText(seconds: number | null | undefined) {
@@ -15,17 +17,20 @@ const STREAM_STATUS_LABEL: Record<string,string> = {ok:"OK",late:"Late",silent:"
 
 export default function T1Page() {
   const [params]=useSearchParams();
-  const [window,setWindow]=useState(()=>{
+  const selectionKey='search.'+params.toString();
+  const [window,setWindow]=useTabState(selectionKey+'.window',()=>{
     const t0=Date.parse(params.get('t0')??''),t1=Date.parse(params.get('t1')??'');
     return Number.isFinite(t0+t1)&&t1>t0?{t0:new Date(t0).toISOString().slice(0,-1),t1:new Date(t1).toISOString().slice(0,-1)}:initialWindow();
-  }),[data,setData]=useState<Json|null>(null),[query,setQuery]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
-  const [zone,setZone]=useState(params.get('time_tz')==='UTC'?'UTC':LOCAL),[rolling,setRolling]=useState(!params.has('t0'));
+  });
+  const [zone,setZone]=useTabState(selectionKey+'.zone',params.get('time_tz')==='UTC'?'UTC':LOCAL),[rolling,setRolling]=useTabState(selectionKey+'.rolling',!params.has('t0'));
   const [zoom,setZoom]=useState<{url:string;query:string}|null>(null);
-  const loading=useRef(false);
-  const load=async()=>{if(loading.current)return;loading.current=true;setBusy(true);setError("");try{const q=new URLSearchParams({t0:isoInput(window.t0),t1:isoInput(window.t1),time_tz:zone}).toString();setData(await api("/api/t1?"+q));setQuery(q);}catch(e){setError((e as Error).message);}finally{loading.current=false;setBusy(false);}};
-  useEffect(()=>{const timer=globalThis.setInterval(()=>{if(loading.current)return;globalThis.clearInterval(timer);void load();},350);return()=>globalThis.clearInterval(timer);},[window.t0,window.t1,zone]);
-  useEffect(()=>{if(!rolling)return;const timer=globalThis.setInterval(()=>{if(!document.hidden&&!loading.current)setWindow(initialWindow());},300000);return()=>globalThis.clearInterval(timer);},[rolling]);
-  const streams:Json[]=data?.streams??[];
+  const requested=new URLSearchParams({t0:isoInput(window.t0),t1:isoInput(window.t1),time_tz:zone}).toString();
+  const {data,error,busy,refresh:load}=useCachedResource('/api/t1?'+requested,0,{maxAge:300000,debounce:150,keepPrevious:rolling});
+  const status=useCachedResource('/api/t1/status',30000,{allowStale:false});
+  useEffect(()=>{if(!rolling)return;const update=()=>{if(!document.hidden&&Date.now()-Date.parse(isoInput(window.t1))>=300000)setWindow(initialWindow());};update();const timer=globalThis.setInterval(update,30000);return()=>globalThis.clearInterval(timer);},[rolling,window.t1,setWindow]);
+  const query=data?new URLSearchParams({t0:data.t0,t1:data.t1,time_tz:data.time_tz}).toString():requested;
+  const statusFresh=!status.error&&status.data?.ledger?.last_tick_unix!=null&&Date.now()/1000-status.data.ledger.last_tick_unix<=120;
+  const streams:Json[]=(status.data?.streams??data?.streams??[]).map((s:Json)=>({...data?.streams?.find((p:Json)=>p.stream===s.stream),...s,status:statusFresh?s.status:'unknown'}));
   const capHits=streams.reduce((sum,s)=>sum+(s.cap_hits_last_hour??0),0);
   const capStreams=streams.filter(s=>(s.cap_hits_last_hour??0)>0).length;
   const plotUrl=data?.plot_url??`/api/t1/plot.png?${query}`;
@@ -37,20 +42,23 @@ export default function T1Page() {
       <button className="primary" disabled={busy} onClick={load}>{busy?"Loading stream evidence…":"Inspect interval"}</button>
     </div>
     {error&&<Notice>{error}</Notice>}
-    {data&&<>
+    {status.error&&<Notice>Stream status refresh failed. Current state is unknown.</Notice>}
+    {streams.length>0&&<>
       <section className="stream-strip" aria-label="Stream status">{streams.map((s:Json)=><article key={s.stream} className={`stream-cell ${s.status}`} aria-label={`Stream ${s.stream}`}>
         <header className="stream-heading"><h3>Stream {s.stream}</h3><span className="stream-node">{s.node}</span></header>
         <div className="stream-age"><span className="stream-label">Last gulp</span><div className="stream-reading">
           <strong>{ageText(s.last_gulp_age_s)}</strong><span className="stream-status">{STREAM_STATUS_LABEL[s.status]??"Unknown"}</span>
         </div></div>
         <dl className="stream-metrics">
-          <div><dt>Gulps/h</dt><dd title="Observed / expected gulps in the last hour">{s.gulps_last_hour}<span className="stream-expected"> / {Math.round(s.expected_gulps_per_hour)}</span></dd></div>
+          <div><dt>Gulps/h</dt><dd title="Observed / expected gulps in the last hour">{s.gulps_last_hour??'…'}<span className="stream-expected"> / {s.expected_gulps_per_hour==null?'…':Math.round(s.expected_gulps_per_hour)}</span></dd></div>
           <div><dt>Empty gulps</dt><dd>{s.empty_fraction_last_hour==null?"n/a":`${Math.round(100*s.empty_fraction_last_hour)}%`}</dd></div>
         </dl>
       </article>)}</section>
-      <p className="muted strip-note">Ages are as of the log read {ageText(data.ledger?.read_age_s)} ago.</p>
+      <p className="muted strip-note">{status.data?.ledger?.last_tick_unix?`Ages are as of the log read ${ageText(Math.max(0,Date.now()/1000-status.data.ledger.last_tick_unix))} ago.`:'Checking the latest log read…'}</p>
+    </>}
+    {data&&<>
       <figure className="plot-surface">
-        <figcaption>Stream, beam and DM candidate counts · {data.time_tz==="UTC"?"UTC":"OVRO local (PDT/PST)"} · click to enlarge</figcaption>
+        <figcaption>Stream, beam and DM candidate counts · {localStamp(data.t0,data.time_tz)} – {localStamp(data.t1,data.time_tz)} · {data.time_tz==="UTC"?"UTC":"OVRO local (PDT/PST)"}{busy?' · Updating…':' · click to enlarge'}</figcaption>
         <button type="button" className="plot-image-trigger" aria-label="Enlarge Search (T1) plots" onClick={()=>setZoom({url:plotUrl,query})}>
           <img src={plotUrl} alt="Hella candidate counts by stream, beam and DM over time, with width and DM histograms"/>
         </button>

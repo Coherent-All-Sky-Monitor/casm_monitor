@@ -1,5 +1,67 @@
 # Webpage resources and data products
 
+## SSH-focused navigation, October 6, 2026
+
+Overview, Search, Visibilities and SNAPs restore cached plots and selected
+controls when switching tabs. The cache is session memory, cleared on a full
+reload: at most 48 responses and a 64 MiB serialized-text size estimate, not a
+cap on total browser heap. Existing movie buffers and Source history caching
+remain separate. Identical in-flight GETs share one request. Departed pages
+stop polling; already-running shared reads may finish and populate the cache.
+No speculative native visibility reads or hardware queries run on navigation.
+
+Live health expires after its polling interval (normally 30 s); failed checks
+show Unknown. Snapshot plots retain actual data timestamps and refresh failures.
+Newly selected intervals/quantities never inherit a different result's labels.
+Overview and Search keep successful rolling plots visible during updates, with
+their displayed interval. Rolling endpoints persist across quick tab returns,
+then advance at the existing two-/five-minute cadence. Search loads its small
+live stream-status request independently of the full figure; empty-gulp fractions
+come from the separately dated plot snapshot. The T1 server cache is an eight-entry
+LRU lasting five minutes; concurrent requests reuse a single plot render.
+
+Text responses use gzip level 3; existing gzip payloads, PNG/JPEGs, archives,
+range responses and event streams are not recompressed. Fingerprinted assets
+and completed scientific/Search plot products use immutable HTTP caching.
+Acquisition/upload actions still fetch their own current authorisation nonce;
+POST actions are not replayed from the read cache.
+
+Measured after deployment with local Chromium, normal navigation and real data:
+
+| Item | Before | After |
+| --- | --- | --- |
+| Visibility autos response | 7,662,297 bytes gzip | 167,747 bytes gzip |
+| SNAP entry spectra | Two approximately 1.8 MB responses | One 632,763-byte gzip response |
+| Search revisit, plot DOM ready | 0.65 s | 0.081 s |
+| SNAP revisit, plot DOM ready | 1.73 s | 0.248 s |
+| Overview revisit, plot DOM ready | 1.05 s | 0.298 s |
+
+Visibilities revisits remained fast (0.076 s in this run), now with no repeat
+snapshot download. Its first request after the web restart took 1.73 s; the
+earlier 0.30 s measurement used a warm server cache and is not a cold comparison.
+Scientific values, all channels, image resolution, masks and estimators are
+unchanged. The main reduction comes from lazily requesting dynamic images only
+for the selected quantity instead of eagerly sending every view with spectra.
+
+An additional synthetic 80 ms / 10 Mbit/s link gave cached Visibilities/SNAP
+returns of 0.074/0.244 s. This is browser network emulation, not a measurement
+of the operator's SSH connection. Test route guards disable HTTP caching, so
+Overview/Search PNGs were downloaded again in these tests despite their immutable
+policy. DOM readiness does not measure physical display painting. See
+`scripts/check_navigation_performance.py` and
+`/home/casm/scratch/casm-observation-preview/navigation-after-20261006.json`,
+`navigation-ssh-simulated-20261006.json`, and `navigation-freshness-20261006.json`.
+Only the 8061 web service restarted; observing, weights, acquisition cadences
+and worker/service limits were unchanged.
+
+Validation: 180 backend regression cases, all 11 frontend test files, production
+frontend build, real-data navigation/control checks, both history-player smoke
+checks and injected refresh failures passed. Central guide, HTML/link/export
+checks and wiki lint passed. The unrelated central scientific API snapshot was
+not refreshed: its configured calibrator `calibration.py`, `results.py` and
+`products.py` no longer exist upstream, and other recorded sources have drifted.
+Its existing snapshot was preserved rather than partially regenerated.
+
 The workspace on **8061** runs separately from the collector and two job
 workers. The legacy 8060 and 8050 web services were stopped and disabled on
 September 25, 2026; their data and backend services remain in place.
@@ -101,10 +163,9 @@ This does not contact hardware, clear filesystem caches or change service limits
 The browser retains two batches of up to 12 frames, plus the displayed frame
 while seeking. No movie files or server-side frame cache are created.
 
-Visibilities and Search playback have **not** been implemented or load-tested.
-Their first-time scientific/Matplotlib renders can be more expensive than these
-stored spectra. Any extension should reuse cached products, limit frame counts
-and prefetch, and measure the cold path before enabling it.
+At the September 29 measurement, Visibilities and Search playback were not
+implemented. Visibility playback is now documented in
+[visibility playback](visibility-playback.md); Search playback remains absent.
 
 ## Where products live
 

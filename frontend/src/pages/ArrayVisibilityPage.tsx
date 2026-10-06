@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, Evidence, Notice, TimeZone, LOCAL } from "../components/Workspace";
+import { Evidence, Notice, TimeZone, LOCAL } from "../components/Workspace";
+import {useCachedResource, useTabState} from '../components/CachedResource';
 import { Antenna, DynamicSpectrum, LayoutMap, location, QUANTITIES, Quantity, Snapshot, Spectrum, wiringLabel } from "../components/vis/ArrayPlots";
 import "../array-vis.css";
 import "../array-vis-compact.css";
@@ -11,23 +12,29 @@ import { VisibilityPlayback } from "../components/vis/VisibilityPlayback";
 import {PowerScale,powerLabel} from '../components/powerScale';
 import {PowerScaleControl} from '../components/PowerScaleControl';
 
-const cache=new Map<string,Snapshot>();
+const useSelection=<T,>(key:string, initial:T)=>useTabState('vis.'+key,initial);
 export default function ArrayVisibilityPage() {
   const [,setParams]=useSearchParams();
-  const [mode,setMode]=useState("auto"),[quantity,setQuantity]=useState<Quantity>("amp"),[view,setView]=useState("spectrum");
-  const [reference,setReference]=useState("raw"),[referenceInput,setReferenceInput]=useState(8),[hours,setHours]=useState("24");
-  const [arrangement,setArrangement]=useState("compact");
-  const [powerScale,setPowerScale]=useState<PowerScale>('db');
+  const [mode,setMode]=useSelection('mode',"auto"),[quantity,setQuantity]=useSelection<Quantity>('quantity',"amp"),[view,setView]=useSelection('view',"spectrum");
+  const [reference,setReference]=useSelection('reference',"raw"),[referenceInput,setReferenceInput]=useSelection('referenceInput',8),[hours,setHours]=useSelection('hours',"24");
+  const [arrangement,setArrangement]=useSelection('arrangement',"compact");
+  const [powerScale,setPowerScale]=useSelection<PowerScale>('powerScale','db');
   const [playback,setPlayback]=useState(false);
-  const [zone,setZone]=useState(LOCAL),[statistic,setStatistic]=useState<"latest"|"mean">("latest"),[log,setLog]=useState(true);
-  const [fmin,setFmin]=useState("390.625"),[fmax,setFmax]=useState("484.375"),[band,setBand]=useState([390.625,484.375]);
-  const [data,setData]=useState<Snapshot|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false),[tick,setTick]=useState(0);
-  const [selected,setSelected]=useState<number[]|null>(null),[focus,setFocus]=useState<number|null>(null);
+  const [zone,setZone]=useSelection('zone',LOCAL),[statistic,setStatistic]=useSelection<"latest"|"mean">('statistic',"latest"),[log,setLog]=useSelection('log',true);
+  const [fmin,setFmin]=useSelection('fmin',"390.625"),[fmax,setFmax]=useSelection('fmax',"484.375"),[band,setBand]=useSelection('band',[390.625,484.375]);
+  const [validationError,setError]=useState("");
+  const [selected,setSelected]=useSelection<number[]|null>('selected',null),[focus,setFocus]=useState<number|null>(null);
   const [pairFocus,setPairFocus]=useState<{a:Antenna;b:Antenna;p:PairTile;data:Snapshot;quantity:Quantity}|null>(null);
-  const serial=useRef(0);
-  const key=new URLSearchParams({mode,reference,reference_input:String(referenceInput),hours,fmin:String(band[0]),fmax:String(band[1])}).toString();
-  useEffect(()=>{const id=++serial.current;const cached=cache.get(key);if(cached)setData(cached);setBusy(true);setError("");api<Snapshot>(`/api/science/array?${key}`).then(d=>{if(id!==serial.current)return;cache.set(key,d);if(cache.size>12)cache.delete(cache.keys().next().value!);setData(d);setBusy(false);}).catch(e=>{if(id===serial.current){setError(e.message);setBusy(false);}});return()=>{serial.current++;};},[key,tick]);
-  useEffect(()=>{const timer=window.setInterval(()=>{if(!document.hidden&&!playback)setTick(t=>t+1);},60000);return()=>window.clearInterval(timer);},[playback]);
+  const images=view==='dynamic'?(mode==='auto'&&quantity==='amp'?'power_'+powerScale:quantity):'none';
+  const key=new URLSearchParams({mode,reference,reference_input:String(referenceInput),hours,fmin:String(band[0]),fmax:String(band[1]),images}).toString();
+  const baseKey=key.slice(0,key.lastIndexOf('&images='));
+  const {data:loaded,error:readError,busy,refresh}=useCachedResource<Snapshot>(`/api/science/array?${key}`,playback?0:60000,{maxAge:60000});
+  // Keep the last successful view during a refresh, but never mix its labels
+  // with another quantity, band, reference or correlation selection.
+  const previous=useRef<{key:string;data:Snapshot}|null>(null);
+  if(loaded)previous.current={key:baseKey,data:loaded};
+  const data=loaded??previous.current?.data??null;
+  const error=validationError||readError;
   useEffect(()=>{const close=(e:KeyboardEvent)=>{if(e.key==='Escape')setFocus(null);};window.addEventListener('keydown',close);return()=>window.removeEventListener('keydown',close);},[]);
   const inputs=data?.inputs??[];
   const chosen=(selected??data?.default_inputs??[]).filter(p=>inputs.some(a=>a.packet_idx===p));
@@ -38,7 +45,7 @@ export default function ArrayVisibilityPage() {
   const focused=inputs.find(a=>a.packet_idx===focus);
   const panelFor=(a:Antenna)=>data?.panels.find(p=>p.input===a.packet_idx);
   const targetReference=inputs.find(a=>a.packet_idx===(data?.reference_input??referenceInput));
-  const ready=data?.mode===mode&&data?.reference===reference&&data?.reference_input===referenceInput;
+  const ready=previous.current?.key===baseKey&&data?.mode===mode&&data?.reference===reference&&data?.reference_input===referenceInput;
   const dated=(t:number)=>new Intl.DateTimeFormat('en-US',{timeZone:zone,month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(t*1000));
   const label=mode==='auto'&&quantity==='amp'?'Power':QUANTITIES.find(q=>q[0]===quantity)![1];
   const detail=(p:{pair:number[]},source=data,q=quantity,plotView=view)=>{if(!source)return;const dynamic=plotView!=='spectrum';const kind=q==='phase'?(dynamic?'phase_waterfall':'phase_spectrum'):q==='amp'?(dynamic?'amplitude_waterfall':'amplitude_spectrum'):`${q}_${dynamic?'waterfall':'spectrum'}`;setParams({view:'detail',pairs:p.pair.join(','),kind,rolling_hours:hours,reference:source.reference,spectrum_statistic:statistic,time_tz:zone,t0:new Date(Math.floor(source.t0*1000)).toISOString(),t1:new Date(Math.ceil(source.t1*1000)).toISOString(),fmin:String(Math.min(...source.freq_mhz)),fmax:String(Math.max(...source.freq_mhz))});};
@@ -46,7 +53,7 @@ export default function ArrayVisibilityPage() {
     const p=panelFor(a);if(!p||!data)return null;
     const autoPower=data.mode==='auto'&&quantity==='amp';
     const tile=autoPower?p.power_images?.[powerScale]:p.images[quantity];
-    const plot=view==='dynamic'?(tile?<DynamicSpectrum tile={tile} data={data} zone={zone} quantity={quantity} valueLabel={autoPower?powerLabel(powerScale):undefined}/>:<p>Power view unavailable · refresh the snapshot.</p>):<Spectrum values={p.spectra[autoPower?'real':quantity][statistic]} freq={data.freq_mhz} quantity={quantity} log={log&&quantity==='amp'&&!autoPower} powerScale={autoPower?powerScale:undefined}/>;
+    const plot=view==='dynamic'?(tile?<DynamicSpectrum tile={tile} data={data} zone={zone} quantity={quantity} valueLabel={autoPower?powerLabel(powerScale):undefined}/>:<p>{readError?'Dynamic spectrum unavailable · refresh to retry.':'Loading dynamic spectrum…'}</p>):<Spectrum values={p.spectra[autoPower?'real':quantity][statistic]} freq={data.freq_mhz} quantity={quantity} log={log&&quantity==='amp'&&!autoPower} powerScale={autoPower?powerScale:undefined}/>;
     return <article className={`antenna-plot ${a.beamforming?'in-beamforming':''} ${expanded?'expanded':''}`} key={a.packet_idx} data-packet={a.packet_idx} style={expanded||arrangement!=='physical'?undefined:{gridColumn:location(a).col+1}}>
       <header><button className="plot-title" onClick={()=>setFocus(a.packet_idx)}>{a.station}<small>ant {a.antenna}</small><small className="wiring-label">{wiringLabel(a)}</small></button><span title={targetReference?wiringLabel(targetReference):undefined}>{p.is_auto?'auto':`× ${targetReference?.station??'ref'}`}</span></header>
       {expanded?plot:<div className="plot-zoom-trigger" role="button" tabIndex={0} aria-label={`Enlarge ${a.station} ${label} plot`} onClick={()=>setFocus(a.packet_idx)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setFocus(a.packet_idx);}}}>{plot}</div>}
@@ -63,7 +70,7 @@ export default function ArrayVisibilityPage() {
       {mode==='auto'&&quantity==='amp'&&<div className="array-control-line"><label>Power scale</label><PowerScaleControl value={powerScale} onChange={setPowerScale}/></div>}
       <div className="array-control-line"><label>View</label><div className="choice-row">{[['spectrum','Spectrum'],['dynamic','Dynamic spectrum'],['matrix','All pairs']].map(([v,l])=><button key={v} className={view===v?'active':''} onClick={()=>{setView(v);if(v==='matrix')setMode('cross');setFocus(null);setPairFocus(null);}}>{l}</button>)}</div></div>
       <details className="array-options"><summary>Time, processing & scales · {hours} h · {reference==='raw'?'Raw':'Sun fringe-stopped'}</summary><div className="field-row array-secondary"><label>Rolling window<select value={hours} onChange={e=>setHours(e.target.value)}><option value="0.5">30 minutes</option><option value="2">2 hours</option><option value="6">6 hours</option><option value="24">24 hours</option></select></label><label>Processing<select value={reference} onChange={e=>setReference(e.target.value)}><option value="raw">Raw</option><option value="sun">Sun fringe-stopped</option></select></label>{view==='spectrum'&&<label>Spectrum at<select value={statistic} onChange={e=>setStatistic(e.target.value as 'latest'|'mean')}><option value="latest">Latest integration</option><option value="mean">Window mean</option></select></label>}{view==='spectrum'&&quantity==='amp'&&mode!=='auto'&&<label>Vertical scale<select value={log?'log':'linear'} onChange={e=>setLog(e.target.value==='log')}><option value="log">Logarithmic</option><option value="linear">Linear</option></select></label>}<TimeZone value={zone} onChange={setZone}/></div></details>
-      <div className="array-status" role="status"><span className={`live-dot ${age>15?'stale':''}`}/><span>{data?`Latest ${dated(data.t1)} · ${age.toFixed(0)} min ago · ${data.samples} integrations`:'Loading the array snapshot…'}{busy&&data?' · Updating…':''}</span><button disabled={busy} onClick={()=>setTick(t=>t+1)}>Refresh</button></div>
+      <div className="array-status" role="status"><span className={`live-dot ${age>15?'stale':''}`}/><span>{data?`Latest ${dated(data.t1)} · ${age.toFixed(0)} min ago · ${data.samples} integrations`:'Loading the array snapshot…'}{busy&&data?' · Updating…':''}</span><button disabled={busy} onClick={()=>{setError('');refresh();}}>Refresh</button></div>
       <details className="array-options"><summary>Plot notes</summary><p className="array-caption">{view==='spectrum'?(statistic==='latest'?'One recorded integration. Each panel has its own labelled scale.':'Window mean: mean |V|; Real/Imag from the complex mean; phase = angle of the complex mean.') :view==='dynamic'?'Time → · frequency ↑. Every integration retained. Colour ranges per panel; percentile display limits (phase: −π to π).':'Each cell is a baseline. Antennas are ordered north to south, then west to east.'} {quantity==='phase'?'Zero-amplitude phase is undefined and left blank.':quantity==='amp'?(mode==='auto'?'Power is Re(Vᵢᵢ). Non-positive power is blank in dB. Averaging precedes conversion. No channel normalization.':'No channel normalization.'):''}</p></details>
       <details className="array-options"><summary>Frequency range & evidence</summary><form className="field-row" onSubmit={e=>{e.preventDefault();const lo=Number(fmin),hi=Number(fmax);if(lo>0&&hi>lo&&hi<1000)setBand([lo,hi]);else setError('Choose increasing frequency bounds in MHz.');}}><label>Min MHz<input type="number" value={fmin} step="any" onChange={e=>setFmin(e.target.value)}/></label><label>Max MHz<input type="number" value={fmax} step="any" onChange={e=>setFmax(e.target.value)}/></label><button>Apply band</button></form><p>Beamforming follows the inspected nonzero coherent-beam weights in the latest recorded deployment, matched to this layout. It is current membership, not historical membership or an antenna-health check. Toggle any wired station; manual selections survive refresh. Spectra retain all cached channels. Dynamic previews average frequency down to ≤128 channels, with no additional time averaging.</p>{data&&<Evidence value={data.provenance}/>}</details>
     </section></div>

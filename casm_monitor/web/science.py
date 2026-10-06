@@ -477,6 +477,9 @@ def build_router(settings, reader):
         path = (root / pid / filename).resolve()
         if not path.is_relative_to(root) or not path.is_file() or not (root / pid / 'metadata.json').is_file():
             raise HTTPException(404, 'Artifact unavailable')
-        return FileResponse(path, filename=filename)
+        # The product ID includes code, selection, layout and source identities;
+        # a completed product is pinned and reused, never refreshed in place.
+        return FileResponse(path, filename=filename,
+                            headers={'Cache-Control':'private,max-age=31536000,immutable'})
 
     return router

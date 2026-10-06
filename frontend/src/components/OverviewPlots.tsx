@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { FigureZoom } from "./FigureZoom";
 import { api, Json, Notice } from "./Workspace";
 import { timeTicks } from "./vis/PlotTicks";
+import {cachedApi,useTabState} from './CachedResource';
+import {readCache} from '../lib/readCache';
 
 export const OUTCOMES = [
   ["recovered","Recovered","#267044"], ["missed_t1","T1 miss","#b42e38"],
@@ -57,29 +59,35 @@ export function InjectionPanel({data,zone}:{data:Json;zone:string}) {
 }
 
 export function VisibilityPreview({catalog,t0,t1,zone}:{catalog:Json;t0:string;t1:string;zone:string}) {
-  const [quantity,setQuantity]=useState('amplitude_waterfall'),[product,setProduct]=useState<Json|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(true);
+  const [quantity,setQuantity]=useTabState('overview.quantity','amplitude_waterfall'),[product,setProduct]=useState<Json|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(true);
+  const cacheKey='overview-plot:'+JSON.stringify([t0,t1,zone,quantity,catalog.current_layout]);
+  const cached=readCache.peek<Json>(cacheKey)?.data;
+  const shown=cached??(product?.quantity===quantity&&product?.zone===zone?product:null);
   useEffect(()=>{
-    let active=true;setBusy(true);setError('');setProduct(null);
+    let active=true;setBusy(true);setError('');
     const load=async()=>{
       try {
         const epoch=[...(catalog.layouts??[])].reverse().find((l:Json)=>Date.parse(l.date+'T00:00:00Z')<=Date.parse(t0));
-        const dated=epoch?await api('/api/science/catalog?layout_id='+encodeURIComponent(epoch.id)):catalog;
+        const dated=epoch?await cachedApi('/api/science/catalog?layout_id='+encodeURIComponent(epoch.id),300000):catalog;
         const selection=new Set(dated.inspection_inputs??[]);
         const pair=dated.baselines?.find((b:Json)=>selection.has(b.i)&&selection.has(b.j));
         if(!pair)throw new Error('No reference pair available in this layout.');
         if(!active)return;
-        const result=await api('/api/science/render',{pairs:[[pair.i,pair.j]],t0,t1,fmin:390.625,fmax:484.375,kind:quantity,reference:'raw',resolution:'avg8',time_tz:zone,...(epoch?{layout_id:epoch.id}:{})});
         const stations=[pair.i,pair.j].map(p=>dated.inputs.find((a:Json)=>a.packet_idx===p)?.station??`input ${p}`);
-        if(active)setProduct({...result,pairLabel:`${stations.join(' × ')} · ${pair.length_m.toFixed(2)} m ${pair.orientation}`,pair:[pair.i,pair.j]});
+        const result=await readCache.read(cacheKey,async()=>{
+          const result=await api('/api/science/render',{pairs:[[pair.i,pair.j]],t0,t1,fmin:390.625,fmax:484.375,kind:quantity,reference:'raw',resolution:'avg8',time_tz:zone,...(epoch?{layout_id:epoch.id}:{})});
+          return {...result,quantity,zone,t0,t1,pairLabel:`${stations.join(' × ')} · ${pair.length_m.toFixed(2)} m ${pair.orientation}`,pair:[pair.i,pair.j]};
+        },120000);
+        if(active)setProduct(result);
       } catch(e) {if(active)setError((e as Error).message);}
       finally {if(active)setBusy(false);}
     };
     const timer=globalThis.setTimeout(load,350);return()=>{active=false;globalThis.clearTimeout(timer);};
-  },[catalog,t0,t1,zone,quantity]);
-  const query=new URLSearchParams({view:'detail',t0,t1,time_tz:zone,reference:'raw',kind:quantity,...(product?.pair?{pairs:product.pair.join(',')}:{})}).toString();
+  },[catalog,t0,t1,zone,quantity,cacheKey]);
+  const query=new URLSearchParams({view:'detail',t0:shown?.t0??t0,t1:shown?.t1??t1,time_tz:zone,reference:'raw',kind:quantity,...(shown?.pair?{pairs:shown.pair.join(',')}:{})}).toString();
   return <><div className="overview-panel-heading"><h3>Visibility snapshot</h3><div className="overview-quantity" role="group" aria-label="Visibility quantity">{[['amplitude_waterfall','Amplitude'],['phase_waterfall','Phase']].map(([q,l])=><button key={q} className={quantity===q?'active':''} aria-pressed={quantity===q} onClick={()=>setQuantity(q)}>{l}</button>)}</div></div>
-    {busy&&<p className="overview-loading" role="status">Loading the reference baseline…</p>}{error&&<Notice>{error}</Notice>}
-    {product&&<><p className="overview-caption">{product.pairLabel} · Raw · 8-channel averaged</p>{(product.images??[]).map((im:Json)=><OverviewImage key={im.url} src={im.url} title={quantity==='phase_waterfall'?'Reference baseline phase':'Reference baseline dynamic spectrum'}/>)}<details className="overview-evidence"><summary>Figure details</summary>{(product.warnings??[]).map((w:string)=><p key={w}>{w}</p>)}<p>One reference baseline; not a whole-array health test.</p><a href={product.metadata_url} target="_blank" rel="noreferrer">Figure metadata</a></details></>}
+    {busy&&!shown&&<p className="overview-loading" role="status">Loading the reference baseline…</p>}{error&&<Notice>{error}</Notice>}
+    {shown&&<><p className="overview-caption">{shown.pairLabel} · Raw · 8-channel averaged<br/>{localStamp(shown.t0,zone)} – {localStamp(shown.t1,zone)}{busy?' · Updating…':''}</p>{(shown.images??[]).map((im:Json)=><OverviewImage key={im.url} src={im.url} title={quantity==='phase_waterfall'?'Reference baseline phase':'Reference baseline dynamic spectrum'}/>)}<details className="overview-evidence"><summary>Figure details</summary>{(shown.warnings??[]).map((w:string)=><p key={w}>{w}</p>)}<p>One reference baseline; not a whole-array health test.</p><a href={shown.metadata_url} target="_blank" rel="noreferrer">Figure metadata</a></details></>}
     <div className="overview-panel-footer"><Link to={'/vis?'+query}>Visibilities →</Link></div>
   </>;
 }

@@ -3,31 +3,17 @@ import {api, Json, Notice, stamp} from './Workspace';
 import {FigureZoom} from './FigureZoom';
 import {SnapPlot} from './SnapPlot';
 import {snapRange, SNAP_REFERENCE_POWER} from './snapPower';
+import {useCachedResource} from './CachedResource';
 
 export type SnapSnapshot = {day:string; ids:number[]; at:number; start:number; boards:string[];lst?:string|null};
 export const snapDay=(ts:number)=>new Date(ts*1000).toISOString().slice(0,10);
 export const snapshotUrl=(s:SnapSnapshot)=>`/api/snap-workspace/spectra?ids=${s.ids.join(',')}`;
-const cache=new Map<string,Json>();
 
 /** Keyed responses: never display the previous date under the next date's label. */
 export function useSnapResource(url:string|null, interval=0) {
-  const [result,setResult]=useState<{url:string;data:Json|null;error:string}|null>(null);
-  useEffect(()=>{
-    if(!url)return;
-    let active=true;
-    const read=async(cached=false)=>{
-      try {
-        const data=cached&&cache.has(url)?cache.get(url)!:await api(url);
-        cache.delete(url);cache.set(url,data);
-        while(cache.size>8)cache.delete(cache.keys().next().value!);
-        if(active)setResult({url,data,error:''});
-      } catch(error) {if(active)setResult({url,data:null,error:(error as Error).message});}
-    };
-    void read(!interval);
-    const timer=interval?window.setInterval(()=>{if(!document.hidden)void read();},interval):0;
-    return()=>{active=false;window.clearInterval(timer);};
-  },[url,interval]);
-  return result?.url===url?result:{data:null,error:''};
+  // Saved ID selections are immutable; live spectra still revalidate on their
+  // normal cadence. Errors retain the last successful, correctly labelled read.
+  return useCachedResource(url,interval,{maxAge:interval||300000});
 }
 
 export async function snapshotForRead(id:number, ts:number):Promise<SnapSnapshot> {

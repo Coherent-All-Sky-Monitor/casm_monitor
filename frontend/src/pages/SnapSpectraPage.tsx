@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
-import { api, Json, Notice, stamp, useResource } from '../components/Workspace';
+import { useMemo, useRef, useState } from 'react';
+import { api, Json, Notice, stamp } from '../components/Workspace';
+import {useCachedResource, useTabState} from '../components/CachedResource';
 import { FigureZoom } from '../components/FigureZoom';
 import { SnapPlot, SnapTrend } from '../components/SnapPlot';
 import { dbOffset, snapRange, SNAP_REFERENCE_POWER } from '../components/snapPower';
@@ -14,6 +15,7 @@ import '../snap-spectra.css';
 
 type Input = {key:string;ip:string;snap:number;slot:string;adc:number;station:string|null;antenna:number|null;functional:boolean;packet_idx:number|null;board:Json;beamforming:boolean|null};
 const location=(i:Input)=>{const m=/N(\d+)E(\d+)/.exec(i.station??'');return {row:m?Number(m[1]):-1,col:m?Number(m[2]):-1};};
+const useSelection=<T,>(key:string,initial:T)=>useTabState('snaps.'+key,initial);
 
 function Expanded({input,frame,reference,days,range,powerReference,onClose,onPick,historical,powerScale,onPowerScale}:{input:Input;frame:Json;reference:Json|null;days:number;range:[number,number];powerReference:number;onClose:()=>void;onPick:(id:number,ts:number)=>void;historical:boolean;powerScale:PowerScale;onPowerScale:(scale:PowerScale)=>void}) {
   const end=historical&&input.board.ts?`&at=${(Math.floor(input.board.ts/86400)+1)*86400-1}&archive=true`:'';
@@ -33,28 +35,32 @@ function Expanded({input,frame,reference,days,range,powerReference,onClose,onPic
 }
 
 export default function SnapSpectraPage() {
-  const [layout,setLayout]=useState('snap'),[scope,setScope]=useState('beamforming'),[overrides,setOverrides]=useState<Record<string,boolean>>({}),[expanded,setExpanded]=useState<string|null>(null);
+  const [layout,setLayout]=useSelection('layout','snap'),[scope,setScope]=useSelection('scope','beamforming'),[overrides,setOverrides]=useSelection<Record<string,boolean>>('overrides',{}),[expanded,setExpanded]=useState<string|null>(null);
   const days=30,powerReference=SNAP_REFERENCE_POWER;
-  const [powerScale,setPowerScale]=useState<PowerScale>('db');
-  const [mode,setMode]=useState<'live'|'history'>('live'),[selected,setSelected]=useState<SnapSnapshot|null>(null);
-  const [comparing,setComparing]=useState(false),[comparison,setComparison]=useState<SnapSnapshot|null>(null);
+  const [powerScale,setPowerScale]=useSelection<PowerScale>('powerScale','db');
+  const [mode,setMode]=useSelection<'live'|'history'>('mode','live'),[selected,setSelected]=useSelection<SnapSnapshot|null>('selected',null);
+  const [comparing,setComparing]=useSelection('comparing',false),[comparison,setComparison]=useSelection<SnapSnapshot|null>('comparison',null);
   const [comparisonLoading,setComparisonLoading]=useState(false),[changeEvidence,setChangeEvidence]=useState<Json|null>(null);
   const [playback,setPlayback]=useState<{day:string;inputs:PlaybackInput[]}|null>(null);
   const allAdcs=scope==='all';
   const [reading,setReading]=useState(false),[receipt,setReceipt]=useState(''),[error,setError]=useState('');
-  const {data:acquisition,error:statusError}=useResource('/api/snap-workspace/acquisition',10000);
-  const health=useResource('/api/snap-workspace/health',30000);
-  const membership=useResource('/api/snap-workspace/beamforming',30000);
+  const {data:acquisition,error:statusError}=useCachedResource('/api/snap-workspace/acquisition',10000);
+  const health=useCachedResource('/api/snap-workspace/health',30000,{allowStale:false});
+  const membership=useCachedResource('/api/snap-workspace/beamforming',30000,{allowStale:false});
   const membershipKnown=!membership.error&&membership.data?.status==='complete';
   const beamformingKeys=useMemo(()=>new Set<string>(membershipKnown?(membership.data?.inputs??[]).filter((i:Json)=>i.beamforming===true).map((i:Json)=>`${i.ip}/${i.adc}`):[]),[membershipKnown,membership.data]);
+  // Retain the displayed selection during membership revalidation, but remove
+  // its green membership claim until the new check succeeds.
+  const previousMembers=useRef(new Set<string>());
+  if(membershipKnown)previousMembers.current=beamformingKeys;
   const revision=acquisition?.latest_job?.finished??'';
-  const {data:frame,error:frameError}=useSnapResource(mode==='live'?`/api/snap-workspace/spectra?v=${revision}`:selected?snapshotUrl(selected):null,mode==='live'&&!playback?60000:0);
+  const {data:frame,error:frameError}=useSnapResource(mode==='live'?(acquisition||statusError?`/api/snap-workspace/spectra?v=${revision}`:null):selected?snapshotUrl(selected):null,mode==='live'&&!playback?60000:0);
   const compare=useSnapResource(comparing&&comparison?snapshotUrl(comparison):null);
   const referenceFor=(ip:string)=>comparing?compare.data?.boards?.find((b:Json)=>b.ip===ip)??null:null;
   const changes=useSnapResource('/api/snap-workspace/changes',60000);
   const inputs:Input[]=useMemo(()=>(frame?.boards??[]).flatMap((board:Json)=>board.inputs.map((i:Json)=>({...i,key:`${board.ip}/${i.adc}`,ip:board.ip,snap:board.feng_id,slot:board.slot,board,beamforming:membershipKnown?beamformingKeys.has(`${board.ip}/${i.adc}`):null}))),[frame,membershipKnown,beamformingKeys]);
   const wired=inputs.filter(i=>i.functional&&i.station);
-  const isVisible=(i:Input)=>overrides[i.key]??(allAdcs||(scope==='wired'?i.functional:i.beamforming===true));
+  const isVisible=(i:Input)=>overrides[i.key]??(allAdcs||(scope==='wired'?i.functional:membershipKnown?i.beamforming===true:previousMembers.current.has(i.key)));
   const visible=inputs.filter(isVisible);
   const rows=[...new Set(wired.map(i=>location(i).row))].sort((a,b)=>b-a);
   const sharedRange=useMemo(()=>{
@@ -85,6 +91,7 @@ export default function SnapSpectraPage() {
   }catch(e){setError((e as Error).message);}finally{setReading(false);}};
   const card=(input:Input)=>{
     const b=input.board;
+    const stale=b.stale||(!b.historical&&b.ts!=null&&Date.now()/1000-b.ts>1.5*(frame?.configured_interval_s??3600));
     const reference=referenceFor(input.ip);
     const change=mode==='live'?changes.data?.inputs?.find((i:Json)=>i.ip===input.ip&&i.adc===input.adc):null;
     return <article className={`snap-spectrum-card${input.beamforming?' in-beamforming':''}`} data-input-key={input.key} key={input.key}>
@@ -92,7 +99,7 @@ export default function SnapSpectraPage() {
       <button className="snap-plot-trigger" aria-label={`Expand SNAP ${input.snap} ADC ${input.adc}`} onClick={()=>setExpanded(input.key)}>
         <SnapPlot freq={frame?.freq_mhz??[]} values={b.spectra_db?.[input.adc]??null} reference={reference?.spectra_db?.[input.adc]} range={sharedRange} powerReference={powerReference} powerScale={powerScale}/>
       </button>
-      <footer className={b.ts===null||b.error||b.stale?'snap-warning':''}>{b.ts===null?'No read in this snapshot':`${stamp(b.ts)}${b.stale?' · STALE':''}`}
+      <footer className={b.ts===null||b.error||stale?'snap-warning':''}>{b.ts===null?'No read in this snapshot':`${stamp(b.ts)}${stale?' · STALE':''}`}
         {!!b.zero_channels?.[input.adc]&&<span> · {b.zero_channels[input.adc]} zero-power channels</span>}
         {!!b.invalid_channels?.[input.adc]&&<span> · {b.invalid_channels[input.adc]} invalid channels</span>}
         {b.error&&<span> · Saved spectrum unavailable</span>}
@@ -121,7 +128,7 @@ export default function SnapSpectraPage() {
       {comparing&&<div className="snap-comparison-disclosure">{comparisonLoading?<p>Finding the previous saved read…</p>:<SavedReadPicker label="Comparison" value={comparison} onChange={setComparison}/>}<p className="snap-comparison-caption">Blue: {mode==='live'?'latest':'selected'} read · orange dashed: comparison</p>{compare.error&&<Notice>{compare.error}</Notice>}</div>}
     </section>
     {acquisition?.due&&<Notice>Read is due or overdue. Saved timestamps below show what was actually acquired.</Notice>}
-    {[error,statusError,frameError].filter(Boolean).map((e,i)=><Notice key={i}>{e}</Notice>)}
+    {[error,statusError,frameError?frameError+(frame?' Showing the last successful spectrum at its labelled time.':''):''].filter(Boolean).map((e,i)=><Notice key={i}>{e}</Notice>)}
     <SnapHealth data={health.data} error={health.error}/>
     <div className="snap-arrangement"><div className="snap-toolbar control-surface"><div className="snap-controls"><div className="field-row">
       <button className="primary" onClick={acquire} disabled={reading||!frame||!acquisition?.manual_enabled||!!acquisition?.manual_refusal}>{reading?'Queuing read…':'Ping now · get spectra'}</button>
@@ -138,7 +145,7 @@ export default function SnapSpectraPage() {
     </div>
     <details className="snap-layout-key" open><summary>Array layout <span>· {wired.length} wired · {membershipKnown?beamformingKeys.size:'?'} beamforming</span></summary><div className="snap-station-map"><div className="snap-map-columns"><strong>N ↑</strong>{[1,2,3,4,5,6].map(col=><span key={col}>E{col}</span>)}</div>{rows.map(row=><div key={row}><strong>N{String(row).padStart(2,'0')}</strong>{[1,2,3,4,5,6].map(col=>{const i=wired.find(a=>location(a).row===row&&location(a).col===col);return <button key={col} disabled={!i} aria-label={i?`${i.station} · Ant ${i.antenna}`:`N${row}E${col} · no antenna`} aria-pressed={!!i&&isVisible(i)} className={i?`${isVisible(i)?'shown':'panel-hidden'}${i.beamforming?' in-beamforming':''}`:''} onClick={()=>i&&toggle(i.key)} title={i?`${i.station} · Ant ${i.antenna} · SNAP ${i.snap} SLOT ${i.slot} ADC ${i.adc} · ${i.ip} · ${i.beamforming===null?'Beamforming unknown':i.beamforming?'In deployed CB weights':'Wired, outside deployed CB weights'}`:'No wired antenna'}>{i?i.antenna:'×'}</button>;})}</div>)}</div><p className="snap-map-legend"><span>Green: beamforming</span> · blue: other wired · faded: hidden · × empty</p></details>
     </div>
-    {!membershipKnown&&<Notice>Deployed beamforming membership is unavailable. No antenna is assumed active; select All wired or All 12 ADCs to inspect spectra. {membership.error}</Notice>}
+    {!membershipKnown&&<Notice>Checking deployed beamforming membership. {previousMembers.current.size?'Keeping the previous panel selection; green membership marks return after a successful check.':'Select All wired or All 12 ADCs to inspect spectra while membership is unavailable.'} {membership.error}</Notice>}
     {(frame?.boards??[]).filter((b:Json)=>Object.keys(b.latest_errors??{}).length).map((b:Json)=><details className="snap-board-errors" key={b.ip}><summary>SNAP {b.feng_id} · {b.ip} · control-read details · {stamp(b.latest_attempt)}</summary><p>A failed management read does not establish that the board is unprogrammed or has stopped sending data. Firmware and PPS alignment remain unverified when the control interface cannot be read.</p><pre>{JSON.stringify(b.latest_errors,null,2)}</pre><p>Original reader messages are preserved above. Spectra below retain their actual successful-read timestamps; no hardware recovery is attempted.</p></details>)}
     {!frame?<Notice>{mode==='history'&&!selected?'Choose a date with saved reads, then select a time above.':'Loading saved full-band spectra…'}</Notice>:<>
       {layout==='snap'?(frame.boards??[]).map((b:Json)=><section className="snap-panel-group" key={b.ip}><header><h3>SNAP {b.feng_id} <span>SLOT {b.slot}</span></h3><span>{b.ip} · ADC order →</span></header><div className="snap-panel-grid">{visible.filter(i=>i.ip===b.ip).map(card)}</div></section>):rows.map(row=><section className="snap-panel-group" key={row}><header><h3>N{String(row).padStart(2,'0')}</h3><span>West → east · E1–E6</span></header><div className={`snap-panel-grid ${layout==='grid'?'snap-physical-grid':''}`}>{layout==='grid'?[1,2,3,4,5,6].map(col=>{const i=visible.find(a=>location(a).row===row&&location(a).col===col);return i?card(i):<div className="snap-empty" key={col}>E{col} · {wired.some(a=>location(a).row===row&&location(a).col===col)?'Hidden':'No antenna'}</div>;}):visible.filter(i=>location(i).row===row).sort((a,b)=>location(a).col-location(b).col).map(card)}</div></section>)}

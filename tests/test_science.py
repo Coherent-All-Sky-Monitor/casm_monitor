@@ -147,3 +147,10 @@ def test_canonical_render_and_artifact_cache(kind, settings, store, tmp_path, mo
     assert result['provenance']['baseline_labels']
     monkeypatch.setattr(science, 'load_selection', lambda *a: pytest.fail('cache must avoid another data read'))
     assert science.render_product(settings, store, req)['id'] == result['id']
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    app=FastAPI();app.include_router(science.build_router(settings,store))
+    with TestClient(app) as client:
+        product=client.get(result['images'][0]['url'])
+        assert product.status_code==200
+        assert product.headers['cache-control']=='private,max-age=31536000,immutable'
