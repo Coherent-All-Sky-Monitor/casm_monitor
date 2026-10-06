@@ -86,6 +86,7 @@ def build_product(settings, root, dest, record, action, selection):
                   make_weights=action == 'grid', grid_mode='exact', n_beams=512,
                   diagnostics=True, notebook=True, execute_notebook=True,
                   prev_cal_path=record.get('reference'), nearest_sources=('sun', 'cyg-a', 'cas-a'),
+                  transit_sources=('sun', 'cyg-a', 'cas-a', 'tau-a'),
                   nearest_date=values['source_window'][0][:10], transit_date=values['source_window'][0][:10])
     if action == 'solve':
         recipe.update(source_window=values['source_window'], static_window=values['static_window'])

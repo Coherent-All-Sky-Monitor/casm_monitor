@@ -63,15 +63,15 @@ def test_saved_routes_are_read_only_and_zoom_images_available(saved):
     store.close()
 
 
-def test_invalid_background_does_not_reuse_old_metrics(saved, monkeypatch):
+def test_bright_background_warns_but_keeps_beamforming_available(saved, monkeypatch):
     from casm_vis_analysis import calibration_transit as science
     settings, root, dest, identity, action = saved
     monkeypatch.setattr(science, 'source_altaz', lambda source,times:(np.full(len(times),20.),np.zeros(len(times))))
     info = review.transit_review(settings, 'test', identity)
-    assert not info['background']['valid']
-    assert all(not i['available'] for i in info['items'])
-    with pytest.raises(ValueError, match='Sun-down'):
-        review.transit_png(settings, 'test', identity, 'transit', 'cal-0')
+    assert info['background']['valid']
+    assert 'bright solar contamination' in info['background']['warning']
+    assert all(i['available'] for i in info['items'])
+    assert review.transit_png(settings, 'test', identity, 'transit', 'cal-0').startswith(b'\x89PNG')
 
 
 def test_legacy_normalization_missing_allows_raw_sum_only(saved):

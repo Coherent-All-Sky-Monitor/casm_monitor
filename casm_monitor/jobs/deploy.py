@@ -11,10 +11,9 @@ and it is inside the store root. It records:
 
 * the md5 of every ``direct*.dada`` file it produced (whole file) and the
   header-skipped payload md5 the weights registry keys on;
-* the CB/IB SCALE pairing, PARSED from the last row of ``deployed_weights.csv``
-  (currently ``--scale 8064 --ib-scale 32``, the Route Z pairing). It is never
-  hardcoded and never defaulted: a row whose pairing cannot be read fails the
-  job with that message;
+* the operator's selected kinds, streams, SCALE values and optional UTC_START.
+  Default scales are parsed from the deployment ledger; malformed values fail.
+  Legacy stages retain ledger scales and the full CB/IB file set;
 * the exact upload command line, so what a human later approves is the string
   they can read, not something rebuilt at click time;
 * the checks: ``format_type`` on both HDF5 files, and the populated CB and IB
@@ -34,8 +33,8 @@ the correlator nodes, and it refuses unless ALL of:
    exists and still matches this stage (``stage_digest``). The job params
    carry only its id: nothing that decides whether bytes move is taken from
    the params (2026-09-09 security review, finding 1);
-3. ``stage.json`` exists, its checks passed, it holds EXACTLY the twelve
-   ``direct.dada.0-5`` / ``direct_ib.dada.0-5`` files, and every one of them
+3. ``stage.json`` exists, its checks passed, it holds EXACTLY the selected
+   ``direct.dada.N`` / ``direct_ib.dada.N`` files, and every one of them
    plus both source HDF5 files still hashes to what was recorded — re-hashed
    immediately before exec, under the ``deploy.lock`` store lock, so there is
    no check/use gap (finding 3);
@@ -44,14 +43,15 @@ the correlator nodes, and it refuses unless ALL of:
    ``cal_builds_root`` (finding 4);
 5. no ``casm-track`` process is running — and a ``ps`` that fails or does not
    parse is a REFUSAL, not a "nothing running" (finding 6);
-6. the SCALE pairing in ``stage.json`` still equals the ledger's current one;
+6. selected SCALE values match the reviewed command, and the default ledger
+   pairing has not changed since staging;
 7. the build's layout snapshot sha256 still equals the current layout's AND
    the snapshot file itself still hashes to what the build recorded
    (finding 5).
 
 The argv is never taken from ``stage.json``: it is REBUILT from canonical,
-contained paths (the build dir's own weights/IB HDF5 files, ``-o`` the stage
-dir, the scales re-read from the ledger, ``--upload``) and then compared to
+contained paths (verified permanent export HDF5 files for v2 workspace stages,
+``-o`` a fresh stage directory, validated options, ``--upload``) and compared to
 the recorded one; a difference is a ``stage_drift`` refusal, and
 ``--no-registry`` may never appear (finding 2).
 
@@ -63,6 +63,7 @@ the deploy tool's own registry call is not on every branch (casm-wiki
 weights-and-deploy.md, incidents.md 2026-09-04), and an unregistered upload
 leaves T2/T3 without beam coordinates, so this job checks for
 ``registry/products/<id>.json`` and registers it directly when it is missing.
+IB-only uploads leave the CB coordinate registry unchanged and keep their own audit.
 A registry failure is recorded (``registry='failed'``), evented at severity
 ``error`` and reported in the job result, never swallowed (finding 7).
 
@@ -93,6 +94,7 @@ from ..store import Store
 from ..store.shards import ensure_contained, safe_name
 from ..util import iso, run as run_cmd
 from .cal_build import build_dir, load_summary
+from .deploy_options import normalize_options, expected_files
 
 #: Streams the deploy tool writes: 0-2 on corr1, 3-5 on corr2.
 STREAMS = (0, 1, 2, 3, 4, 5)
@@ -613,12 +615,13 @@ def canonical_argv(
     ib_scale: Any,
     upload: bool,
     save_defaults: bool = False,
+    options: dict | None = None,
+    output_dir: Path | None = None,
 ) -> list[str]:
     """The ONE argv builder for both the dry run and the upload.
 
-    Built from canonical, contained paths and the ledger's scales — never from
-    anything read out of ``stage.json`` (2026-09-09 security review, finding
-    2). ``--no-registry`` belongs to the dry run only and can never reach an
+    Built from checked paths and validated scalar options, never a saved argv.
+    ``--no-registry`` belongs to the dry run only and can never reach an
     upload: an unregistered live product leaves T2/T3 without beam coordinates
     (casm-wiki incidents.md 2026-09-04).
     """
@@ -627,7 +630,7 @@ def canonical_argv(
         deploy_script(),
         str(weights_h5),
         "-o",
-        str(stage_dir(settings, tag)),
+        str(output_dir or stage_dir(settings, tag)),
         "--scale",
         str(scale),
         "--ib-scale",
@@ -635,10 +638,22 @@ def canonical_argv(
     ]
     if ib_h5 is not None:
         argv += ["--ib-weights", str(ib_h5)]
+    if options is not None:
+        argv += ['--kind', options['kind'], '--streams', ','.join(map(str, options['streams']))]
+        if options['utc_start']:
+            argv += ['--utc-start', options['utc_start']]
     argv += ["--upload"] if upload else ["--no-registry"]
     if upload and save_defaults:
         argv += ["--save-defaults"]
     return argv
+
+
+def exported_sources(settings, tag, summary, identity):
+    """Recheck the immutable export and use those permanent paths for deployment."""
+    from .calibration_export import verify_export
+    item = verify_export(settings, tag, identity)
+    files = {file['role']: Path(item['directory'])/file['relative'] for file in item['files']}
+    return files['CB'], files['IB'], item
 
 
 # ---------------------------------------------------------------------------
@@ -676,6 +691,7 @@ def run_stage(params: dict[str, Any]) -> dict[str, Any]:
     # Raises with its own message when the pairing cannot be read; the job
     # fails and says so rather than falling back to the documented 32/32.
     pairing = parse_scale_pairing(ledger)
+    options = normalize_options(params['options'], pairing) if 'options' in params else None
 
     export_binding = {}
     if summary.get('kind') == 'calibration_workspace':
@@ -684,7 +700,12 @@ def run_stage(params: dict[str, Any]) -> dict[str, Any]:
         if item['manifest_sha256'] != params.get('export_manifest_sha256'):
             raise DeployError('Export changed since dry-run submission', code='export_drift')
         export_binding = dict(export_id=item['export_id'], export_manifest_sha256=item['manifest_sha256'])
+        if options is not None:
+            weights_path, ib_path, _ = exported_sources(settings, tag, summary, item['export_id'])
+            weights_h5, ib_h5 = str(weights_path), str(ib_path)
     sdir = stage_dir(settings, tag)
+    if options is not None:
+        sdir = sdir / uuid.uuid4().hex
     sdir.mkdir(parents=True, exist_ok=True)
     no_symlinks_inside(sdir, Path(settings.cal_builds_root))
     for old in dada_files(sdir):
@@ -699,9 +720,11 @@ def run_stage(params: dict[str, Any]) -> dict[str, Any]:
     argv_kw = dict(
         weights_h5=weights_path,
         ib_h5=ib_path,
-        scale=pairing["scale"],
-        ib_scale=pairing["ib_scale"],
+        scale=(options or pairing)["scale"],
+        ib_scale=(options or pairing)["ib_scale"],
     )
+    if options is not None:
+        argv_kw.update(options=options, output_dir=sdir)
     stage_cmd = canonical_argv(settings, tag, upload=False, **argv_kw)  # type: ignore[arg-type]
     upload_cmd = canonical_argv(settings, tag, upload=True, **argv_kw)  # type: ignore[arg-type]
 
@@ -720,11 +743,11 @@ def run_stage(params: dict[str, Any]) -> dict[str, Any]:
             "detail": f"deploy_bf_weights.py (no --upload) exited {code}",
         }
     ]
-    # EXACTLY the twelve files, not "at least the CB six": the upload binds
+    # EXACTLY the selected files, not a permissive subset: the upload binds
     # the recorded set and pushes what the tool regenerates, so a stage that
     # recorded fewer files than it produced would bind fewer than it pushes
     # (2026-09-09 security review, finding 3).
-    expected = set(EXPECTED_FILES) if ib_h5 else set(CB_FILES)
+    expected = expected_files(options) if options else set(EXPECTED_FILES) if ib_h5 else set(CB_FILES)
     checks.append(
         {
             "name": "cb_dada_files",
@@ -744,9 +767,9 @@ def run_stage(params: dict[str, Any]) -> dict[str, Any]:
         "stage_dir": str(sdir),
         "weights_h5": str(weights_h5),
         "ib_h5": str(ib_h5) if ib_h5 else None,
-        "scale": pairing["scale"],
-        "ib_scale": pairing["ib_scale"],
-        "scale_source": pairing["source"],
+        "scale": (options or pairing)["scale"],
+        "ib_scale": (options or pairing)["ib_scale"],
+        "scale_source": 'reviewed operator selection' if options else pairing["source"],
         "ledger_date_deployed": pairing.get("date_deployed"),
         "antennas": summary["antennas"],
         "layout_sha256": (summary.get("layout") or {}).get("sha256"),
@@ -779,7 +802,16 @@ def run_stage(params: dict[str, Any]) -> dict[str, Any]:
         "checks_ok": all(c["ok"] for c in checks),
         "wall_s": round(time.time() - started, 1),
     }
+    if options is not None:
+        stage.update(options=options, deployment_defaults=pairing, version=2)
     stage_json_path(settings, tag).write_text(json.dumps(stage, default=str, indent=1))
+    if options is not None and export_binding:
+        from .calibration_export import real_path
+        receipt_dir = real_path(Path(item['directory'])/'deployment-receipts')
+        receipt_dir.mkdir(exist_ok=True)
+        receipt = real_path(receipt_dir/(sdir.name+'-dry-run.json'))
+        with receipt.open('x') as stream:
+            json.dump(stage, stream, indent=2)
 
     store = Store(settings.db_path, store_root=settings.store_root)
     try:
@@ -888,7 +920,18 @@ def upload_plan(
         except (ValueError, OSError, KeyError) as exc:
             raise DeployError(str(exc), code='review_changed') from exc
 
-    sdir = no_symlinks_inside(bdir / "stage", root)
+    options = None
+    if stage.get('version') == 2:
+        try:
+            options = normalize_options(stage.get('options'), {})
+        except ValueError as exc:
+            raise DeployError(str(exc), code='stage_drift') from exc
+        name = Path(str(stage.get('stage_dir', ''))).name
+        if not re.fullmatch(r'[0-9a-f]{32}', name):
+            raise DeployError('Invalid payload directory identity', code='stage_drift')
+        sdir = no_symlinks_inside(bdir/'stage'/name, root)
+    else:
+        sdir = no_symlinks_inside(bdir / "stage", root)
     if str(Path(str(stage.get("stage_dir") or ""))) != str(sdir):
         raise DeployError(
             f"stage.json's stage_dir {stage.get('stage_dir')!r} is not this build's "
@@ -896,24 +939,25 @@ def upload_plan(
             code="stage_drift",
         )
 
-    # The staged set is EXACTLY the twelve files, all present, all hashing to
+    # The staged set is EXACTLY the selected files, all present, all hashing to
     # what the dry run recorded, re-hashed here and now.
     recorded = {str(k): str(v) for k, v in (stage.get("md5s") or {}).items()}
-    if set(recorded) != set(EXPECTED_FILES):
+    expected = expected_files(options) if options else set(EXPECTED_FILES)
+    if set(recorded) != expected:
         raise DeployError(
             f"the stage records {sorted(recorded)}; an upload requires exactly "
-            f"{sorted(EXPECTED_FILES)} — re-stage",
+            f"{sorted(expected)} — re-stage",
             code="file_set",
         )
     on_disk = {p.name for p in dada_files(sdir)}
-    if on_disk != set(EXPECTED_FILES):
+    if on_disk != expected:
         raise DeployError(
             f"the stage directory holds {sorted(on_disk)}, not exactly "
-            f"{sorted(EXPECTED_FILES)}; re-stage",
+            f"{sorted(expected)}; re-stage",
             code="file_set",
         )
     file_md5s: dict[str, str] = {}
-    for name in sorted(EXPECTED_FILES):
+    for name in sorted(expected):
         path = no_symlinks_inside(sdir / name, root)
         if not path.is_file():
             raise DeployError(
@@ -929,6 +973,8 @@ def upload_plan(
 
     # The SOURCES the tool re-reads, bound the same way.
     weights_path, ib_path = canonical_sources(settings, tag, summary)
+    if options is not None and summary.get('kind') == 'calibration_workspace':
+        weights_path, ib_path, _ = exported_sources(settings, tag, summary, stage.get('export_id'))
     if ib_path is None:
         raise DeployError(
             f"build {tag!r} has no IB mask on disk; an upload must carry the IB "
@@ -972,13 +1018,21 @@ def upload_plan(
         pairing = parse_scale_pairing(ledger)
     except ValueError as exc:
         raise DeployError(str(exc), code="scale_unreadable") from exc
-    if (stage.get("scale"), stage.get("ib_scale")) != (pairing["scale"], pairing["ib_scale"]):
+    prior_pairing = stage.get('deployment_defaults', stage) if options is not None else stage
+    if (prior_pairing.get("scale"), prior_pairing.get("ib_scale")) != (pairing["scale"], pairing["ib_scale"]):
         raise DeployError(
             f"SCALE pairing changed since staging: staged "
             f"{stage.get('scale')}/{stage.get('ib_scale')}, ledger now "
             f"{pairing['scale']}/{pairing['ib_scale']}; re-stage",
             code="scale_changed",
         )
+    if options is not None and (stage.get('scale'), stage.get('ib_scale')) != (options['scale'], options['ib_scale']):
+        raise DeployError('Staged scales and reviewed options disagree', code='stage_drift')
+    if options is not None and options['utc_start']:
+        from datetime import datetime, timezone
+        start = datetime.strptime(options['utc_start'], '%Y-%m-%d-%H:%M:%S').replace(tzinfo=timezone.utc)
+        if start.timestamp() <= time.time():
+            raise DeployError('Selected UTC_START has passed; clear it or choose a future time and re-stage', code='start_time')
 
     # Layout: the live file against the hash the build recorded (which is the
     # hash OF THE SNAPSHOT it solved with), and the snapshot itself against
@@ -1013,9 +1067,11 @@ def upload_plan(
         tag,
         weights_h5=weights_path,
         ib_h5=ib_path,
-        scale=pairing["scale"],
-        ib_scale=pairing["ib_scale"],
+        scale=(options or pairing)["scale"],
+        ib_scale=(options or pairing)["ib_scale"],
         upload=True,
+        options=options,
+        output_dir=sdir,
     )
     recorded_argv = [str(x) for x in (stage.get("upload_command") or [])]
     if argv != recorded_argv:
@@ -1042,8 +1098,8 @@ def upload_plan(
         "stage_dir": str(sdir),
         "weights_h5": str(weights_path),
         "ib_h5": str(ib_path),
-        "scale": pairing["scale"],
-        "ib_scale": pairing["ib_scale"],
+        "scale": (options or pairing)["scale"],
+        "ib_scale": (options or pairing)["ib_scale"],
         "stage_digest": stage_digest(stage),
         "hashes": {
             "files_before": file_md5s,
@@ -1079,7 +1135,7 @@ def _registry_product_id(stage: dict[str, Any]) -> str | None:
         for name, md5 in (stage.get("payload_md5s") or {}).items()
         if name.startswith("direct.dada.")
     }
-    if len(payloads) != len(STREAMS):
+    if len(payloads) != len((stage.get('options') or {}).get('streams', STREAMS)):
         return None
     return product_id_from_payloads(payloads)
 
@@ -1095,6 +1151,8 @@ def ensure_registered(settings: Settings, stage: dict[str, Any]) -> dict[str, An
     and if the registry does not hold it, record the product and one live event
     per uploaded stream directly.
     """
+    if (stage.get('options') or {}).get('kind') == 'ib':
+        return {'product_id': None, 'registered_here': False, 'note': 'IB-only; CB registry unchanged. See upload receipt for IB payloads.'}
     from datetime import datetime, timezone
 
     import h5py
@@ -1277,7 +1335,7 @@ def _upload_locked(
     after_files: dict[str, str] = {}
     after_payloads: dict[str, str] = {}
     sdir = Path(plan["stage_dir"])
-    for name in sorted(EXPECTED_FILES):
+    for name in sorted(stage['md5s']):
         path = sdir / name
         if path.is_file():
             after_files[name] = md5_file(path)

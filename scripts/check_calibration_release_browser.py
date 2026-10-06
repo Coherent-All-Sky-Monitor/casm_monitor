@@ -17,7 +17,7 @@ def main():
     tag = 'sun_20261004_181133_regular_b65ba0ba'
     build_url = f'/api/calibration/builds/{tag}'
     deploy_url = f'/api/calibration/deployment/builds/{tag}'
-    output = Path('/home/casm/scratch/casm-observation-preview/screenshots/calibration-release-20261005')
+    output = Path('/home/casm/scratch/casm-observation-preview/screenshots/calibration-release-20261006')
     output.mkdir(parents=True, exist_ok=True)
     settings = load_settings()
     before = protected_files(settings)
@@ -49,12 +49,14 @@ def main():
                         fixture['exported']=True
                     elif path.endswith('/stage'):
                         assert body['export_id']==item['export_id'] and not body['save_defaults']
+                        stage['options']=body['options']
                         fixture['staged']=True
                     elif path.endswith('/review'):
                         assert body['export_id']==item['export_id'] and body['stage_digest']==stage['digest']
                         fixture['reviewed']=True
                     elif path.endswith('/upload'):
-                        assert body['confirm_tag']==tag and not body['save_defaults']
+                        assert body['confirm_tag']==tag and body['save_defaults']
+                        assert body['stage_digest']==stage['digest']
                         assert route.request.headers.get('x-csrf-token')
                     route.fulfill(json={})
                 else:
@@ -110,13 +112,27 @@ def main():
         fixture['enabled']=True
         page.reload(wait_until='domcontentloaded')
         click(page.locator('.cal-steps').get_by_role('button',name='Export & deploy',exact=False))
-        expect(release.get_by_role('button',name='Run upload dry run')).to_be_disabled()
+        expect(release.get_by_role('button',name='Run CB & IB dry run')).to_be_disabled()
+        expect(release.get_by_label('Save as defaults',exact=False)).to_be_checked()
+        expect(release.get_by_label('CB SCALE',exact=True)).to_have_value('8064')
+        expect(release.get_by_label('IB SCALE',exact=True)).to_have_value('32')
+        for selection in ('CB only','IB only','CB & IB'):
+            click(release.get_by_role('button',name=selection,exact=True))
+            if selection=='IB only': expect(release.get_by_label('CB SCALE',exact=True)).to_be_disabled()
+            if selection=='CB only': expect(release.get_by_label('IB SCALE',exact=True)).to_be_disabled()
         click(release.get_by_role('button',name='Write CB & IB to disk'))
         expect(release).to_contain_text(item['directory'],timeout=15000)
-        click(release.get_by_role('button',name='Run upload dry run'))
+        release.get_by_label('CB SCALE',exact=True).fill('4096')
+        release.get_by_label('IB SCALE',exact=True).fill('16')
+        click(release.get_by_role('button',name='Run CB & IB dry run'))
         expect(release).to_contain_text('Passed for this export.',timeout=15000)
+        assert stage['options']['scale']==4096 and stage['options']['ib_scale']==16
+        release.get_by_label('CB SCALE',exact=True).fill('4097')
+        expect(release).to_contain_text('Selection changed')
+        expect(release.get_by_role('button',name='Upload reviewed CB & IB')).to_be_disabled()
+        release.get_by_label('CB SCALE',exact=True).fill('4096')
         release.get_by_label('Review note').fill('Browser-only review fixture')
-        click(release.get_by_role('checkbox',name='I vetted this exported'))
+        click(release.get_by_role('checkbox',name='I vetted the exported'))
         click(release.get_by_role('button',name='Save review',exact=True))
         expect(release).to_contain_text('Approved')
         release.get_by_label('Type the build ID').fill(tag)

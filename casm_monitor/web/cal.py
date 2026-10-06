@@ -486,6 +486,14 @@ def build_router(reader: Store, writer: Store, settings: Settings, *, prefix="/a
                 status_code=409, detail=f"build {tag!r} produced no weights file to stage"
             )
         params = {"build_tag": tag, "save_defaults": bool((body or {}).get("save_defaults", False)), **binding}
+        if 'options' in (body or {}):
+            from ..jobs.deploy_options import normalize_options
+            from ..cal_defaults import parse_scale_pairing
+            from ..collectors.weights import read_last_ledger_row
+            try:
+                params['options'] = normalize_options(body['options'], parse_scale_pairing(read_last_ledger_row(settings.deployed_weights_csv)))
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
         job_id, refusal = writer.submit_job_atomic(STAGE_KIND, params, refuse_if_pending=True)
         if refusal is not None:
             raise HTTPException(
@@ -545,6 +553,8 @@ def build_router(reader: Store, writer: Store, settings: Settings, *, prefix="/a
                 detail=f"build {tag!r} has not been staged; run the dry run first",
             )
         save_defaults = bool(body.get("save_defaults", False))
+        if body.get('stage_digest') is not None and body['stage_digest'] != stage_digest(stage):
+            raise HTTPException(409, 'Dry run changed; refresh and review the selected payloads again')
         try:
             # The same gate the worker runs, so the operator gets a status code
             # instead of a job that fails a second later. The worker re-runs

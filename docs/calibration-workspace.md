@@ -68,10 +68,11 @@ step complete. Forward navigation is disabled until the calibration is saved.
    window**, not a separate transit marker. A dashed green, 14%-opacity band
    shows a **suggested 30-minute static window**; blue is the selected static.
    The suggestion considers every full 30-minute window on that local day,
-   endpoints included. Sun altitude must remain below 0°. Among those windows,
+   endpoints included. Prefer Sun altitude ≤ −10° throughout. Among dark windows,
    minimise the maximum above-horizon altitude in strict Cyg A, Cas A, Tau A
    order. Set sources tie at zero; exact ties choose the earliest window.
-   Sun depth below the horizon is not optimised further. This operator-requested
+   If none is dark, choose the lowest solar altitude and warn while allowing
+   the operator to proceed. Within dark windows, Sun depth is not optimised further. This operator-requested
    priority is not a flux or beam-contamination model. The card shows each
    source's maximum altitude and warns if usual caps are exceeded; it never
    calls a ranked compromise a verified quiet template. **Use suggested window**
@@ -201,10 +202,13 @@ step complete. Forward navigation is disabled until the calibration is saved.
    by the sample standard deviation (`ddof=1`), including sky and interference.
    Curve height alone does not establish sensitivity or a source detection.
 
-   From October 5, non-solar backgrounds require Sun altitude below 0° at every
+   From October 6, non-solar backgrounds prefer Sun altitude ≤ −10° at every
    selected integration timestamp, beyond the configured ±90 min by default.
-   At least two integrations on each side are required. Insufficient coverage
-   suppresses derived plots and explains how to choose another window/date.
+   Four integrations in total suffice; one-sided backgrounds are labelled.
+   If too few dark samples exist, use Sun-down samples when possible, otherwise
+   the outer window, with an explicit bright-solar-contamination warning.
+   This keeps beamforming available. Only fewer than four background samples
+   prevents the derived comparison. No new rank-1/noise channel mask is applied.
    The card lists actual windows in OVRO local time or UTC, solar altitude range
    and excluded Sun-up samples. Solar self-checks use outer windows with an
    explicit solar-response warning. This is separate from the solve's static
@@ -285,8 +289,17 @@ symlink components and destinations inside the workspace store are refused.
 
 Each export creates `YYYYMMDD/<build-tag>__<UTC-export-time>_<UUID>/`, where the
 date is the calibration observation's UTC date. `CB/`, `IB/`, `calibration/`
-and `recipe/` contain the HDF5 pair, calibration, executed notebook, report,
-request, summary and frozen layouts. `manifest.json` records source paths,
+and `recipe/` contain the HDF5 pair, calibration, original notebook, report,
+request, summary and frozen layouts. `diagnostics/` retains all completed solve,
+inspection, transit, history and grid notebooks, figures, NPZ arrays and CSVs.
+The reference calibration and checksum-pinned IB generator are copied too.
+`recipe/calibration_record.ipynb` embeds the saved figures and supplies ordered
+replay cells: canonical solve/diagnostics, per-antenna/cross inspection, canonical
+grid/CB generation, then paired IB generation. Replay writes a fresh directory
+and never uploads. Duplicate the notebook before running it; keep the original
+bundle unchanged. Raw visibilities and the installed CASM environment are needed
+for recomputation; raw observations are not copied into the export.
+`manifest.json` records source paths,
 full SHA-256 hashes, sizes, antenna selection, solve/static windows and the
 comparison deployment. Existing exports are preserved. A failed copy leaves
 an explicitly `.incomplete` directory without a completed receipt; no automatic
@@ -294,10 +307,22 @@ export retention/deletion policy is installed. Files and their originals are
 rehashed before staging and upload.
 
 **Upload dry run** invokes the existing deploy tool with `--no-registry`, no
-`--upload` and no `--save-defaults`. It produces six CB and six IB DADA files
+`--upload` and no `--save-defaults`. Choose **CB & IB**, **CB only** or **IB only**,
+edit either SCALE, and optionally choose streams and UTC_START. Defaults are the
+recorded deployed scales, both kinds and all six streams. Scales must be positive
+32-bit integers; UTC_START is a header time, not a queued schedule, and must still
+be in the future at upload. The selected payloads go to a fresh UUID directory
 inside `cal_builds/<tag>/stage/`, separately from the immutable HDF5 export.
 Staging checks 512 payload beams, matching metadata/pointing counts, CB/IB
-formats and populated slots. Scales come from the deployment ledger.
+formats and populated slots. Both HDF5 source paths point into the export.
+A dry-run receipt with payload hashes is retained beside it under
+`deployment-receipts/`. Earlier payload directories remain available.
+Changing scales, kind, streams or time requires a fresh dry run and review.
+Partial uploads leave the other kind and unselected streams unchanged; the
+operator must assess compatibility with the companion already running.
+IB-only operations leave the CB coordinate registry unchanged and retain their
+own upload audit. Live CB registry recording and matching FIFO destinations
+are mandatory; arbitrary shell arguments and live `--no-registry` are unavailable.
 
 **Your review** follows export and dry run, so the operator can inspect exactly
 what would be sent. It requires a note, explicit acceptance, an executed
@@ -308,7 +333,7 @@ stage requires another review.
 **Upload to the system** is visible but locked by default. Both `allow_upload`
 and the independent `cal_workspace_allow_upload` setting must be enabled in the
 web and calibration worker processes, only after separate operator approval.
-The environment overrides are `CASM_MONITOR_ALLOW_UPLOAD` and
+Each YAML setting AND its environment gate must be true. The environment keys are `CASM_MONITOR_ALLOW_UPLOAD` and
 `CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD`; the YAML keys are `cal.allow_upload` and
 `cal.workspace_allow_upload`. Arming only the older upload surface is insufficient.
 No service gates were enabled for this feature's acceptance.
@@ -316,8 +341,9 @@ No service gates were enabled for this feature's acceptance.
 An enabled upload requires same-origin protection, a CSRF cookie/header, the
 exact typed build ID, a second browser confirmation and a valid bound review.
 It reuses single-use authorization, the deploy lock and final file/layout/scale
-checks before invoking the canonical uploader. **Save as restart defaults** is
-unchecked by default and changes both nodes only when explicitly selected.
+checks before invoking the canonical uploader. **Save as defaults** is
+checked by default and can be disabled; it affects only the selected kinds and
+streams. The confirmation repeats the selection, scales and default-saving choice.
 Inspect transfer and registry receipts, verify runtime activation separately,
 and update the deployment ledger after a verified deployment. The current-cal
 cards follow that ledger, not the latest trial or a successful transfer alone.

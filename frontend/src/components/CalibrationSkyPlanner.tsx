@@ -7,7 +7,7 @@ import { timeTicks } from './vis/PlotTicks';
 
 type Track = {id: string; label: string; cap_deg: number; altitude_deg: number[]};
 type Window = {start: number; end: number; selection: number[]; minutes: number};
-type Suggestion = {selection: number[]; minutes: number; altitude_max_deg: Record<string, number>; meets_altitude_caps: boolean; exceeded_caps: string[]};
+type Suggestion = {selection: number[]; minutes: number; altitude_max_deg: Record<string, number>; meets_altitude_caps: boolean; exceeded_caps: string[]; warning?:string; dark:boolean};
 type Plan = {date: string; times: number[]; tracks: Track[]; windows: Window[]; suggestion: Suggestion | null};
 const cache = new Map<string, Promise<Plan>>();
 const COLORS = ['#b46b00', '#1468a6', '#287348', '#ad3830'];
@@ -77,6 +77,7 @@ export default function CalibrationSkyPlanner({date, zone, solve, staticWindow, 
   const selected = staticWindow?.map(unix);
   const covered = ready && selected && selected[0] >= ready.times[0] && selected[1] <= ready.times[ready.times.length - 1] && selected[1] > selected[0];
   const fail = covered ? ready.tracks.filter(track => track.altitude_deg.some((v, i) => ready.times[i] >= selected[0] && ready.times[i] <= selected[1] && v >= track.cap_deg)) : [];
+  const solarWarning=covered&&ready.tracks.find(t=>t.id==='sun')?.altitude_deg.some((v,i)=>ready.times[i]>=selected[0]&&ready.times[i]<=selected[1]&&v>-10);
   const plot = ready && <AltitudePlot data={ready} zone={zone} solve={solve} staticWindow={staticWindow}/>;
   return <section className="cal-planner" aria-label="Night-time template planner">
     <div className="cal-section-heading"><h3>Choose a static window</h3><span>{date} · 00:00–23:59 PT</span></div>
@@ -87,10 +88,12 @@ export default function CalibrationSkyPlanner({date, zone, solve, staticWindow, 
         <div className="cal-suggestion-heading"><strong>Suggested static · {ready.suggestion.minutes} min</strong><button onClick={() => onSelect(ready.suggestion!.selection.map(iso))}>Use suggested window</button></div>
         <p className="cal-suggestion-time">{playbackStamp(ready.suggestion.selection[0], zone)} → {playbackStamp(ready.suggestion.selection[1], zone)}</p>
         <p className="cal-suggestion-altitudes">{ready.tracks.map(t => {const alt = ready.suggestion!.altitude_max_deg[t.id]; return <span key={t.id}>{t.label} {alt < 0 ? 'down' : `≤ ${alt.toFixed(1)}°`}</span>;})}</p>
-        <p className="cal-caption">Sun down throughout; lowest peak altitude in order: Cyg A → Cas A → Tau A.</p>
+        <p className="cal-caption">Prefer Sun ≤ −10° throughout; then lowest peak altitude in order: Cyg A → Cas A → Tau A.</p>
+        {ready.suggestion.warning&&<p className="cal-planner-selection attention">{ready.suggestion.warning}</p>}
         {!ready.suggestion.meets_altitude_caps && <p className="cal-planner-selection attention">Above usual altitude cuts: {ready.tracks.filter(t => ready.suggestion!.exceeded_caps.includes(t.id)).map(t => t.label).join(', ')}. Review before using.</p>}
       </> : <p>No full 30-minute window with the Sun below the horizon on this date.</p>}</div>
       {staticWindow && <p className={`cal-planner-selection ${fail.length ? 'attention' : ''}`}>{!covered ? 'Selected static window is outside this plot or has an invalid range.' : fail.length ? `Selected static window exceeds altitude limits: ${fail.map(t => t.label).join(', ')}.` : 'Selected static window meets the sampled altitude limits.'}</p>}
+      {solarWarning&&<p className="cal-planner-selection attention">Sun is above −10° in the selected static window. Expect bright solar contamination; you can still proceed.</p>}
       <details className="cal-fixed-windows"><summary>Fixed altitude-cut windows ({ready.windows.length})</summary><p className="cal-caption">Sun & Tau A below 0° · Cyg A below 20° · Cas A below 15°. Cas A never sets at OVRO.</p><div className="cal-window-suggestions">{ready.windows.length ? ready.windows.map(w => <div key={w.start}><span>{playbackStamp(w.start, zone)} → {playbackStamp(w.end, zone)}</span><button onClick={() => onSelect(w.selection.map(iso))}>Use {w.minutes} min</button></div>) : <p>No interval of at least 15 min meets all four altitude limits in this range.</p>}</div></details>
       <p className="cal-caption">Sky positions only. Check data coverage, RFI and matching hardware settings before using a template.</p>
       {zoom && <FigureZoom title={label} onClose={() => setZoom(false)}>{plot}</FigureZoom>}

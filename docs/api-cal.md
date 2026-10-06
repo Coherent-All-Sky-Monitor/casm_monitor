@@ -211,12 +211,24 @@ attachment`. 404 if `summary.notebook` is false.
 
 ## `POST /api/cal/builds/{tag}/stage`
 
-No body. Queues a dry-run stage (compute md5s, run the shape/scale checks,
+Optional body. Queues a dry-run stage (compute md5s, run the shape/scale checks,
 write the would-run command, but does not touch the deployed product).
 Response `200 {"job_id": 123}`. Poll `GET /api/jobs/{id}`, then re-fetch
 `GET /api/cal/builds/{tag}` for the populated `stage` block. 409 if the tag
 has no `summary` yet (build not done) or a stage/upload job is already
 running for this tag.
+
+October 6 operator controls accept an `options` object, for example
+`{"kind":"ib","scale":8064,"ib_scale":32,"streams":[0,1,2,3,4,5],"utc_start":null}`.
+Kinds are `cb`, `ib`, `both`; scales are positive 32-bit integers; streams are a
+nonempty distinct subset of 0..5. A supplied time uses `YYYY-MM-DD-HH:MM:SS`.
+The 8061 route is `/api/calibration/deployment/builds/{tag}/stage` and also
+requires a verified `export_id`. New stages preserve earlier payloads in
+`stage/<UUID>/`, use the permanent export's HDF5 paths and bind the exact options
+into the reviewed command/digest. Upload can carry `stage_digest` to reject a
+stale browser selection. `save_defaults` remains explicit on the upload request;
+the new UI checkbox defaults to true. No live registry bypass or arbitrary
+FIFO/output path is accepted.
 
 ## `POST /api/cal/builds/{tag}/upload`
 
@@ -434,14 +446,14 @@ backend guarantee; the frontend only has to send one extra header.
   or a second attempt with the same authorization fails immediately.
   The response now carries `auth_id` alongside `job_id`.
 - **Reconstructed argv.** `stage.json`'s `upload_command` is display-only.
-  The worker rebuilds the argv from the build's own weights/IB HDF5 files,
-  `-o <stage dir>`, the `--scale`/`--ib-scale` re-read from
-  `deployed_weights.csv` at upload time and `--upload` (plus
+  The worker rebuilds the argv from verified export HDF5 files (build-local
+  files for legacy stages), `-o <stage dir>`, validated and reviewed options,
+  and `--upload` (plus
   `--save-defaults` when the authorization says so), then requires it to
   equal the recorded one — a difference refuses with a `stage_drift` reason —
   and asserts `--no-registry` is absent.
-- **Byte binding.** The stage records the md5 of all twelve
-  `direct.dada.0-5`/`direct_ib.dada.0-5` files AND of both source HDF5 files;
+- **Byte binding.** The stage records the md5 of exactly the selected
+  `direct.dada.N`/`direct_ib.dada.N` files AND of both source HDF5 files;
   the upload requires exactly that file set and re-hashes every one of them
   immediately before exec. The deploy tool regenerates the staged files under
   `-o` before pushing, with a fresh `UTC_START` in each DADA header, so the

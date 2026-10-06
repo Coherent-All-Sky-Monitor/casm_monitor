@@ -55,6 +55,41 @@ def export_product(settings, root, dest, record, selection):
         inputs[key] = no_symlinks_inside(Path(value), root)
     for name in ('request.json', 'summary.json', 'layout_snapshot.csv', 'selected_layout.csv'):
         inputs[name] = no_symlinks_inside(root/name, root)
+    # Preserve the completed solve as well as the grid run. The grid summary
+    # intentionally points to its own notebook, which alone omits the solve.
+    for action in sorted((root/'actions').glob('*')):
+        result = read_json(action/'result.json') or {}
+        if result.get('action') not in {'solve', 'inspect', 'phase', 'transit', 'history', 'grid'}:
+            continue
+        for path in sorted(action.rglob('*')):
+            if path.is_file() and path.suffix in {'.json', '.csv', '.npz', '.png', '.ipynb'}:
+                inputs['diagnostic:'+str(path.relative_to(root))] = no_symlinks_inside(path, root)
+    if record.get('reference'):
+        reference = Path(record['reference'])
+        if sha256_file(reference) != record.get('reference_sha256'):
+            raise ValueError('Recorded reference calibration changed before export')
+        copied = dest/'reference_calibration.h5'
+        shutil.copyfile(reference, copied)
+        if sha256_file(copied) != record['reference_sha256']:
+            raise ValueError('Reference calibration copy changed')
+        inputs['reference_calibration'] = copied
+    generator = Path(settings.cal_ib_generator_script)
+    if sha256_file(generator) != settings.cal_ib_generator_sha256:
+        raise ValueError('IB generator changed before archival export')
+    generator_copy = dest/'gen_ib_from_cb.py'
+    shutil.copyfile(generator, generator_copy)
+    if sha256_file(generator_copy) != settings.cal_ib_generator_sha256:
+        raise ValueError('IB generator archive copy changed')
+    inputs['ib_generator'] = generator_copy
+    from .calibration_record import write_record
+    def relative_for(key, path):
+        if key.startswith('diagnostic:'):
+            return Path('diagnostics')/path.relative_to(root)
+        folder = 'CB' if key == 'CB' else 'IB' if key == 'IB' else 'calibration' if key in {'cal_h5','reference_calibration'} else 'recipe'
+        return Path(folder)/path.name
+    replay = dest/'calibration_record.ipynb'
+    write_record(replay, record, summary, [dict(role=key, source=str(path), relative=str(relative_for(key,path))) for key,path in inputs.items()], settings)
+    inputs['calibration_record'] = replay
     if any(not p.is_file() for p in inputs.values()):
         raise ValueError('A required calibration product or recipe file is missing')
     # Hash before copying, then verify both ends. A changed input cannot be
@@ -74,10 +109,9 @@ def export_product(settings, root, dest, record, selection):
     partial.mkdir(parents=True, exist_ok=False)
     files = []
     for key,path in inputs.items():
-        folder = 'CB' if key == 'CB' else 'IB' if key == 'IB' else 'calibration' if key == 'cal_h5' else 'recipe'
-        relative = Path(folder)/path.name
+        relative = relative_for(key, path)
         target = partial/relative
-        target.parent.mkdir(exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
         with path.open('rb') as source, target.open('xb') as output:
             shutil.copyfileobj(source, output, length=1024**2)
         if sha256_file(target) != hashes[key] or sha256_file(path) != hashes[key]:

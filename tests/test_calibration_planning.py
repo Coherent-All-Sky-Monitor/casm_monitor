@@ -60,10 +60,10 @@ def two_windows(first, second):
 
 
 @pytest.mark.parametrize('first,second,index', [
-    ((-1, 5, 80, 80), (-60, 10, 0, 0), 0),  # Sun depth never outweighs Cyg A.
-    ((-1, -1, 10, 80), (-60, -50, 20, 0), 0),  # Set Cyg A ties at zero.
-    ((-1, -1, 10, 30), (-60, -50, 10, 20), 32),  # Tau A breaks Cas A tie.
-    ((-1, -1, 10, -1), (-60, -50, 10, -40), 0),  # Set Tau A ties; earliest.
+    ((-1, 5, 80, 80), (-60, 10, 0, 0), 32),  # Dark Sun takes precedence.
+    ((-12, -1, 10, 80), (-60, -50, 20, 0), 0),  # Set Cyg A ties at zero.
+    ((-12, -1, 10, 30), (-60, -50, 10, 20), 32),  # Tau A breaks Cas A tie.
+    ((-12, -1, 10, -1), (-60, -50, 10, -40), 0),  # Set Tau A ties; earliest.
     ((0, -10, 0, 0), (-1, 80, 80, 80), 32),  # Sun must be strictly down.
 ])
 def test_suggestion_priority(first, second, index):
@@ -82,16 +82,18 @@ def test_suggestion_checks_full_window_and_peak_not_average():
     tracks[0]['altitude_deg'][-1] = 0  # Include the end sample, not just midpoint.
     assert _suggest_static_window(times, tracks)['selection'][0] == times[0]
     tracks[0]['altitude_deg'][0] = 0
-    assert _suggest_static_window(times, tracks) is None
+    assert not _suggest_static_window(times, tracks)['dark']
 
 
 def test_suggestion_no_daylight_short_or_nonfinite_windows():
     times, tracks = two_windows((1, 0, 0, 0), (1, 0, 0, 0))
-    assert _suggest_static_window(times, tracks) is None
+    assert 'bright solar contamination' in _suggest_static_window(times, tracks)['warning']
     assert _suggest_static_window(times[:30], tracks) is None
     times, tracks = two_windows((-1, 0, 0, 0), (-1, 0, 0, 0))
     tracks[1]['altitude_deg'][0] = float('nan')
     tracks[2]['altitude_deg'][-1] = float('inf')
+    assert _suggest_static_window(times, tracks)['warning']
+    tracks[1]['altitude_deg'] = [float('nan')] * len(times)
     assert _suggest_static_window(times, tracks) is None
 
 
@@ -104,10 +106,10 @@ def test_suggested_night_is_global_priority_minimum_on_local_day(day):
     candidates = []
     for i in range(len(times) - 30):
         maxima = [max(t['altitude_deg'][i:i + 31]) for t in tracks]
-        if maxima[0] < 0:
+        if maxima[0] <= -10:
             candidates.append((tuple(max(0, v) for v in maxima[1:]), times[i]))
     assert suggestion['selection'][0] == min(candidates)[1]
     assert suggestion['selection'][1] - suggestion['selection'][0] == 1800
     assert times[0] <= suggestion['selection'][0] < suggestion['selection'][1] <= times[-1]
-    assert suggestion['altitude_max_deg']['sun'] < 0
+    assert suggestion['altitude_max_deg']['sun'] <= -10
     assert suggestion['meets_altitude_caps'] == (len(suggestion['exceeded_caps']) == 0)

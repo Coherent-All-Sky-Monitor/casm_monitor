@@ -37,7 +37,7 @@ export default function CalibrationTransit({tag, action}: {tag:string; action:Js
           <button type="button" className={local?'selected':''} onClick={()=>setLocal(true)}>OVRO local</button>
           <button type="button" className={!local?'selected':''} onClick={()=>setLocal(false)}>UTC</button>
         </div></div>
-        <p>{current.background.policy==='sun_down'?'Sun below 0° · ':'Solar self-check · '}{current.background.samples} integrations · {current.background.before_samples} before / {current.background.after_samples} after</p>
+        <p>{current.background.policy==='dark'?'Sun ≤ −10° · ':current.background.policy==='outer_window'?'Solar self-check · ':'Solar-contamination warning · '}{current.background.samples} integrations · {current.background.before_samples} before / {current.background.after_samples} after</p>
         {current.background.excluded_sun_up>0&&<p className="cal-transit-warning">Excluded {current.background.excluded_sun_up} Sun-up integrations from the background.</p>}
         {current.background.warning&&<p className="cal-transit-warning">{current.background.warning}</p>}
         {current.background.intervals.map((interval:Json,index:number)=><p className="cal-caption" key={index}>

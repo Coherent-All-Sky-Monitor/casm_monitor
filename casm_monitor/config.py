@@ -8,12 +8,12 @@ service at a scratch store without editing the file:
     CASM_MONITOR_STORE_ROOT    store_root
     CASM_MONITOR_WEB_HOST      web.host
     CASM_MONITOR_WEB_PORT      web.port
-    CASM_MONITOR_ALLOW_UPLOAD  allow_upload ("1"/"true" -> True)
+    CASM_MONITOR_ALLOW_UPLOAD  second permission gate ("1"/"true")
 
 The Calibration tab's keys live under ``cal:`` (sources_enabled, window_half_min,
 static_default, allow_upload). ``cal.allow_upload`` and the older top-level
 ``allow_upload`` mean the same thing; the ``cal`` section wins, and
-CASM_MONITOR_ALLOW_UPLOAD wins over both. Both must be true for the weights
+CASM_MONITOR_ALLOW_UPLOAD must also be true. Both must be true for the weights
 upload handler to run anything (casm-wiki
 ``decisions/2026-09-09-monitor-upload-button.md``).
 
@@ -305,8 +305,8 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         cal_ib_generator_sha256=str(
             cal.get("ib_generator_sha256", defaults.cal_ib_generator_sha256)
         ).strip(),
-        # ``cal.allow_upload`` is the M3 spelling; the top-level key is the M0
-        # one. Either being false is enough to keep the upload handler shut.
+        # ``cal.allow_upload`` is the M3 spelling; it takes precedence over
+        # the older top-level key. The independent environment gate is below.
         allow_upload=_as_bool(
             cal.get("allow_upload", raw.get("allow_upload", defaults.allow_upload))
         ),
@@ -323,10 +323,8 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         kw["web_host"] = os.environ["CASM_MONITOR_WEB_HOST"]
     if os.environ.get("CASM_MONITOR_WEB_PORT"):
         kw["web_port"] = int(os.environ["CASM_MONITOR_WEB_PORT"])
-    if os.environ.get("CASM_MONITOR_ALLOW_UPLOAD"):
-        kw["allow_upload"] = _as_bool(os.environ["CASM_MONITOR_ALLOW_UPLOAD"])
-    if os.environ.get('CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD'):
-        kw['cal_workspace_allow_upload'] = _as_bool(os.environ['CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD'])
+    kw['allow_upload'] = kw['allow_upload'] and _as_bool(os.environ.get('CASM_MONITOR_ALLOW_UPLOAD', '0'))
+    kw['cal_workspace_allow_upload'] = kw['cal_workspace_allow_upload'] and _as_bool(os.environ.get('CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD', '0'))
 
     return Settings(**kw)
 

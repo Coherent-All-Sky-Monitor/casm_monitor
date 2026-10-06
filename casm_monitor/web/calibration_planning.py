@@ -15,9 +15,10 @@ _LOCK = Lock()
 def _suggest_static_window(times: np.ndarray, tracks: list[dict]) -> dict | None:
     """Rank full 30-minute windows on the one-minute grid, endpoints included.
 
-    Sun below zero is mandatory throughout. Minimise the maximum above-horizon
-    altitude in strict Cyg A, Cas A, Tau A order. Already-set sources tie at zero;
-    a deeper Sun position cannot outweigh a lower Cyg A once the Sun is down.
+    Prefer Sun at/below -10 degrees throughout. Within dark windows minimise
+    the maximum above-horizon altitude in Cyg A, Cas A, Tau A order.
+    If no dark window exists, offer the least solar-contaminated window with
+    a warning, leaving the operator free to choose and beamform.
     Exact ties pick the earliest window. This is an altitude-only UI suggestion,
     not a change to canonical quiet-window caps or the calibration recipe.
     """
@@ -30,15 +31,21 @@ def _suggest_static_window(times: np.ndarray, tracks: list[dict]) -> dict | None
             np.asarray(by_id[source]['altitude_deg']), minutes + 1), axis=-1)
         for source, _ in SOURCES
     ])
-    eligible = np.flatnonzero((maxima[0] < 0) & np.all(np.isfinite(maxima), axis=0))
+    finite = np.all(np.isfinite(maxima), axis=0)
+    eligible = np.flatnonzero((maxima[0] <= -10) & finite)
+    dark = bool(len(eligible))
+    if not dark:
+        eligible = np.flatnonzero(finite)
     if not len(eligible):
         return None
     scores = np.maximum(maxima, 0.)
-    index = min(eligible, key=lambda i: (*scores[1:, i], times[i]))
+    index = min(eligible, key=lambda i: (() if dark else (maxima[0, i],)) + (*scores[1:, i], times[i]))
     exceeded = [source for k, (source, _) in enumerate(SOURCES)
                 if maxima[k, index] >= by_id[source]['cap_deg']]
     return dict(selection=[float(times[index]), float(times[index + minutes])],
                 minutes=minutes,
+                sun_limit_deg=-10, dark=dark,
+                warning=None if dark else 'No full dark window: expect bright solar contamination. You can still select a window and beamform.',
                 altitude_max_deg={source: float(maxima[k, index])
                                   for k, (source, _) in enumerate(SOURCES)},
                 meets_altitude_caps=not exceeded, exceeded_caps=exceeded)

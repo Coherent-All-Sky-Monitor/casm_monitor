@@ -17,6 +17,7 @@ from casm_monitor.web import calibration_workspace as workspace
 from casm_monitor.web.cal import build_router, CSRF_COOKIE, CSRF_HEADER
 from casm_monitor.web.app import create_app
 from test_cal import cal_settings, make_build, fake_deploy_runner, authorize, ANTENNAS
+from casm_monitor.jobs.deploy_options import normalize_options, expected_files
 
 
 @pytest.fixture
@@ -80,6 +81,70 @@ def approve(product, item, stage):
                   export_manifest_sha256=item['manifest_sha256'])
     workspace.save_json(root/'review.json', review)
     return review
+
+
+@pytest.mark.parametrize('kind', ['cb','ib','both'])
+@pytest.mark.parametrize('save_defaults', [False,True])
+def test_operator_options_bound_to_dry_run_and_export(product, monkeypatch, kind, save_defaults):
+    settings, tag, root, _, _ = product
+    item = write_export(product)
+    calls = []
+    def runner(argv):
+        calls.append(argv)
+        dest = Path(argv[argv.index('-o')+1])
+        opts = normalize_options(dict(kind=argv[argv.index('--kind')+1], scale=4096, ib_scale=16, streams=[1,4]), {})
+        for name in expected_files(opts):
+            (dest/name).write_bytes(b'fixture header'.ljust(4096,b'\0')+name.encode())
+        return 0, 'fixture only'
+    monkeypatch.setattr(deploy, '_run', runner)
+    options = normalize_options(dict(kind=kind, scale=4096, ib_scale=16, streams=[1,4]), {})
+    deploy.run_stage(dict(build_tag=tag, export_id=item['export_id'], export_manifest_sha256=item['manifest_sha256'], options=options))
+    stage = deploy.load_stage(settings,tag)
+    assert stage['checks_ok'] and set(stage['md5s']) == expected_files(options)
+    assert stage['options']==options and stage['scale']==4096
+    assert str(stage['weights_h5']).startswith(item['directory'])
+    assert '--no-registry' in calls[0] and '--upload' not in calls[0] and '--save-defaults' not in calls[0]
+    assert (Path(item['directory'])/'deployment-receipts'/(Path(stage['stage_dir']).name+'-dry-run.json')).is_file()
+    approve(product,item,stage)
+    plan = deploy.upload_plan(settings,tag,tag,save_defaults=save_defaults)
+    assert ('--save-defaults' in plan['argv']) == save_defaults
+    assert plan['argv'][plan['argv'].index('--kind')+1]==kind
+    assert plan['argv'][plan['argv'].index('--scale')+1]=='4096'
+    stage['options']['kind'] = 'ib' if kind!='ib' else 'both'
+    with pytest.raises(deploy.DeployError): deploy.upload_plan(settings,tag,tag,stage=stage)
+
+
+@pytest.mark.parametrize('value', [{'kind':'bad'},{'scale':0},{'scale':True},{'scale':2.5},{'streams':[]},{'streams':[0,0]},{'streams':[6]},{'utc_start':'x\nSCALE 1'},{'no_registry':True}])
+def test_invalid_operator_options_rejected(value):
+    with pytest.raises(ValueError): normalize_options(value, {'scale':8064,'ib_scale':32})
+
+
+def test_export_contains_full_solve_and_parseable_replay_notebook(product):
+    import ast
+    import nbformat
+    settings, tag, root, _, _ = product
+    for name,make_weights in [('a'*32,False),('b'*32,True)]:
+        action=root/'actions'/name
+        action.mkdir(parents=True)
+        workspace.save_json(action/'result.json', {'action':'grid' if make_weights else 'solve'})
+        workspace.save_json(action/'recipe.json', dict(make_weights=make_weights, cal_path='/old/cal.h5' if make_weights else None,
+            source_window=None if make_weights else ['2026-09-08 19:00:00','2026-09-08 20:00:00']))
+        (action/'static.npz').write_bytes(b'fixture only')
+        (action/'delays.csv').write_text('antenna,delay\n9,0\n')
+    item=write_export(product)
+    roles={f['role'] for f in item['files']}
+    assert 'calibration_record' in roles and 'ib_generator' in roles
+    assert sum(r.endswith('static.npz') for r in roles)==2
+    path=Path(item['directory'])/'recipe'/'calibration_record.ipynb'
+    notebook=nbformat.read(path,as_version=4)
+    nbformat.validate(notebook)
+    cells=[c.source for c in notebook.cells if c.cell_type=='code']
+    for cell in cells: ast.parse(cell)
+    text='\n'.join(cells)
+    assert 'run_recipe(RecipeParams(**SOLVE))' in text and 'run_recipe(RecipeParams(**GRID))' in text
+    assert 'save_inspection' in text and 'generate_ib_mask' in text
+    assert 'deploy_bf_weights' not in text and 'run_upload' not in text
+    assert 'bf_weights_generator' in text
 
 
 def test_export_is_identified_complete_and_bit_identical(product):

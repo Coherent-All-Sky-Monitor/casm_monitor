@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pytest
 
 from casm_monitor.config import (
     DEFAULT_CONFIG_PATH,
@@ -64,7 +65,7 @@ def test_env_config_path_and_overrides(tmp_path, monkeypatch):
     assert s.web_port == 8060
     assert s.cadence("obs") == 7.0
     assert s.shard_ttl_s("demo") == 2 * 86400.0
-    assert s.allow_upload is True
+    assert s.allow_upload is False  # environment cannot override a closed YAML gate
 
 
 def test_missing_file_falls_back_to_defaults(tmp_path, monkeypatch):
@@ -80,12 +81,25 @@ def test_calibration_export_roots_and_independent_upload_gate(tmp_path, monkeypa
     monkeypatch.delenv('CASM_MONITOR_ALLOW_UPLOAD', raising=False)
     monkeypatch.delenv('CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD', raising=False)
     settings = load_settings(config)
-    assert settings.allow_upload and not settings.cal_workspace_allow_upload
+    assert not settings.allow_upload and not settings.cal_workspace_allow_upload
     assert settings.cal_export_roots == (Path('/tmp/test-export-root'),)
     monkeypatch.setenv('CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD','1')
-    assert load_settings(config).cal_workspace_allow_upload
+    assert not load_settings(config).cal_workspace_allow_upload
     monkeypatch.setenv('CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD','0')
     assert not load_settings(config).cal_workspace_allow_upload
+
+
+@pytest.mark.parametrize('yaml_gate', [False, True])
+@pytest.mark.parametrize('env_gate', [None, '0', '1'])
+def test_upload_requires_both_configuration_and_environment(tmp_path, monkeypatch, yaml_gate, env_gate):
+    config=tmp_path/'gates.yaml'
+    config.write_text(f'cal:\n  allow_upload: {str(yaml_gate).lower()}\n  workspace_allow_upload: {str(yaml_gate).lower()}\n')
+    for key in ('CASM_MONITOR_ALLOW_UPLOAD','CASM_MONITOR_WORKSPACE_ALLOW_UPLOAD'):
+        monkeypatch.delenv(key, raising=False)
+        if env_gate is not None: monkeypatch.setenv(key,env_gate)
+    settings=load_settings(config)
+    assert settings.allow_upload == (yaml_gate and env_gate=='1')
+    assert settings.cal_workspace_allow_upload == (yaml_gate and env_gate=='1')
 
 
 def test_read_medusa_cfg(tmp_path):
