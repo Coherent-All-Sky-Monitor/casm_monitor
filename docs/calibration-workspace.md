@@ -57,6 +57,9 @@ step complete. Forward navigation is disabled until the calibration is saved.
    antennas 12 and 33 were layout-only and unselected. This was a saved-product
    comparison, not a fresh GPU readback. Missing deployed weights retain the
    existing labelled layout fallback.
+   The form omits the historical layout/deployed mismatch banner; the API
+   retains both antenna sets and the mismatch note for inspection. This display
+   change does not alter the layout, deployed selection or membership checks.
    **Choose a static window** plots the Sun, Cyg A, Cas A and Tau A for exactly
    the selected local date, 00:00 through 23:59 PT (24 hours normally, 23/25 on
    DST transition days). Altitude runs from 0° to 90°; a horizontal 20° line

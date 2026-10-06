@@ -29,6 +29,11 @@ def main():
         expect(current).to_contain_text('12:11 – 13:11 PDT')
         expect(current).to_contain_text('Oct 6, 2026')
         expect(current).not_to_contain_text('a7658dba9b34376a')
+        membership = page.locator('.cal-card').filter(has=page.get_by_role('heading', name='Antenna membership', exact=True))
+        expect(membership).to_contain_text('Default: 16 deployed antennas.')
+        expect(membership.locator('input[type=checkbox]:checked')).to_have_count(16)
+        expect(membership).not_to_contain_text('include_in_beamforming')
+        expect(membership).not_to_contain_text('2026-09-09 finding')
         current.get_by_role('button', name='UTC', exact=True).evaluate('e=>e.click()')
         expect(current).to_contain_text('19:11 – 20:11 UTC')
         page.goto(base+'/cal/'+tag, wait_until='domcontentloaded')
@@ -50,6 +55,7 @@ def main():
         assert not errors, errors
         assert not blocked, blocked
         report = dict(current_calibration='2026-10-05 Sun', labels='readable; hashes remain in metadata',
+                      membership='16 deployed antennas; layout mismatch banner hidden',
                       errors=errors, blocked_writes=blocked, screenshots=screenshots)
         (root/'result.json').write_text(json.dumps(report, indent=2)+'\n')
         print(json.dumps(report, indent=2))
