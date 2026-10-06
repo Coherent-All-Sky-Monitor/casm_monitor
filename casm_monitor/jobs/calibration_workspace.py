@@ -47,6 +47,7 @@ def run(params):
     modules = ('casm_monitor.jobs.calibration_workspace', 'casm_vis_analysis.calibration_checks',
                'casm_vis_analysis.beam_power', 'casm_vis_analysis.fringe_stop',
                'casm_vis_analysis.delay', 'casm_vis_analysis.calibration_inspection',
+               'casm_vis_analysis.calibration_transit',
                'bf_weights_generator.make_cal_and_weights')
     code = {}
     for module in modules:

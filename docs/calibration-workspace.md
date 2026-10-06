@@ -185,13 +185,48 @@ step complete. Forward navigation is disabled until the calibration is saved.
    independently of the reference frozen in the candidate recipe.
 4. **Validate on sky**: a five-hour stationary beam, fixed at the source's
    transit alt/az. Cross-only visibilities have a per-baseline/channel complex
-   off-source median removed. Candidate and current deployed weights share antennas,
+   background median removed. Candidate and current deployed weights share antennas,
    integrations and the intersection of their good-channel masks. Turning off
-   comparison uses the candidate's own antenna set. Raw signed power,
-   peak-normalized shape and exact ideal geometry are retained separately.
-   Channel peak times use a three-integration boxcar, a user-selectable
-   peak/off-RMS threshold, and edge-peak rejection. Chromaticity is measured
-   relative to the exact geometric model; it is not an automatic pass/fail.
+   comparison uses the candidate's own antenna set. **Weighted mean** is the
+   default: each signed channel cross sum is divided by the total baseline
+   amplitude weight, `2 sum(i<j) |w_i||w_j|`. **Raw sum** remains selectable.
+   This removes arbitrary weight scale; receiver gains remain unequal and the
+   counts are not calibrated flux. Both curves have their selected background
+   time mean removed. The lower comparison, **Excess / background std**, divides
+   by the sample standard deviation (`ddof=1`), including sky and interference.
+   Curve height alone does not establish sensitivity or a source detection.
+
+   From October 5, non-solar backgrounds require Sun altitude below 0° at every
+   selected integration timestamp, beyond the configured ±90 min by default.
+   At least two integrations on each side are required. Insufficient coverage
+   suppresses derived plots and explains how to choose another window/date.
+   The card lists actual windows in OVRO local time or UTC, solar altitude range
+   and excluded Sun-up samples. Solar self-checks use outer windows with an
+   explicit solar-response warning. This is separate from the solve's static
+   night template, and does not screen other sky sources or RFI.
+
+   White waterfalls use symmetric 99th-percentile absolute-power colour limits
+   and colorbar extensions. Saturated extremes remain in all curves/statistics.
+   Amplitude comparison has scheme buttons and a full-size waterfall/curve for
+   the selected scheme. **Peak time vs frequency** is optional and collapsed:
+   strongest three-integration-smoothed feature per channel, with a selectable
+   peak/background-std threshold and edge rejection, plus the ideal equal-weight
+   array prediction. It does not identify a source or measure a clock delay.
+   The old paired chromaticity plots and stale summary cards are removed.
+
+   Existing results are redrawn from immutable NPZ arrays by GET
+   `/api/calibration/builds/{tag}/transit/{action_id}` and its
+   `/{calibration|amplitude|transit|timing}.png` routes. `scale=mean|sum` selects
+   normalization; `series=cal-0|amp-uniform|…` selects an individual plot.
+   New NPZs embed the normalizer and background arrays. Legacy normalizers come
+   from the bound calibration or the saved amplitude profiles preceding that
+   action. Missing evidence leaves Weighted mean unavailable; Raw sum remains.
+   Cache keys include saved-file fingerprints and deployment labels. The page
+   recomputes background and metrics together, without a new solve, raw read,
+   queue entry, or artifact overwrite. Downloaded original files retain their
+   original analysis. Browser acceptance blocks all non-GET API calls:
+   `scripts/check_calibration_transit_browser.py`; regression coverage:
+   `tests/test_calibration_transit.py`.
 5. **Generate beams**: the first plot restores the legacy ellipse sky layout
    and Sun/Cyg A/Cas A/Tau A altitude tracks. It reads actual saved pointings;
    glyph widths are the approximate 450-MHz FWHM, for display only. No ellipse

@@ -453,6 +453,23 @@ def build_router(settings, store):
         except (ValueError, OSError, KeyError) as exc:
             raise HTTPException(404, str(exc)) from exc
 
+    @router.get('/builds/{tag}/transit/{identity}')
+    def transit_review(tag: str, identity: str, scale: str = 'mean'):
+        from .calibration_transit import transit_review
+        try:
+            return transit_review(settings, tag, identity, scale)
+        except (ValueError, OSError, KeyError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @router.get('/builds/{tag}/transit/{identity}/{kind}.png')
+    def transit_image(tag: str, identity: str, kind: str, series: str = '', scale: str = 'mean'):
+        from .calibration_transit import transit_png
+        try:
+            return Response(transit_png(settings, tag, identity, kind, series, scale), media_type='image/png',
+                            headers={'Cache-Control': 'private, max-age=10'})
+        except (ValueError, OSError, KeyError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @router.get('/sky/{filename}')
     def sky_image(filename: str):
         if not re.fullmatch(r'[0-9a-f]{24}\.png', filename):
