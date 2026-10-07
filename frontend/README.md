@@ -83,7 +83,10 @@ the nearby layout and Overview map. SNAP status/read-details include board IPs.
 badges, fixed queues, six label shortcuts, optional RFI details, undo and JSONL
 export. Saves use the separate annotation API; the event-detail page links to
 Classify instead of writing legacy pipeline labels. The reviewed PNG has a
-checksum-bound URL, the next two plots prefetch, and failed saves never advance.
+checksum-bound URL; the next two plots and metadata prefetch with a bounded cache.
+Labels advance after durable save by default; RFI opens optional descriptors and
+**Save RFI & next**. Failed saves never advance. Candidate/badge refreshes run every
+five seconds while visible; incoming candidates leave the active queue fixed.
 See `docs/candidate-annotations.md` for storage and verification.
 
 `/cands` shows 12 recent saved plots by default (6/12/24/48 selectable), a compact

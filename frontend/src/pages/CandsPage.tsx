@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import Panel from "../components/Panel";
 import Segmented from "../components/Segmented";
 import { CandidateAnnotations } from "../components/CandidateAnnotations";
+import { candidateRefreshMs } from "../lib/candidateAnnotations";
 import { ProductImage } from "../components/Workspace";
 import { useUrlParam } from "../lib/useUrlParam";
 import { formatUtcStamp } from "../lib/statusSentence";
@@ -81,7 +82,7 @@ export default function CandsPage() {
     let busy = false;
     setEvents([]);setEventsLoaded(false);setEventsError('');
     function load() {
-      if(busy)return;
+      if(busy||document.hidden)return;
       busy=true;
       api
         .events({ tier: tier || undefined, view: cview as "candidates" | "all", include_plots:true })
@@ -90,10 +91,12 @@ export default function CandsPage() {
         .finally(()=>{busy=false;});
     }
     load();
-    const timer = setInterval(load, REFRESH_MS);
+    const timer = setInterval(load, candidateRefreshMs);
+    document.addEventListener('visibilitychange',load);
     return () => {
       cancelled = true;
       clearInterval(timer);
+      document.removeEventListener('visibilitychange',load);
     };
   }, [api, section, tier, cview]);
 

@@ -106,6 +106,27 @@ def test_idempotency_conflicts_and_invalid_input(setup):
     save(client, {**body, "request_id":uuid.uuid4().hex, "expected_revision":one["revision"], "note":"x"*2001}, 422)
 
 
+def test_extended_rfi_taxonomy_preserves_existing_assessments(setup, monkeypatch):
+    from casm_monitor.web import candidate_annotations as module
+    client, settings = setup
+    who = reviewer(client)
+    monkeypatch.setattr(module, "TAXONOMY_VERSION", 1)
+    first = save(client, payload(who, label="rfi", morphology=["narrowband", "repeating"]))
+    with sqlite3.connect(annotation_root(settings)/"annotations.sqlite3") as conn:
+        original = conn.execute("SELECT * FROM annotations WHERE id=?", (first["revision"],)).fetchone()
+    monkeypatch.setattr(module, "TAXONOMY_VERSION", 2)
+    second = save(client, payload(who, label="rfi", expected_revision=first["revision"], morphology=list(module.MORPHOLOGY)))
+    assert second["votes"][0]["taxonomy_version"] == 2
+    assert set(second["votes"][0]["morphology"]) == set(module.MORPHOLOGY)
+    save(client, payload(who, label="rfi", expected_revision=second["revision"], morphology=["invented"]), 422)
+    with sqlite3.connect(annotation_root(settings)/"annotations.sqlite3") as conn:
+        assert conn.execute("SELECT * FROM annotations WHERE id=?", (first["revision"],)).fetchone() == original
+    rows = [json.loads(line) for line in client.get("/api/candidate-annotations/export").text.splitlines()]
+    assert rows[0]["taxonomy_version"] == 2
+    assert rows[0]["morphology"] == list(module.MORPHOLOGY)
+    assert client.get("/api/candidate-annotations").json()["taxonomy_version"] == 2
+
+
 def test_retained_products_survive_removal_and_preserve_exact_bytes(setup):
     client, settings = setup
     who = reviewer(client)

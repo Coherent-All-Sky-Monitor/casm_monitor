@@ -7,6 +7,15 @@ export const classifications = [
   {value:'unsure', label:'Unsure', hint:'Needs more investigation.'},
 ] as const;
 export type Classification = typeof classifications[number]['value'];
+export const candidateRefreshMs = 5000;
+export const rfiMorphologies = [
+  {value:'narrowband', label:'Narrowband', hint:'Confined to a small part of the frequency band.'},
+  {value:'broadband', label:'Broadband', hint:'Extends across much of the frequency band.'},
+  {value:'bursty', label:'Bursty', hint:'Short-lived flashes or bursts in time.'},
+  {value:'frequency_comb', label:'Frequency comb', hint:'Multiple regularly spaced lines in frequency.'},
+  {value:'swept', label:'Swept / drifting', hint:'The interfering frequency changes with time.'},
+  {value:'repeating', label:'Repeating in time', hint:'A pattern recurs in time; it need not be strictly periodic.'},
+] as const;
 export type Reviewer = {id:string; name:string};
 export type Vote = {
   candidate:string; reviewer_id:string; reviewer:string; revision:number; created_utc:string;
@@ -24,6 +33,52 @@ export async function annotationGet<T>(path=''):Promise<T> {
   const response = await fetch(base+path,{cache:'no-store'});
   if(!response.ok)throw new Error(`Could not load annotations (${response.status}). Try again.`);
   return response.json();
+}
+
+/** Small per-tab metadata cache. Exact PNG URLs include their content hash.
+ * Saves still verify the plot hash and expected revision on the server. */
+export function createReviewCache(
+  loader:(name:string)=>Promise<ReviewDetail> = name=>annotationGet('/events/'+encodeURIComponent(name)),
+  now:()=>number = Date.now, limit=8, ttlMs=60_000,
+) {
+  type Entry = {value?:ReviewDetail; at:number; pending?:Promise<ReviewDetail>};
+  const entries=new Map<string,Entry>();
+  const touch=(name:string,entry:Entry)=>{
+    entries.delete(name);entries.set(name,entry);
+    while(entries.size>limit)entries.delete(entries.keys().next().value!);
+  };
+  return {
+    peek(name:string):ReviewDetail|null {
+      const entry=entries.get(name);
+      return entry?.value&&now()-entry.at<ttlMs?entry.value:null;
+    },
+    get(name:string,force=false):Promise<ReviewDetail> {
+      const old=entries.get(name);
+      if(!force&&old){
+        touch(name,old);
+        if(old.pending)return old.pending;
+        if(old.value&&now()-old.at<ttlMs)return Promise.resolve(old.value);
+      }
+      const entry:Entry={at:0};touch(name,entry);
+      entry.pending=loader(name).then(value=>{
+        entry.value=value;entry.at=now();entry.pending=undefined;return value;
+      },error=>{if(entries.get(name)===entry)entries.delete(name);throw error;});
+      return entry.pending;
+    },
+    updateVotes(name:string,votes:Vote[]) {
+      const entry=entries.get(name);
+      if(entry?.value)entry.value={...entry.value,votes:mergeVotes(entry.value.votes,votes)};
+    },
+  };
+}
+export const reviewCache=createReviewCache();
+const warmImages=new Map<string,HTMLImageElement>();
+export async function prefetchReview(name:string):Promise<void> {
+  const detail=await reviewCache.get(name),url=detail.plots[0]?.url;
+  if(!url||typeof Image==='undefined'||warmImages.has(url))return;
+  const image=new Image();image.decoding='async';image.src=url;warmImages.set(url,image);
+  while(warmImages.size>4)warmImages.delete(warmImages.keys().next().value!);
+  try{await image.decode();}catch{warmImages.delete(url);}
 }
 export async function annotationPost<T>(path:string, body:unknown, csrf:string):Promise<T> {
   const send=(token:string)=>fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json','X-CASM-Workspace':'1','X-CASM-Annotations-CSRF':token},body:JSON.stringify(body)});

@@ -29,7 +29,8 @@ from .cands import saved_plots
 
 log = logging.getLogger(__name__)
 LABELS = ("frb", "pulsar", "solar", "rfi", "noise", "unsure")
-MORPHOLOGY = ("narrowband", "broadband", "swept", "repeating")
+MORPHOLOGY = ("narrowband", "broadband", "bursty", "frequency_comb", "swept", "repeating")
+TAXONOMY_VERSION = 2
 NAME = re.compile(r"^\d{6}[a-zA-Z0-9]{4,6}$")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS reviewers (
@@ -58,7 +59,7 @@ class Assessment(BaseModel):
     expected_revision: int = Field(ge=0)
     label: Literal["frb", "pulsar", "solar", "rfi", "noise", "unsure"] | None = None
     quality: Literal["usable", "cannot_assess"] = "usable"
-    morphology: list[Literal["narrowband", "broadband", "swept", "repeating"]] = Field(default_factory=list, max_length=4)
+    morphology: list[Literal["narrowband", "broadband", "bursty", "frequency_comb", "swept", "repeating"]] = Field(default_factory=list, max_length=6)
     rfi_present: bool = False
     note: str = Field(default="", max_length=2000)
     plot: str | None = Field(default=None, max_length=200)
@@ -250,7 +251,7 @@ def build_router(settings) -> APIRouter:
             reviewers = [dict(r) for r in conn.execute("SELECT id,name FROM reviewers ORDER BY name_key")] if conn else []
             votes = store.votes(conn, selected)
         return {"reviewers": reviewers, "votes": votes, "csrf_token": csrf, "writes_enabled": enabled,
-                "labels": LABELS, "morphology": MORPHOLOGY, "taxonomy_version": 1}
+                "labels": LABELS, "morphology": MORPHOLOGY, "taxonomy_version": TAXONOMY_VERSION}
 
     @router.post("/reviewers")
     def reviewer(body: ReviewerInput, request: Request):
@@ -388,7 +389,7 @@ def build_router(settings) -> APIRouter:
                     state = {"label": body.label, "quality": body.quality, "morphology": sorted(set(body.morphology)),
                              "rfi_present": body.rfi_present, "note": body.note.strip(), "others_revealed": body.others_revealed}
                     parent = revision
-                state.update(action=body.action, taxonomy_version=1)
+                state.update(action=body.action, taxonomy_version=TAXONOMY_VERSION)
                 cur = conn.execute("INSERT INTO annotations(request_id,payload_hash,candidate,reviewer_id,created_utc,parent_id,evidence_id,body) VALUES (?,?,?,?,?,?,?,?)",
                                    (body.request_id, payload_hash, name, body.reviewer_id, stamp(), parent, evidence_id, encoded(state)))
                 conn.commit()
@@ -420,8 +421,8 @@ def build_router(settings) -> APIRouter:
     @router.get("/export")
     def export():
         def records():
-            yield encoded({"type": "manifest", "schema_version": 1, "taxonomy_version": 1,
-                           "exported_utc": stamp(), "labels": LABELS, "human_assessments": True}) + "\n"
+            yield encoded({"type": "manifest", "schema_version": 1, "taxonomy_version": TAXONOMY_VERSION,
+                           "exported_utc": stamp(), "labels": LABELS, "morphology": MORPHOLOGY, "human_assessments": True}) + "\n"
             with store.connect() as conn:
                 if conn:
                     conn.execute("BEGIN")

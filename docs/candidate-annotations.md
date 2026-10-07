@@ -30,15 +30,20 @@ annotations, including events no longer in that list.
 **Cannot assess** records missing/bad data separately, with no scientific label.
 Unreviewed means no active assessment. Neither is a Noise example.
 
-Each label click saves immediately. Optional **Advance after saving** moves to
-the next candidate after acknowledgement. Previous/Next also use arrow keys;
+Each label click saves immediately. **Advance after saving** is on by default
+and remembered in this browser. It moves to the next candidate after the database
+acknowledges the save. RFI stays on the current plot and opens optional details;
+**Save RFI & next** saves those details and continues. It can also continue with
+no descriptors. Previous/Next also use arrow keys;
 **Undo** (U) restores the previous assessment, retaining every revision. A return
 link stays available after automatic advance. Clicking the plot opens the common
 zoom/pan/download viewer. Shortcuts pause while typing or using that dialog.
 
-**Details & note** contains optional Narrowband, Broadband, Swept/drifting and
-Repeating RFI descriptors, an RFI-also-present flag, and a short note. Multiple
-descriptors can coexist. Choose a class to save them with a new review; **Save
+**Details & note** contains optional Narrowband, Broadband, Bursty, Frequency
+comb, Swept/drifting and Repeating in time descriptors, an RFI-also-present flag,
+and a short note. Multiple descriptors can coexist: bandwidth and time behaviour
+are separate properties. Frequency comb means regularly spaced spectral lines;
+Repeating describes recurrence in time. Choose a class to save them with a new review; **Save
 details** updates an existing review without advancing. Missing plots disable
 scientific classification, but still allow Cannot assess.
 
@@ -49,6 +54,14 @@ may already have seen badges in Browse. This is not a blinded experiment.
 Saving, Saved and Save failed are explicit. Failed saves do not advance. Retries
 reuse their request ID. A stale tab gets HTTP 409 rather than overwriting another
 tab's assessment for the same reviewer. Different reviewers remain independent.
+
+The visible candidate list and badges refresh every five seconds; background
+tabs pause polling and refresh on return. The review queue stays fixed until
+**Refresh queue**, with a count of new candidates. The next two plots and their
+metadata preload. Metadata has an eight-event, 60-second cache; up to four images
+are kept warm. Saves still validate the exact plot hash and expected revision.
+**Reload review** bypasses cached metadata after an error. Prefetching retains no
+new evidence on disk. The first save can take longer while copying its filterbank.
 
 ## Storage and retention
 
@@ -75,7 +88,9 @@ database; do not copy only its main file while ignoring the WAL. Local backup
 files alone do not contain the PNGs or filterbanks.
 
 Evidence includes the original cluster and trigger records, recorded injection
-associations (`matched_cluster`), plot/data checksums and taxonomy version 1.
+associations (`matched_cluster`), plot/data checksums and a taxonomy version.
+New annotations use version 2, adding `bursty` and `frequency_comb`. Existing
+version-1 assessments remain unchanged; no relabeling or migration is performed.
 An empty recorded injection match is not proof of an uninjected event. Existing
 evidence is reused for repeated reviews of the same candidate/plot checksum.
 Later ledger changes are not silently applied to a previously reviewed snapshot.

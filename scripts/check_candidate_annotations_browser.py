@@ -5,6 +5,7 @@ Run after npm run build. No requests go to the live monitor or pipeline.
 from __future__ import annotations
 
 import json
+import asyncio
 import os
 import socket
 import sqlite3
@@ -55,6 +56,18 @@ def main():
             (candidate/f"{name}.json").write_text('{"test_fixture":true}')
     before = settings.t2_db.read_bytes()
     app = FastAPI()
+    detail_reads = {}
+
+    @app.middleware("http")
+    async def tunnel_latency(request, call_next):
+        parts = request.url.path.strip("/").split("/")
+        if request.method == "GET" and parts[:3] == ["api", "candidate-annotations", "events"]:
+            # Simulated SSH RTT on metadata and PNG requests; never contacts production.
+            await asyncio.sleep(.15)
+            if len(parts) == 4:
+                detail_reads[parts[3]] = detail_reads.get(parts[3], 0) + 1
+        return await call_next(request)
+
     app.include_router(candidates(settings))
     app.include_router(annotations(settings))
     app.mount("/assets", StaticFiles(directory=STATIC_DIR/"assets"), name="assets")
@@ -93,6 +106,8 @@ def main():
             expect(page.locator(".candidate-review-card")).to_be_visible()
             frb = page.get_by_role("button",name="FRB 1",exact=True)
             expect(frb).to_be_enabled()
+            expect(page.get_by_label("Advance after saving",exact=True)).to_be_checked()
+            page.get_by_label("Advance after saving",exact=True).uncheck()
             first = page.locator(".candidate-review-card h2").inner_text()
             frb.click()
             expect(page.locator(".candidate-review-save")).to_contain_text("Saved")
@@ -125,6 +140,7 @@ def main():
             second.goto(url+"/cands?mode=classify&review="+first)
             second.get_by_label("Reviewer name",exact=True).fill("Second reviewer")
             second.get_by_role("button",name="Use name",exact=True).click()
+            second.get_by_label("Advance after saving",exact=True).uncheck()
             expect(second.get_by_role("button",name="Pulsar 2",exact=True)).to_be_enabled()
             second.get_by_role("button",name="Pulsar 2",exact=True).click()
             expect(second.locator(".candidate-review-save")).to_contain_text("Saved")
@@ -164,6 +180,51 @@ def main():
             page.locator("body").click(position={"x":2,"y":2})
             page.keyboard.press("6")
             expect(page.get_by_role("button",name="Unsure 6",exact=True)).to_have_attribute("aria-pressed","true")
+            # Auto advance is the default in a fresh browser. RFI holds for details,
+            # including keyboard selection, then commits before explicit advancement.
+            quick_context = browser.new_context(viewport={"width":1500,"height":1100})
+            quick = quick_context.new_page()
+            quick.goto(url+"/cands?mode=classify")
+            quick.get_by_label("Reviewer name",exact=True).fill("Fast review test")
+            quick.get_by_role("button",name="Use name",exact=True).click()
+            expect(quick.get_by_role("button",name="RFI 4",exact=True)).to_be_enabled()
+            expect(quick.get_by_label("Advance after saving",exact=True)).to_be_checked()
+            fast_first = quick.locator(".candidate-review-card h2").inner_text()
+            next_name = quick.locator(".candidate-sidebar .candidate-list-item strong").nth(1).inner_text()
+            # Let both next-item metadata and its image finish preloading.
+            quick.wait_for_function("name => performance.getEntriesByType('resource').some(r => r.name.includes('/events/'+name+'/plot/'))", arg=next_name)
+            reads_before = detail_reads.get(next_name, 0)
+            quick.locator("body").click(position={"x":2,"y":2})
+            quick.keyboard.press("4")
+            expect(quick.get_by_role("button",name="RFI 4",exact=True)).to_have_attribute("aria-pressed","true")
+            expect(quick.locator(".candidate-review-card h2")).to_have_text(fast_first)
+            expect(quick.locator(".candidate-classification-controls details")).to_have_attribute("open", "")
+            for label in ("Narrowband", "Bursty", "Frequency comb", "Repeating in time"):
+                quick.get_by_label(label,exact=True).check()
+            quick.get_by_role("button",name="Save RFI & next →",exact=True).click()
+            expect(quick.locator(".candidate-review-card h2")).to_have_text(next_name)
+            expect(quick.get_by_role("button",name="Noise 5",exact=True)).to_be_enabled()
+            assert detail_reads.get(next_name,0) == reads_before, "Prefetched metadata was unnecessarily reloaded"
+            # Measure cached navigation separately from SQLite/evidence save latency.
+            quick.get_by_role("button",name="Return / undo",exact=True).click()
+            expect(quick.locator(".candidate-review-card h2")).to_have_text(fast_first)
+            for label in ("Narrowband", "Bursty", "Frequency comb", "Repeating in time"):
+                expect(quick.get_by_label(label,exact=True)).to_be_checked()
+            start = time.perf_counter()
+            quick.get_by_role("button",name="Save RFI & next →",exact=True).click()
+            expect(quick.locator(".candidate-review-card h2")).to_have_text(next_name)
+            expect(quick.get_by_role("button",name="Noise 5",exact=True)).to_be_enabled()
+            cached_advance_ms = round((time.perf_counter()-start)*1000,1)
+            quick.route("**/api/candidate-annotations/events/*",fail)
+            quick.get_by_role("button",name="Noise 5",exact=True).click()
+            expect(quick.locator(".candidate-review-save")).to_contain_text("Save failed")
+            expect(quick.locator(".candidate-review-card h2")).to_have_text(next_name)
+            quick.unroute("**/api/candidate-annotations/events/*",fail)
+            quick.get_by_role("button",name="Noise 5",exact=True).click()
+            expect(quick.locator(".candidate-review-card h2")).not_to_have_text(next_name)
+            quick.get_by_role("button",name="Return / undo",exact=True).click()
+            expect(quick.get_by_role("button",name="Noise 5",exact=True)).to_have_attribute("aria-pressed","true")
+            quick_context.close()
             page.screenshot(path=str(directory/"classify.png"),full_page=True)
             for width in (1500,1024,700,390,320):
                 page.set_viewport_size({"width":width,"height":1100})
@@ -175,7 +236,8 @@ def main():
         assert settings.t2_db.read_bytes()==before
         with sqlite3.connect(settings.candidate_annotations_root/"annotations.sqlite3") as conn:
             count=conn.execute("SELECT COUNT(*) FROM annotations").fetchone()[0]
-        print(json.dumps({"result":"passed","annotation_revisions":count,"screenshots":str(directory),"production_requests":0}))
+        print(json.dumps({"result":"passed","annotation_revisions":count,"screenshots":str(directory),"production_requests":0,
+                          "simulated_get_latency_ms":150,"cached_advance_ms":cached_advance_ms,"extra_detail_reads_on_advance":0}))
     finally:
         server.should_exit=True
         thread.join(timeout=5)

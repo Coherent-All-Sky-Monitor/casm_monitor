@@ -6,14 +6,14 @@ import { formatUtcStamp } from '../lib/statusSentence';
 import type { CandEventRow } from '../lib/types';
 import { FigureZoom } from './FigureZoom';
 import { CandidateBadges } from './CandidateAnnotations';
-import type { Vote } from '../lib/candidateAnnotations';
+import { candidateRefreshMs, type Vote } from '../lib/candidateAnnotations';
 import '../candidate-gallery.css';
 
-export function CandidateImage({url,name,filename,onReady}:{url:string;name:string;filename:string;onReady?:()=>void}) {
+export function CandidateImage({url,name,filename,onReady,priority=false}:{url:string;name:string;filename:string;onReady?:()=>void;priority?:boolean}) {
   const [open,setOpen]=useState(false),[failed,setFailed]=useState(false);
   return <>{failed?<p className="candidate-missing" role="status">Saved plot unavailable. The file may have moved or expired.</p>:
     <button className="candidate-image" aria-label={`Enlarge candidate ${name} ${filename}`} onClick={()=>setOpen(true)}>
-      <img src={url} alt={`Candidate ${name} · ${filename}`} width="1600" height="1600" loading="lazy" decoding="async" onLoad={onReady} onError={()=>setFailed(true)}/>
+      <img src={url} alt={`Candidate ${name} · ${filename}`} width="1600" height="1600" loading={priority?'eager':'lazy'} decoding="async" onLoad={onReady} onError={()=>setFailed(true)}/>
     </button>}
     {open&&<FigureZoom title={`Candidate ${name}`} onClose={()=>setOpen(false)} actions={<a href={url} target="_blank" rel="noreferrer">Open original PNG ↗</a>}><img src={url} alt={`Candidate ${name} · ${filename}`} draggable={false}/></FigureZoom>}
   </>;
@@ -58,7 +58,7 @@ export function CandidateGallery({events,useMock,votes={},reviewerId,onClassify}
     </section>
     <aside className="candidate-sidebar" aria-label="Candidate selector"><details open><summary>Candidates <span>{events.length} loaded</span></summary>
       <label className="candidate-filter">Find a candidate<input type="search" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Name, UTC date, beam or label"/></label>
-      <p className="candidate-list-note">Click to show / hide · outlined rows are shown · newest first · refreshes every 15 s</p>
+      <p className="candidate-list-note">Click to show / hide · outlined rows are shown · newest first · refreshes every {candidateRefreshMs/1000} s while visible</p>
       <div className="candidate-list">{results.map(e=>{const index=names.indexOf(e.name);return <button key={e.name} data-name={e.name} className={`candidate-list-item${index>=0?' shown':''}${focused===e.name?' focused':''}`} aria-pressed={index>=0} onClick={()=>select(e.name)}>
         <span className="candidate-list-title"><strong>{e.name}</strong>{index>=0&&<b>Shown {index+1}</b>}</span><time>{formatUtcStamp(e.event_utc)}</time>
         <span>S/N {e.snr.toFixed(1)} · DM {e.dm.toFixed(1)} · B{e.beam}</span>

@@ -2,13 +2,15 @@ import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {Link, useSearchParams} from 'react-router-dom';
 import type {CandEventRow} from '../lib/types';
 import {formatUtcStamp} from '../lib/statusSentence';
-import {annotationGet, annotationPost, classifications, disagreement, mergeVotes, voteText} from '../lib/candidateAnnotations';
+import {annotationGet, annotationPost, candidateRefreshMs, classifications, disagreement, mergeVotes, prefetchReview, reviewCache, rfiMorphologies, voteText} from '../lib/candidateAnnotations';
 import type {AnnotationOverview, Classification, ReviewDetail, Reviewer, Vote} from '../lib/candidateAnnotations';
 import {CandidateGallery, CandidateImage} from './CandidateGallery';
 import '../candidate-annotations.css';
 
 const reviewerKey='casm.candidateReviewer.v1';
+const advanceKey='casm.candidateAutoAdvance.v1';
 function remembered():Reviewer|null {try{return JSON.parse(localStorage.getItem(reviewerKey)??'null');}catch{return null;}}
+function rememberedAdvance():boolean {try{return localStorage.getItem(advanceKey)!=='false';}catch{return true;}}
 
 export function CandidateBadges({votes=[], reviewerId}:{votes?:Vote[]; reviewerId?:string}) {
   const active=votes.filter(v=>v.quality!=='unreviewed');
@@ -29,7 +31,7 @@ export function CandidateAnnotations({events,useMock}:{events:CandEventRow[];use
   const [queueReady,setQueueReady]=useState(false);
   const queueSource=useRef(new Set<string>());
   const eventsRef=useRef(events);eventsRef.current=events;
-  const [autoAdvance,setAutoAdvance]=useState(false),[blind,setBlind]=useState(true);
+  const [autoAdvance,setAutoAdvance]=useState(rememberedAdvance),[blind,setBlind]=useState(true);
   const [busy,setBusy]=useState(false),[lastSaved,setLastSaved]=useState<string|null>(null);
   const [dirty,setDirty]=useState(false);
   const canLeave=()=>!busy&&(!dirty||window.confirm('Discard unsaved annotation details?'));
@@ -44,8 +46,9 @@ export function CandidateAnnotations({events,useMock}:{events:CandEventRow[];use
       catch(e){if(!cancelled)setError((e as Error).message);}
       finally{running=false;}
     };
-    void load();const timer=setInterval(load,15000);
-    return()=>{cancelled=true;clearInterval(timer);};
+    void load();const timer=setInterval(load,candidateRefreshMs);
+    document.addEventListener('visibilitychange',load);
+    return()=>{cancelled=true;clearInterval(timer);document.removeEventListener('visibilitychange',load);};
   },[names,useMock,merge]);
   const byName=useMemo(()=>{
     const out:Record<string,Vote[]>={};for(const v of votes)(out[v.candidate]??=[]).push(v);return out;
@@ -90,13 +93,9 @@ export function CandidateAnnotations({events,useMock}:{events:CandEventRow[];use
   const move=(delta:number)=>{if(queue[index+delta]&&canLeave()){setDirty(false);setCurrent(queue[index+delta].name);}};
   useEffect(()=>{
     if(!classify||index<0)return;
-    const abort=new AbortController();
-    const images:HTMLImageElement[]=[];
     for(const event of queue.slice(index+1,index+3)){
-      fetch('/api/candidate-annotations/events/'+event.name,{signal:abort.signal,cache:'no-store'})
-        .then(r=>r.ok?r.json():null).then((value:ReviewDetail|null)=>{if(!abort.signal.aborted&&value?.plots[0]){const image=new Image();image.src=value.plots[0].url;images.push(image);}}).catch(()=>{});
+      void prefetchReview(event.name).catch(()=>{});
     }
-    return()=>{abort.abort();};
   },[classify,index,queue]);
   const newCount=events.filter(e=>!queueSource.current.has(e.name)).length;
   const validReviewer=!!reviewer&&!!overview?.reviewers.some(r=>r.id===reviewer.id);
@@ -121,7 +120,7 @@ export function CandidateAnnotations({events,useMock}:{events:CandEventRow[];use
     </>:<>
       <div className="candidate-review-options"><label>Queue<select aria-label="Review queue" value={filter} disabled={busy} onChange={e=>{if(canLeave()){setDirty(false);setFilter(e.target.value);setQueueReady(false);setCurrent(null);setParams(old=>{const next=new URLSearchParams(old);next.delete('review');return next;});}}}>
         <option value="unreviewed">Unreviewed by me</option><option value="all">All candidates</option><option value="mine">My reviews</option><option value="disagreements">Different labels</option><option value="unsure">Needs investigation</option>
-      </select></label><label><input type="checkbox" checked={autoAdvance} onChange={e=>setAutoAdvance(e.target.checked)}/>Advance after saving</label>
+      </select></label><label><input type="checkbox" checked={autoAdvance} onChange={e=>{setAutoAdvance(e.target.checked);try{localStorage.setItem(advanceKey,String(e.target.checked));}catch{/* Session setting still applies. */}}}/>Advance after saving</label>
         <label><input type="checkbox" checked={blind} onChange={e=>setBlind(e.target.checked)}/>Hide other votes until I label</label>
         <button disabled={busy} onClick={()=>{if(canLeave()){setDirty(false);startQueue();}}}>Refresh queue{newCount>0?` · ${newCount} new in loaded list`:''}</button>
       </div>
@@ -131,7 +130,7 @@ export function CandidateAnnotations({events,useMock}:{events:CandEventRow[];use
           <div className="candidate-review-navigation"><button disabled={busy||index<=0} onClick={()=>move(-1)}>← Previous</button><span>{index+1} / {queue.length}</span><button disabled={busy||index>=queue.length-1} onClick={()=>move(1)}>Next →</button></div>
           <CandidateReview key={`${selected.name}/${reviewer?.id??''}`} event={selected} reviewer={validReviewer?reviewer:null} writesEnabled={!!overview?.writes_enabled}
             votes={byName[selected.name]??[]} blind={blind} merge={merge} onBusy={setBusy} onDirty={setDirty} onPrevious={()=>move(-1)} onNext={()=>move(1)}
-            onSaved={()=>{setDirty(false);setLastSaved(selected.name);if(autoAdvance&&queue[index+1])setCurrent(queue[index+1].name);}}/>
+            onSaved={mode=>{setDirty(false);setLastSaved(selected.name);if((mode==='next'||mode==='auto'&&autoAdvance)&&queue[index+1])setCurrent(queue[index+1].name);}}/>
         </>:<div className="candidate-empty">{overview?'No candidates in this queue. Choose All candidates or refresh the queue.':'Loading annotations…'}</div>}</section>
         <aside className="candidate-sidebar"><h3>Review queue</h3><label className="candidate-filter">Find a candidate<input aria-label="Find review candidate" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Name, UTC date, beam"/></label>
           <p className="candidate-list-note">Queue stays fixed while you review. {queue.filter(e=>{const v=mine(e.name);return v&&v.quality!=='unreviewed';}).length} reviewed by you.</p>
@@ -148,14 +147,17 @@ export function CandidateAnnotations({events,useMock}:{events:CandEventRow[];use
   </div>;
 }
 
-function CandidateReview({event,reviewer,writesEnabled,votes,blind,merge,onBusy,onDirty,onPrevious,onNext,onSaved}:{event:CandEventRow;reviewer:Reviewer|null;writesEnabled:boolean;votes:Vote[];blind:boolean;merge:(votes:Vote[])=>void;onBusy:(busy:boolean)=>void;onDirty:(dirty:boolean)=>void;onPrevious:()=>void;onNext:()=>void;onSaved:()=>void}) {
-  const [detail,setDetail]=useState<ReviewDetail|null>(null),[error,setError]=useState(''),[status,setStatus]=useState('');
+function CandidateReview({event,reviewer,writesEnabled,votes,blind,merge,onBusy,onDirty,onPrevious,onNext,onSaved}:{event:CandEventRow;reviewer:Reviewer|null;writesEnabled:boolean;votes:Vote[];blind:boolean;merge:(votes:Vote[])=>void;onBusy:(busy:boolean)=>void;onDirty:(dirty:boolean)=>void;onPrevious:()=>void;onNext:()=>void;onSaved:(mode:'auto'|'next'|'stay')=>void}) {
+  const [detail,setDetail]=useState<ReviewDetail|null>(()=>reviewCache.peek(event.name)),[error,setError]=useState(''),[status,setStatus]=useState('');
   const [plotIndex,setPlotIndex]=useState(0),[imageReady,setImageReady]=useState(false),[busy,setBusy]=useState(false);
+  const [reviewReady,setReviewReady]=useState(false);
   const [note,setNote]=useState(''),[morphology,setMorphology]=useState<string[]>([]),[rfiPresent,setRfiPresent]=useState(false),[extra,setExtra]=useState(false);
   const own=votes.find(v=>v.reviewer_id===reviewer?.id);
   const [expected,setExpected]=useState(own?.revision??0);
   const [revealed,setRevealed]=useState(!blind);
   const pending=useRef<{request:Record<string,unknown>;fingerprint:string}|null>(null);
+  const loadId=useRef(0),plotHash=useRef(detail?.plots[0]?.sha256);
+  const votesRef=useRef(votes);votesRef.current=votes;
   const saving=useRef(false);
   const [dirty,setDirty]=useState(false);
   const changed=()=>{setDirty(true);onDirty(true);setStatus('Unsaved details');};
@@ -166,22 +168,29 @@ function CandidateReview({event,reviewer,writesEnabled,votes,blind,merge,onBusy,
   const reviewed=!!own&&own.quality!=='unreviewed';
   const showOthers=!blind||reviewed||revealed;
   useEffect(()=>{if(showOthers)setRevealed(true);},[showOthers]);
-  const load=useCallback(async()=>{
-    setError('');
+  const load=useCallback(async(force=false)=>{
+    const request=++loadId.current;
+    setError('');setReviewReady(false);
     try{
-      const result=await annotationGet<ReviewDetail>('/events/'+event.name);setDetail(result);merge(result.votes);
-      const v=result.votes.find(v=>v.reviewer_id===reviewer?.id);
+      const result=await reviewCache.get(event.name,force);
+      if(request!==loadId.current)return;
+      if(plotHash.current!==result.plots[0]?.sha256){setImageReady(false);plotHash.current=result.plots[0]?.sha256;}
+      setPlotIndex(0);
+      setDetail(result);merge(result.votes);
+      const v=mergeVotes(result.votes,votesRef.current).find(v=>v.reviewer_id===reviewer?.id);
       setExpected(v?.revision??0);setNote(v?.note??'');setMorphology(v?.morphology??[]);setRfiPresent(v?.rfi_present??false);
+      setExtra(v?.label==='rfi');
       setStatus('');setDirty(false);onDirty(false);
+      setReviewReady(true);
       pending.current=null;
-    }catch(e){setError((e as Error).message);}
+    }catch(e){if(request===loadId.current)setError((e as Error).message);}
   },[event.name,reviewer?.id,merge,onDirty]);
-  useEffect(()=>{void load();},[load]);
+  useEffect(()=>{void load();return()=>{++loadId.current;};},[load]);
   const plot=detail?.plots[plotIndex];
-  useEffect(()=>{setImageReady(false);},[plot?.sha256]);
-  const save=async(label:Classification|null,action='assess',cannot=false,detailsOnly=false)=>{
-    if(saving.current||!reviewer||!detail||!writesEnabled)return;
+  const save=async(label:Classification|null,action='assess',cannot=false,detailsOnly=false,finishRfi=false)=>{
+    if(saving.current||!reviewer||!detail||!writesEnabled||!reviewReady)return;
     if(action==='assess'&&!cannot&&(!plot||!imageReady))return;
+    if(action==='assess'&&label==='rfi')setExtra(true);
     const value={reviewer_id:reviewer.id,expected_revision:expected,label,action,quality:cannot?'cannot_assess':'usable',
       note,morphology:label==='rfi'||rfiPresent?morphology:[],rfi_present:rfiPresent,others_revealed:revealed||showOthers,
       plot:plot?.filename??null,plot_sha256:plot?.sha256??null};
@@ -190,11 +199,11 @@ function CandidateReview({event,reviewer,writesEnabled,votes,blind,merge,onBusy,
     saving.current=true;setBusy(true);onBusy(true);setError('');setStatus('Saving…');
     try{
       const result=await annotationPost<{votes:Vote[];revision:number;backup_warning?:string}>('/events/'+event.name,pending.current.request,detail.csrf_token);
-      merge(result.votes);setExpected(result.revision);pending.current=null;
+      merge(result.votes);reviewCache.updateVotes(event.name,result.votes);setExpected(result.revision);pending.current=null;
       const v=result.votes.find(v=>v.reviewer_id===reviewer.id);setNote(v?.note??'');setMorphology(v?.morphology??[]);setRfiPresent(v?.rfi_present??false);
       setDirty(false);onDirty(false);setStatus(action==='undo'?'Undone · saved':'Saved');if(result.backup_warning)setError(result.backup_warning);
       // Release navigation before optional advance; double clicks remain guarded synchronously.
-      onBusy(false);if(action==='assess'&&!detailsOnly)onSaved();
+      onBusy(false);if(action==='assess'&&!detailsOnly)onSaved(finishRfi?'next':label==='rfi'?'stay':'auto');
     }catch(e){setError((e as Error).message);setStatus('Save failed');}
     finally{saving.current=false;setBusy(false);onBusy(false);}
   };
@@ -210,24 +219,27 @@ function CandidateReview({event,reviewer,writesEnabled,votes,blind,merge,onBusy,
     };
     document.addEventListener('keydown',key);return()=>document.removeEventListener('keydown',key);
   },[]);
-  const disabled=busy||!reviewer||!writesEnabled||!detail;
+  const disabled=busy||!reviewer||!writesEnabled||!detail||!reviewReady;
   return <article className="candidate-review-card">
     <header><div><h2>{event.name}</h2><time>{formatUtcStamp(event.event_utc)}</time><p>S/N {event.snr.toFixed(1)} · DM {event.dm.toFixed(1)} pc cm⁻³ · Beam {event.beam}</p></div><Link to={`/cands/${event.name}`}>Event details →</Link></header>
-    {detail&&detail.plots.length>1&&<label className="candidate-review-plot-select">Plot<select aria-label="Review plot" value={plotIndex} disabled={busy} onChange={e=>setPlotIndex(Number(e.target.value))}>{detail.plots.map((p,i)=><option key={p.sha256} value={i}>{p.filename}{p.retained?' · saved copy':''}</option>)}</select></label>}
-    {plot?<CandidateImage key={plot.sha256} url={plot.url} name={event.name} filename={plot.filename} onReady={()=>setImageReady(true)}/>:<p className="candidate-missing">{detail?'No saved plot. You can mark this candidate Cannot assess.':'Loading candidate…'}</p>}
+    {detail&&detail.plots.length>1&&<label className="candidate-review-plot-select">Plot<select aria-label="Review plot" value={plotIndex} disabled={busy} onChange={e=>{const i=Number(e.target.value);setImageReady(false);plotHash.current=detail.plots[i]?.sha256;setPlotIndex(i);}}>{detail.plots.map((p,i)=><option key={p.sha256} value={i}>{p.filename}{p.retained?' · saved copy':''}</option>)}</select></label>}
+    {plot?<CandidateImage key={plot.sha256} url={plot.url} name={event.name} filename={plot.filename} priority onReady={()=>setImageReady(true)}/>:<p className="candidate-missing">{detail?'No saved plot. You can mark this candidate Cannot assess.':'Loading candidate…'}</p>}
     <div className="candidate-classification-controls">
       {!reviewer&&<p>Enter your name above to start reviewing.</p>}
-      <div className="candidate-classification-buttons">{classifications.map((c,i)=><button key={c.value} className={`class-${c.value}`} title={c.hint} disabled={disabled||!imageReady} aria-pressed={own?.label===c.value&&reviewed} onClick={()=>{if(c.value==='rfi')setExtra(true);void save(c.value);}}>{c.label}<kbd>{i+1}</kbd></button>)}</div>
+      <div className="candidate-classification-buttons">{classifications.map((c,i)=><button key={c.value} className={`class-${c.value}`} title={c.hint} disabled={disabled||!imageReady} aria-pressed={own?.label===c.value&&reviewed} onClick={()=>void save(c.value)}>{c.label}<kbd>{i+1}</kbd></button>)}</div>
       <div className="candidate-review-save"><span role="status" className={status==='Save failed'?'failed':status.startsWith('Sav')||status.includes('saved')?'saved':''}>{status||(reviewed?`Your label: ${voteText(own!)}`:'Choose a label')}</span>
         <button disabled={disabled||!reviewed} onClick={()=>void save(null,'undo')}>Undo</button>
         <button disabled={disabled} aria-pressed={own?.quality==='cannot_assess'} onClick={()=>void save(null,'assess',true)}>Cannot assess</button>
       </div>
-      {error&&<p role="alert" className="candidate-review-error">{error} <button disabled={busy} onClick={()=>void load()}>Reload review</button></p>}
+      {error&&<p role="alert" className="candidate-review-error">{error} <button disabled={busy} onClick={()=>void load(true)}>Reload review</button></p>}
       <details open={extra} onToggle={e=>setExtra(e.currentTarget.open)}><summary>Details & note <span>optional</span></summary>
         <label><input type="checkbox" checked={rfiPresent} disabled={busy} onChange={e=>{setRfiPresent(e.target.checked);changed();}}/>RFI also present</label>
-        <div className="candidate-morphology">{[['narrowband','Narrowband'],['broadband','Broadband'],['swept','Swept / drifting'],['repeating','Repeating']].map(([v,t])=><label key={v}><input type="checkbox" disabled={busy} checked={morphology.includes(v)} onChange={e=>{setMorphology(old=>e.target.checked?[...old,v]:old.filter(x=>x!==v));changed();}}/>{t}</label>)}</div>
+        <div className="candidate-morphology">{rfiMorphologies.map(({value,label,hint})=><label key={value} title={hint}><input type="checkbox" disabled={busy} checked={morphology.includes(value)} onChange={e=>{setMorphology(old=>e.target.checked?[...old,value]:old.filter(x=>x!==value));changed();}}/>{label}</label>)}</div>
+        <small>Select any that apply. Frequency comb: spaced lines across frequency. Repeating: a pattern in time.</small>
         <label>Note<textarea aria-label="Annotation note" value={note} disabled={busy} onChange={e=>{setNote(e.target.value);changed();}} maxLength={2000} rows={2} placeholder="What stood out?"/></label>
-        <button disabled={disabled||!reviewed||own?.quality==='usable'&&!imageReady} onClick={()=>void save(own?.label??null,'assess',own?.quality==='cannot_assess',true)}>Save details</button><small>Choose a label to save a new review. Save details updates your existing review.</small>
+        <div className="candidate-detail-actions"><button disabled={disabled||!reviewed||own?.quality==='usable'&&!imageReady} onClick={()=>void save(own?.label??null,'assess',own?.quality==='cannot_assess',true)}>Save details</button>
+          {own?.label==='rfi'&&reviewed&&<button className="candidate-rfi-next" disabled={disabled||!imageReady} onClick={()=>{if(dirty)void save('rfi','assess',false,false,true);else onSaved('next');}}>Save RFI & next →</button>}
+        </div><small>{own?.label==='rfi'?'RFI is saved. Add optional details, then continue.':'Choose a label to save a new review. Save details updates your existing review.'}</small>
       </details>
       {showOthers?<CandidateBadges votes={votes} reviewerId={reviewer?.id}/>:<button className="candidate-reveal" onClick={()=>setRevealed(true)}>Show other reviewers’ labels</button>}
       <p className="candidate-review-help">1–6 label · ← → previous / next · U undo · Click the plot to zoom or download</p>
