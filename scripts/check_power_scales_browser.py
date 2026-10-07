@@ -24,7 +24,14 @@ def main():
         def shot(name):page.screenshot(path=str(output/name),timeout=15000)
         def fits_zoom():
             page.wait_for_timeout(250)
-            assert page.locator('.figure-zoom-viewport').evaluate('e=>e.scrollHeight<=e.clientHeight+2')
+            # Enlarged playback preserves the scientific frame's proportions;
+            # short viewports can scroll instead of flattening the plot.
+            modal = page.locator('.figure-modal')
+            dynamic = modal.locator('.vis-movie-dynamic-frame')
+            figure = dynamic if dynamic.count() else modal.locator('.snap-plot svg')
+            bounds = figure.bounding_box()
+            ratio = 16 / 9 if dynamic.count() else 324 / 192
+            assert abs(bounds['width'] / bounds['height'] - ratio) < .02, bounds
         def hover_power(scope):
             spectrum=scope.locator('.array-spectrum').first
             spectrum.locator('svg').hover()

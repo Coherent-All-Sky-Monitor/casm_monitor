@@ -50,7 +50,11 @@ magnification survive buffering; no old spectrum is shown under a new time.
 Download is disabled while loading and pauses before capturing a ready frame.
 Missing reads stay blank, gaps/settings changes stay labelled, and UTC/local/LST
 describe the selected antenna's board read. No additional hardware request or
-per-antenna manifest is introduced.
+per-antenna manifest is introduced. Enlarged playback uses the same 324:192
+spectrum frame as ordinary SNAP/visibility autos, including at display zoom.
+Short windows scroll instead of stretching the frame to a fixed screen height.
+The compact all-input grid retains its viewport-fit layout. Regression:
+`scripts/check_history_plot_aspect_browser.py`.
 
 Frequency and power axes stay fixed throughout an interval. Power limits cover
 every finite native channel of the selected inputs across that interval, with

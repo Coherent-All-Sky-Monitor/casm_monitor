@@ -80,6 +80,11 @@ magnification while buffering or seeking. Download pauses playback first so
 the saved title, clocks and pixels describe the same integration, and is disabled
 until that frame is buffered. Existing cache and baselines are reused, without
 additional per-baseline manifests.
+Enlarged dynamic spectra retain their 16:9 frame during playback and display
+zoom. Short windows scroll rather than compressing the plot vertically. This
+restores the proportions before the October 5 viewport-height override; the
+compact/SNAP/station grids and candidate classifier are unchanged. Regression:
+`scripts/check_history_plot_aspect_browser.py`.
 The enlarged view retains the saved clocks, axes and colourbar. **Open stored-pair
 detail** selects that exact historical window in the detailed inspector; its
 ascending stored-pair convention may reverse Imag/Phase relative to the movie.

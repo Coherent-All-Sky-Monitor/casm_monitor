@@ -188,7 +188,7 @@ function PlaybackDay({day,inputs,onDay,onClose,onSelect,preferences,onPreference
         {(manifest.error||error)&&<div role="alert">{manifest.error||error}{error&&<button onClick={retry}>Retry antenna read</button>}</div>}
       </div>}>
       <div className="snap-expanded" data-frame={ready?index:undefined} data-input-key={expanded.key}><p>{expanded.station??'Unassigned input'} · SNAP {expanded.snap} SLOT {expanded.slot} ADC {expanded.adc}</p>
-        {ready&&frame?<><SpectrumClocks at={boardFor(expanded)?.ts} lst={boardFor(expanded)?.lst}/><SnapPlot compact freq={frame.data.freq_mhz} values={boardFor(expanded)?.spectra_db?.[expanded.adc]??null} range={range} powerScale={powerScale}/>{boardFor(expanded)?.error&&<p>Saved board read unavailable.</p>}</>:<div className="snap-zoom-buffering">{status}</div>}
+        {ready&&frame?<><SpectrumClocks at={boardFor(expanded)?.ts} lst={boardFor(expanded)?.lst}/><SnapPlot freq={frame.data.freq_mhz} values={boardFor(expanded)?.spectra_db?.[expanded.adc]??null} range={range} powerScale={powerScale}/>{boardFor(expanded)?.error&&<p>Saved board read unavailable.</p>}</>:<div className="snap-zoom-buffering">{status}</div>}
       </div>
     </FigureZoom>}
   </section>;
