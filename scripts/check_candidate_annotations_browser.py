@@ -230,6 +230,18 @@ def main():
                 page.set_viewport_size({"width":width,"height":1100})
                 page.wait_for_timeout(150)
                 assert page.evaluate("document.documentElement.scrollWidth<=innerWidth+1"), width
+                # A viewport-height cap used to shrink the plot inside a wide white
+                # image box. Fill the review panel at the original aspect ratio.
+                dimensions=page.locator('.candidate-review-card > .candidate-image img').evaluate('''img => ({
+                    width:img.getBoundingClientRect().width,height:img.getBoundingClientRect().height,
+                    naturalWidth:img.naturalWidth,naturalHeight:img.naturalHeight,
+                    containerWidth:img.parentElement.getBoundingClientRect().width,
+                    maxHeight:getComputedStyle(img).maxHeight
+                })''')
+                assert dimensions['maxHeight']=='none', dimensions
+                assert abs(dimensions['width']-dimensions['containerWidth'])<1, dimensions
+                expected_height=dimensions['width']*dimensions['naturalHeight']/dimensions['naturalWidth']
+                assert abs(dimensions['height']-expected_height)<1, dimensions
             assert all("/api/candidate-annotations/" in path for path in writes), writes
             assert not errors, errors
             browser.close()

@@ -38,6 +38,9 @@ no descriptors. Previous/Next also use arrow keys;
 **Undo** (U) restores the previous assessment, retaining every revision. A return
 link stays available after automatic advance. Clicking the plot opens the common
 zoom/pan/download viewer. Shortcuts pause while typing or using that dialog.
+The classifier plot fills its panel width at the image's original aspect ratio.
+Its height follows the image; the page scrolls for tall figures. Labels and axes
+remain visible, with no cropping or horizontal stretching.
 
 **Details & note** contains optional Narrowband, Broadband, Bursty, Frequency
 comb, Swept/drifting and Repeating in time descriptors, an RFI-also-present flag,
