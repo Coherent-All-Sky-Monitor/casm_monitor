@@ -79,6 +79,13 @@ and zoom level; the companion history trend retains its compact strip layout.
 Its default and green borders follow inspected nonzero slots in the latest
 recorded deployed CB weights, not layout intent. All wired inputs remain in
 the nearby layout and Overview map. SNAP status/read-details include board IPs.
+`/cands` adds Browse/Classify with named independent reviewers, class-coloured
+badges, fixed queues, six label shortcuts, optional RFI details, undo and JSONL
+export. Saves use the separate annotation API; the event-detail page links to
+Classify instead of writing legacy pipeline labels. The reviewed PNG has a
+checksum-bound URL, the next two plots prefetch, and failed saves never advance.
+See `docs/candidate-annotations.md` for storage and verification.
+
 `/cands` shows 12 recent saved plots by default (6/12/24/48 selectable), a compact
 searchable right sidebar with show/hide toggles, and the shared image zoom.
 All spectrum panels share 374.9–500.1 MHz and a full-data power scale. The default

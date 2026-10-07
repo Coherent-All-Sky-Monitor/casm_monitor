@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { formatUtcStamp } from "../lib/statusSentence";
-import { candPlotUrl, getCandEvent, postCandLabel } from "../lib/api";
-import { mockCandPlotUrl, mockGetCandEvent, mockPostCandLabel } from "../lib/mockCands";
-import type { CandEventDetailResponse, CandLabel } from "../lib/types";
+import { candPlotUrl, getCandEvent } from "../lib/api";
+import { mockCandPlotUrl, mockGetCandEvent } from "../lib/mockCands";
+import type { CandEventDetailResponse } from "../lib/types";
 import { CandidateImage } from "../components/CandidateGallery";
 
 const POLL_MS = 15_000;
@@ -25,8 +25,8 @@ export default function CandEventPage() {
   const api = useMemo(
     () =>
       useMock
-        ? { event: mockGetCandEvent, plotUrl: mockCandPlotUrl, label: mockPostCandLabel }
-        : { event: getCandEvent, plotUrl: candPlotUrl, label: postCandLabel },
+        ? { event: mockGetCandEvent, plotUrl: mockCandPlotUrl }
+        : { event: getCandEvent, plotUrl: candPlotUrl },
     [useMock],
   );
 
@@ -48,31 +48,6 @@ export default function CandEventPage() {
     return () => clearInterval(timer);
   }, [load]);
 
-  const [note, setNote] = useState("");
-  const [labelling, setLabelling] = useState(false);
-  const [labelError, setLabelError] = useState<string | null>(null);
-
-  const handleLabel = useCallback(
-    (value: CandLabel) => {
-      if (labelling) return;
-      setLabelling(true);
-      setLabelError(null);
-      api
-        .label(name, value, note)
-        .then((res) => {
-          setLabelling(false);
-          if (!res.ok) {
-            setLabelError(res.detail ?? "the label failed to save");
-            return;
-          }
-          setNote("");
-          load();
-        })
-        .catch(() => setLabelling(false));
-    },
-    [api, labelling, name, note, load],
-  );
-
   if (loadError) {
     return (
       <div>
@@ -89,7 +64,6 @@ export default function CandEventPage() {
   }
 
   const ev = detail.event as Record<string, unknown>;
-  const currentLabel = detail.labels[0]?.label ?? null;
 
   return (
     <div>
@@ -97,6 +71,7 @@ export default function CandEventPage() {
         back to Candidates
       </button>
       <h2 className="detail__title">{name}</h2>
+      <p><Link to={`/cands?mode=classify&review=${encodeURIComponent(name)}${useMock?'&mock=1':''}`}>Classify this candidate →</Link></p>
       <p className="note">{detail.data_status}</p>
 
       {detail.plots.length > 0 ? (
@@ -156,28 +131,8 @@ export default function CandEventPage() {
       </section>
 
       <section className="cal-section">
-        <h2 className="cal-section__title">Label</h2>
-        <p className="note">current label: {currentLabel ?? "none"}</p>
-        <div className="label-row">
-          {detail.label_choices.map((choice) => (
-            <button
-              key={choice}
-              type="button"
-              className={`text-button${choice === currentLabel ? " selected" : ""}`}
-              disabled={labelling}
-              onClick={() => handleLabel(choice)}
-            >
-              {choice}
-            </button>
-          ))}
-          <input
-            type="text"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="note (optional)"
-          />
-        </div>
-        {labelError && <p style={{ color: "var(--alert)" }}>{labelError}</p>}
+        <h2 className="cal-section__title">Earlier pipeline labels</h2>
+        <p className="note">New per-person reviews are saved in Classify.</p>
 
         {detail.labels.length > 0 && (
           <table className="cal-table" style={{ marginTop: 16 }}>

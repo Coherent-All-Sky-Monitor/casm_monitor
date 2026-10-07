@@ -15,6 +15,7 @@ Click plots to enlarge and zoom.
 - [Frontend build and checks](frontend/README.md)
 - [SNAP spectra, stored history and acquisition status](docs/snap-spectra.md)
 - [Candidate gallery and API](docs/api-cands.md)
+- [Candidate classification and training records](docs/candidate-annotations.md)
 
 The [Calibration workspace](docs/calibration-workspace.md) provides saved solar
 solves, phase and transit checks, and 512-beam CB/IB generation with an ellipse
@@ -59,7 +60,8 @@ SNAPs: hourly full-band spectra and PPS timing, with active beamforming inputs i
 
 ![SNAP spectra](docs/screenshots/2026-09-25-latest/snaps.png)
 
-Candidates: recent plots with a right-hand selector; click a row to show or hide it.
+Candidates: Browse the plot grid or Classify with your name, per-person badges
+and saved training records. Click a selector row to show or hide its plot.
 
 ![Candidates](docs/screenshots/2026-09-25-latest/candidates.png)
 

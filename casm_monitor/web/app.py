@@ -179,14 +179,16 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
         local_route = re.fullmatch(r"/api/(?:science/(?:render|transit)|snap-workspace/(?:render|acquire)|review(?:/[A-Za-z0-9_-]+/request)?|commissioning/(?:stage|[0-9a-f]{32}/start))", request.url.path)
         calibration_route = re.fullmatch(r"/api/calibration/(?:builds|import-reference|builds/[A-Za-z0-9_.-]+/(?:actions|review|trial|subtraction|export)|jobs/[0-9]+/cancel|deployment/builds/[A-Za-z0-9_.-]+/stage)", request.url.path)
         upload_route = re.fullmatch(r'/api/calibration/deployment/builds/[A-Za-z0-9_.-]+/upload', request.url.path)
+        annotation_route = re.fullmatch(r'/api/candidate-annotations/(?:reviewers|events/\d{6}[a-zA-Z0-9]{4,6})', request.url.path)
         if workspace and upload_route and calibration_settings.allow_upload:
             calibration_route = upload_route
-        local_route = local_route or calibration_route
+        local_route = local_route or calibration_route or annotation_route
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             if read_only or local_route:
                 allowed = workspace and request.method == "POST" and re.fullmatch(
                     r"/api/(?:science/(?:render|transit)|snap-workspace/(?:render|acquire)|review(?:/[A-Za-z0-9_-]+/request)?|commissioning/(?:stage|[0-9a-f]{32}/start))", request.url.path)
                 allowed = allowed or (workspace and request.method == 'POST' and calibration_route)
+                allowed = allowed or (workspace and request.method == 'POST' and annotation_route)
                 origin = f"{request.url.scheme}://{request.url.netloc}"
                 safe_origin = request.url.hostname in {"localhost", "127.0.0.1", "::1", "testserver"} and request.headers.get("origin") == origin
                 if not allowed or not safe_origin or request.headers.get("x-casm-workspace") != "1":
@@ -230,6 +232,8 @@ def create_app(settings: Settings | None = None, *, read_only: bool = False) -> 
     # t3-web's app itself is never mounted). No reader/writer handle: it opens
     # the T2 sqlite directly through casm_t3's own helpers.
     app.include_router(build_cands_router(settings))
+    from .candidate_annotations import build_router as build_candidate_annotations_router
+    app.include_router(build_candidate_annotations_router(settings))
 
     def status_payload() -> dict[str, Any]:
         return build_status(reader.latest_scalars(), settings.cadences)

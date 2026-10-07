@@ -89,6 +89,9 @@ class Settings:
     # Candidates tab (M5): T2/T3's plot/meta tree, same directory casm_t3's
     # web app reads (its ``CANDIDATES_DIR``).
     candidates_dir: Path = Path("/mnt/nvme5/casm_pipeline/candidates")
+    # Durable human labels and retained training examples, never the T2 ledger.
+    candidate_annotations_root: Path | None = None
+    candidate_archive_root: Path = Path("/mnt/nvme3/T3/EVENTS")
     registry_dir: Path = Path("/mnt/nvme5/casm_pipeline/weights/registry")
     deployed_weights_csv: Path = Path("/home/casm/software/dev/casm-wiki/deployed_weights.csv")
     medusa_cfg: Path = Path("/home/casm/software/fourier-space/opt/casm/share/common/medusa.cfg")
@@ -251,6 +254,8 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         hella_cands_dir=Path(paths.get("hella_cands_dir", defaults.hella_cands_dir)),
         t2_db=Path(paths.get("t2_db", defaults.t2_db)),
         candidates_dir=Path(paths.get("candidates_dir", defaults.candidates_dir)),
+        candidate_annotations_root=Path(paths["candidate_annotations_root"]) if paths.get("candidate_annotations_root") else None,
+        candidate_archive_root=Path(paths.get("candidate_archive_root", defaults.candidate_archive_root)),
         registry_dir=Path(paths.get("registry_dir", defaults.registry_dir)),
         deployed_weights_csv=Path(paths.get("deployed_weights_csv", defaults.deployed_weights_csv)),
         medusa_cfg=Path(paths.get("medusa_cfg", defaults.medusa_cfg)),
@@ -319,6 +324,8 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         kw["store_root"] = Path(os.environ["CASM_MONITOR_STORE_ROOT"])
     if os.environ.get("CASM_MONITOR_OBSERVATION_ROOT"):
         kw["observation_cache_root"] = Path(os.environ["CASM_MONITOR_OBSERVATION_ROOT"])
+    if os.environ.get("CASM_MONITOR_CANDIDATE_ANNOTATIONS_ROOT"):
+        kw["candidate_annotations_root"] = Path(os.environ["CASM_MONITOR_CANDIDATE_ANNOTATIONS_ROOT"])
     if os.environ.get("CASM_MONITOR_WEB_HOST"):
         kw["web_host"] = os.environ["CASM_MONITOR_WEB_HOST"]
     if os.environ.get("CASM_MONITOR_WEB_PORT"):

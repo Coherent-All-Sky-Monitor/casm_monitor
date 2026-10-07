@@ -11,8 +11,15 @@ reads: `/mnt/nvme5/casm_pipeline/db/t2.sqlite`,
 module docstring for why t3-web's Jinja app is never mounted directly
 (absolute redirects, a write path that must stay singular).
 
-t3-web stays up on `:8050` until this tab is verified against the live
-store, then is retired (`docs/plan.md`).
+The legacy t3-web service on `:8050` was retired September 25, 2026.
+The 8061 Candidates page reads these event/plot APIs directly.
+
+Human classification now uses a separate monitor-owned database and
+`/api/candidate-annotations`, documented in
+[Candidate classification](candidate-annotations.md). Browse/Classify, named
+reviewers, independent badges, six classes, optional RFI details and append-only
+undo are separate from the historical pipeline-label API below. The legacy
+label write remains blocked by 8061's operational-write guard.
 
 All timestamps are the T2 database's own ISO-8601 strings
 (`"2026-09-09T12:00:00.000"`, no `Z`, millisecond precision, UTC) unless

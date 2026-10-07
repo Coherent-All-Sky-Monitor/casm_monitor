@@ -5,19 +5,21 @@ import { mockCandPlotUrl } from '../lib/mockCands';
 import { formatUtcStamp } from '../lib/statusSentence';
 import type { CandEventRow } from '../lib/types';
 import { FigureZoom } from './FigureZoom';
+import { CandidateBadges } from './CandidateAnnotations';
+import type { Vote } from '../lib/candidateAnnotations';
 import '../candidate-gallery.css';
 
-export function CandidateImage({url,name,filename}:{url:string;name:string;filename:string}) {
+export function CandidateImage({url,name,filename,onReady}:{url:string;name:string;filename:string;onReady?:()=>void}) {
   const [open,setOpen]=useState(false),[failed,setFailed]=useState(false);
   return <>{failed?<p className="candidate-missing" role="status">Saved plot unavailable. The file may have moved or expired.</p>:
     <button className="candidate-image" aria-label={`Enlarge candidate ${name} ${filename}`} onClick={()=>setOpen(true)}>
-      <img src={url} alt={`Candidate ${name} · ${filename}`} width="1600" height="1600" loading="lazy" decoding="async" onError={()=>setFailed(true)}/>
+      <img src={url} alt={`Candidate ${name} · ${filename}`} width="1600" height="1600" loading="lazy" decoding="async" onLoad={onReady} onError={()=>setFailed(true)}/>
     </button>}
     {open&&<FigureZoom title={`Candidate ${name}`} onClose={()=>setOpen(false)} actions={<a href={url} target="_blank" rel="noreferrer">Open original PNG ↗</a>}><img src={url} alt={`Candidate ${name} · ${filename}`} draggable={false}/></FigureZoom>}
   </>;
 }
 
-export function CandidateGallery({events,useMock}:{events:CandEventRow[];useMock:boolean}) {
+export function CandidateGallery({events,useMock,votes={},reviewerId,onClassify}:{events:CandEventRow[];useMock:boolean;votes?:Record<string,Vote[]>;reviewerId?:string;onClassify?:(name:string)=>void}) {
   const [count,setCount]=useState(12),[pinned,setPinned]=useState<string[]|null>(null),[focused,setFocused]=useState<string|null>(null),[search,setSearch]=useState('');
   const [files,setFiles]=useState<Record<string,string>>({});
   const available=events.filter(e=>e.plots?.length);
@@ -50,7 +52,7 @@ export function CandidateGallery({events,useMock}:{events:CandEventRow[];useMock
           <header><div><h3>{e.name}</h3><time>{formatUtcStamp(e.event_utc)}</time></div><button aria-label={`Hide candidate ${e.name}`} onClick={()=>setPinned(names.filter(n=>n!==e.name))}>×</button></header>
           <p className="candidate-card-metrics">S/N {e.snr.toFixed(1)} · DM {e.dm.toFixed(1)} pc cm⁻³ · Beam {e.beam}</p>
           {filename?<CandidateImage key={filename} url={plotUrl(e.name,filename)} name={e.name} filename={filename}/>:<p className="candidate-missing">No saved plot · {e.outcome??'plot not available'}</p>}
-          <footer><Link to={`/cands/${encodeURIComponent(e.name)}${suffix}`}>Event details →</Link>{plots.length>1&&<label>Plot<select aria-label={`Plot for ${e.name}`} value={filename} onChange={v=>setFiles(f=>({...f,[e.name]:v.target.value}))}>{plots.map(p=><option key={p}>{p}</option>)}</select></label>}<span>{e.label??e.outcome??''}</span></footer>
+          <footer>{onClassify&&<button className="candidate-classify-link" onClick={()=>onClassify(e.name)}>Classify</button>}<Link to={`/cands/${encodeURIComponent(e.name)}${suffix}`}>Event details →</Link>{plots.length>1&&<label>Plot<select aria-label={`Plot for ${e.name}`} value={filename} onChange={v=>setFiles(f=>({...f,[e.name]:v.target.value}))}>{plots.map(p=><option key={p}>{p}</option>)}</select></label>}<span>{e.outcome??''}</span><CandidateBadges votes={votes[e.name]} reviewerId={reviewerId}/></footer>
         </article>;
       })}</div>
     </section>
@@ -60,7 +62,7 @@ export function CandidateGallery({events,useMock}:{events:CandEventRow[];useMock
       <div className="candidate-list">{results.map(e=>{const index=names.indexOf(e.name);return <button key={e.name} data-name={e.name} className={`candidate-list-item${index>=0?' shown':''}${focused===e.name?' focused':''}`} aria-pressed={index>=0} onClick={()=>select(e.name)}>
         <span className="candidate-list-title"><strong>{e.name}</strong>{index>=0&&<b>Shown {index+1}</b>}</span><time>{formatUtcStamp(e.event_utc)}</time>
         <span>S/N {e.snr.toFixed(1)} · DM {e.dm.toFixed(1)} · B{e.beam}</span>
-        <small>{e.label??e.outcome??'Unlabelled'}{!e.plots?.length?' · No plot':''}</small>
+        <small>{e.outcome??''}{!e.plots?.length?' · No plot':''}</small><CandidateBadges votes={votes[e.name]} reviewerId={reviewerId}/>
       </button>;})}{!results.length&&<p>No candidates match this search.</p>}</div>
       <p className="candidate-list-note">Up to 500 filtered events. No plot is not a non-detection.</p>
     </details></aside>

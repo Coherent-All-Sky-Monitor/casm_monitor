@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Panel from "../components/Panel";
 import Segmented from "../components/Segmented";
-import { CandidateGallery } from "../components/CandidateGallery";
+import { CandidateAnnotations } from "../components/CandidateAnnotations";
 import { ProductImage } from "../components/Workspace";
 import { useUrlParam } from "../lib/useUrlParam";
 import { formatUtcStamp } from "../lib/statusSentence";
@@ -70,7 +70,6 @@ export default function CandsPage() {
   const [section] = useUrlParam("section", "events");
   const [cview] = useUrlParam("cview", "candidates");
   const [tier] = useUrlParam("tier", "");
-  const [label] = useUrlParam("label", "");
   const [hours] = useUrlParam("hours", "24");
 
   // --- events -----------------------------------------------------------
@@ -85,7 +84,7 @@ export default function CandsPage() {
       if(busy)return;
       busy=true;
       api
-        .events({ tier: tier || undefined, tag: label || undefined, view: cview as "candidates" | "all", include_plots:true })
+        .events({ tier: tier || undefined, view: cview as "candidates" | "all", include_plots:true })
         .then((r) => {if(!cancelled){setEvents(r.events);setEventsLoaded(true);setEventsError('');}})
         .catch(() => {if(!cancelled)setEventsError('Candidate refresh failed. Previously loaded events may be stale.');})
         .finally(()=>{busy=false;});
@@ -96,7 +95,7 @@ export default function CandsPage() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [api, section, tier, label, cview]);
+  }, [api, section, tier, cview]);
 
   // --- stats --------------------------------------------------------------
   const [stats, setStats] = useState<CandStatsResponse | null>(null);
@@ -155,7 +154,7 @@ export default function CandsPage() {
             { value: "events", label: "events" },
             { value: "stats", label: "stats" },
             { value: "injections", label: "injections" },
-            { value: "frbs", label: "frbs" },
+            { value: "frbs", label: "FRB catalog" },
           ]}
         />
         {section === "events" && (
@@ -178,17 +177,6 @@ export default function CandsPage() {
                 { value: "C", label: "C" },
               ]}
             />
-            <Segmented
-              paramKey="label"
-              defaultValue=""
-              options={[
-                { value: "", label: "any label" },
-                { value: "frb", label: "frb" },
-                { value: "pulsar", label: "pulsar" },
-                { value: "rfi", label: "rfi" },
-                { value: "unsure", label: "unsure" },
-              ]}
-            />
           </>
         )}
         {section === "stats" && <Segmented paramKey="hours" defaultValue="24" options={HOURS_OPTIONS} />}
@@ -201,7 +189,7 @@ export default function CandsPage() {
           </p>
           {eventsError&&<p role="status" className="workspace-notice">{eventsError}</p>}
           {!eventsLoaded&&!eventsError?<p className="note">Loading candidates…</p>:
-            <CandidateGallery key={`${cview}/${tier}/${label}/${useMock}`} events={events} useMock={useMock}/>}
+            <CandidateAnnotations key={`${cview}/${tier}/${useMock}`} events={events} useMock={useMock}/>}
         </div>
       )}
 

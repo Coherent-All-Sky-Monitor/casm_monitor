@@ -3,15 +3,14 @@
 
 import type { CandEventRow, CandNowSnapshot, CandStatsResponse } from "./types";
 
-/** "42 events in the last window, 6 tier A, 30 dumped, 5 labelled." */
+/** Candidate acquisition counts; human review counts come from annotations. */
 export function eventsSentence(rows: CandEventRow[]): string {
   if (rows.length === 0) return "No events match this filter.";
   const tierA = rows.filter((r) => r.tier === "A").length;
   const dumped = rows.filter((r) => r.outcome === "dumped").length;
-  const labelled = rows.filter((r) => r.label !== null).length;
   return (
     `${rows.length} event${rows.length === 1 ? "" : "s"}, ${tierA} tier A, ` +
-    `${dumped} dumped, ${labelled} labelled.`
+    `${dumped} dumped.`
   );
 }
 
