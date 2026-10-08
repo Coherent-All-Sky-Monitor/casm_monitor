@@ -19,15 +19,15 @@ function display(value:string, zone:string, part:'date'|'time') {
 export function CurrentCalibration({value}:{value:Json|null}) {
   const [zone,setZone]=useState('America/Los_Angeles');
   return <section className="cal-current" aria-label="Current deployed calibration">
-    <div className="cal-section-heading"><h3>Current deployed calibration</h3><div className="cal-current-zones">
+    <div className="cal-section-heading"><h3>Current deployed calibration</h3><div className="cal-current-zones" role="group" aria-label="Current calibration time zone">
       <button aria-pressed={zone!=='UTC'} onClick={()=>setZone('America/Los_Angeles')}>OVRO local</button>
       <button aria-pressed={zone==='UTC'} onClick={()=>setZone('UTC')}>UTC</button>
     </div></div>
     {value&&!value.unavailable?<>
       <div className="cal-current-grid">
-        <div><span>Calibrator · {value.source==='sun'?'Sun':value.source}</span><strong>{display(value.source_window[0],zone,'date')}</strong><small>Calibration observation</small></div>
-        <div><span>Solve window</span><strong className="cal-current-time">{display(value.source_window[0],zone,'time').replace(/ (PDT|PST|UTC)$/,'')} – {display(value.source_window[1],zone,'time')}</strong><small>{value.antennas?.length} calibration antennas</small></div>
-        <div><span>Last uploaded</span><strong>{display(value.date_uploaded,zone,'date')}</strong><small>{display(value.date_uploaded,zone,'time')}</small></div>
+        <div className="cal-current-card"><span>Calibrator</span><strong>{value.source==='sun'?'Sun':value.source}</strong><small>{display(value.source_window[0],zone,'date')} · {value.antennas?.length} antennas</small></div>
+        <div className="cal-current-card"><span>Solve window</span><strong className="cal-current-time"><time dateTime={parsed(value.source_window[0])}>{display(value.source_window[0],zone,'time').replace(/ (PDT|PST|UTC)$/,'')}</time>{' – '}<time dateTime={parsed(value.source_window[1])}>{display(value.source_window[1],zone,'time')}</time></strong><small>{display(value.source_window[0],zone,'date')}{display(value.source_window[0],zone,'date')!==display(value.source_window[1],zone,'date')&&` – ${display(value.source_window[1],zone,'date')}`}</small></div>
+        <div className="cal-current-card"><span>Last uploaded</span><strong><time dateTime={parsed(value.date_uploaded)}>{display(value.date_uploaded,zone,'date')}</time></strong><small>{display(value.date_uploaded,zone,'time')}</small></div>
       </div>
     </>:<Notice>{value?.reason??'Loading recorded deployment…'}</Notice>}
   </section>;

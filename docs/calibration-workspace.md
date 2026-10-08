@@ -16,10 +16,14 @@ not count as a new solve/grid; green sky validation means a saved independent
 transit to review, not scientific acceptance. Export & deploy turns green after
 local payload checks pass and says **not uploaded** until a successful upload
 receipt exists. Transfer success still requires separate runtime verification.
-The Prepare header has large **Current deployed calibration** cards for the
-calibrator/observation date, solve window and last upload date/time. OVRO local
+The Prepare header has three **Current deployed calibration** cards matching
+Overview's dark clock panels: Calibrator, Solve window and Last uploaded.
+Large values, aligned captions and separate dated time labels keep the recorded
+observation distinct from the upload; the cards stack on narrow screens. OVRO local
 is the default, with a UTC toggle. These follow the ledger's bound report and
 stay fixed when a trial date changes; missing metadata is labelled unavailable.
+`scripts/check_calibration_cards_browser.py` checks the served cards, local/UTC
+date boundaries and 320–1600 px layouts while blocking all write requests.
 From Solve & inspect onward, a persistent bottom bar provides **Proceed to…**
 and **Back to…** controls. It shows the selected subtraction mode and antenna
 count, and returns the view/focus to the next step's heading. Navigation retains
