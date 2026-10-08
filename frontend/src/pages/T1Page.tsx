@@ -5,6 +5,9 @@ import { Evidence, initialWindow, isoInput, Json, Notice, SaveInvestigation, Tim
 import {useCachedResource, useTabState} from '../components/CachedResource';
 import {localStamp} from '../components/OverviewPlots';
 import "../search.css";
+import {useDelayedBusy,usePreparedView} from '../components/RefreshState';
+
+const searchImages=(data:Json)=>[data.plot_url??`/api/t1/plot.png?${new URLSearchParams({t0:data.t0,t1:data.t1,time_tz:data.time_tz})}`];
 
 function ageText(seconds: number | null | undefined) {
   if (seconds == null) return "no gulps";
@@ -25,8 +28,10 @@ export default function T1Page() {
   const [zone,setZone]=useTabState(selectionKey+'.zone',params.get('time_tz')==='UTC'?'UTC':LOCAL),[rolling,setRolling]=useTabState(selectionKey+'.rolling',!params.has('t0'));
   const [zoom,setZoom]=useState<{url:string;query:string}|null>(null);
   const requested=new URLSearchParams({t0:isoInput(window.t0),t1:isoInput(window.t1),time_tz:zone}).toString();
-  const {data,error,busy,refresh:load}=useCachedResource('/api/t1?'+requested,0,{maxAge:300000,debounce:150,keepPrevious:rolling});
-  const status=useCachedResource('/api/t1/status',30000,{allowStale:false});
+  const {data:loaded,error:readError,busy:reading,refresh:load}=useCachedResource('/api/t1?'+requested,0,{maxAge:300000,debounce:150,keepPrevious:rolling});
+  const {shown:data,preparing,error:imageError}=usePreparedView(loaded,searchImages);
+  const busy=reading||preparing,updating=useDelayedBusy(busy),error=readError||imageError;
+  const status=useCachedResource('/api/t1/status',30000,{allowStale:false,staleAfter:120000});
   useEffect(()=>{if(!rolling)return;const update=()=>{if(!document.hidden&&Date.now()-Date.parse(isoInput(window.t1))>=300000)setWindow(initialWindow());};update();const timer=globalThis.setInterval(update,30000);return()=>globalThis.clearInterval(timer);},[rolling,window.t1,setWindow]);
   const query=data?new URLSearchParams({t0:data.t0,t1:data.t1,time_tz:data.time_tz}).toString():requested;
   const statusFresh=!status.error&&status.data?.ledger?.last_tick_unix!=null&&Date.now()/1000-status.data.ledger.last_tick_unix<=120;
@@ -39,7 +44,7 @@ export default function T1Page() {
     <div className="control-surface">
       <div className="field-row"><TimeZone value={zone} onChange={setZone}/><button onClick={()=>{setRolling(true);setWindow(initialWindow());}}>Live · rolling 24 h</button><span>{rolling?"Updates every 5 minutes":"Historical interval"}</span></div>
       <TimeWindow value={window} timeZone={zone} onChange={w=>{setRolling(false);setWindow(w);}}/>
-      <button className="primary" disabled={busy} onClick={load}>{busy?"Loading stream evidence…":"Inspect interval"}</button>
+      <button className="primary" disabled={busy} onClick={load}>Inspect interval</button><span className="refresh-status" role="status">{updating?'Updating…':''}</span>
     </div>
     {error&&<Notice>{error}</Notice>}
     {status.error&&<Notice>Stream status refresh failed. Current state is unknown.</Notice>}
@@ -58,7 +63,7 @@ export default function T1Page() {
     </>}
     {data&&<>
       <figure className="plot-surface">
-        <figcaption>Stream, beam and DM candidate counts · {localStamp(data.t0,data.time_tz)} – {localStamp(data.t1,data.time_tz)} · {data.time_tz==="UTC"?"UTC":"OVRO local (PDT/PST)"}{busy?' · Updating…':' · click to enlarge'}</figcaption>
+        <figcaption>Stream, beam and DM candidate counts · {localStamp(data.t0,data.time_tz)} – {localStamp(data.t1,data.time_tz)} · {data.time_tz==="UTC"?"UTC":"OVRO local (PDT/PST)"} · click to enlarge</figcaption>
         <button type="button" className="plot-image-trigger" aria-label="Enlarge Search (T1) plots" onClick={()=>setZoom({url:plotUrl,query})}>
           <img src={plotUrl} alt="Hella candidate counts by stream, beam and DM over time, with width and DM histograms"/>
         </button>

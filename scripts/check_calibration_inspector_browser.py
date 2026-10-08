@@ -29,7 +29,7 @@ def main():
         page.goto('http://127.0.0.1:8061/cal/sun_20260930_200911',wait_until='domcontentloaded')
         page.locator('#cal-autos .cal-antenna-panel').first.wait_for(timeout=60000)
         def ready():
-            page.wait_for_function('!document.querySelector(".cal-view-pending")')
+            page.wait_for_function('document.querySelector(".cal-saved-view")?.getAttribute("aria-busy")==="false"')
         ready()
         assert page.locator('#cal-autos .cal-antenna-panel').count()==16
         assert page.locator('#cal-cross .cal-antenna-panel').count()==15

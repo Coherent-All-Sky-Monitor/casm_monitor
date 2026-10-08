@@ -10,10 +10,11 @@ function StatusBox({title,status}:{title:string;status:Json}) {
   </div>;
 }
 
-export function SnapHealth({data,error}:{data:Json|null;error:string}) {
+export function SnapHealth({data,error,expired=false}:{data:Json|null;error:string;expired?:boolean}) {
   return <section className="snap-health-section" aria-label="SNAP live status">
     {error&&<p role="status">Status refresh failed. Current state is unknown.</p>}
-    {!data&&!error&&<p>Reading saved status…</p>}
+    {!error&&expired&&<p role="status">Status refresh is overdue. Current state is unknown.</p>}
+    {!data&&!error&&!expired&&<p>Reading saved status…</p>}
     <div className="snap-health-strip">{(data?.boards??[]).map((b:Json)=>{
       const pps=b.timing_status??b.pps_status;
       return <div className="snap-health-chip" key={b.ip}>

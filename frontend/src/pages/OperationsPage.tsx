@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Evidence, initialWindow, isoInput, Json, LOCAL, Notice, TimeWindow, TimeZone } from "../components/Workspace";
 import {useCachedResource, useTabState} from '../components/CachedResource';
+import {usePreparedView} from '../components/RefreshState';
+
 import { InjectionPanel, localStamp, OverviewImage, VisibilityPreview } from "../components/OverviewPlots";
 import { FigureZoom } from "../components/FigureZoom";
 import { snapHealthLabel } from "../components/SnapHealth";
@@ -10,9 +12,11 @@ import { location, wiringLabel } from "../components/vis/ArrayPlots";
 import telescopePhoto from "../assets/casm-telescope.jpg";
 import "../overview.css";
 
+const activityImages=(value:Json)=>value.activity_plot_url?[value.activity_plot_url]:[];
+
 type Health = "ok"|"late"|"silent"|"unknown"|"yellow"|"orange";
 function useLive(url:string,period=30000) {
-  return useCachedResource(url,period,{allowStale:false});
+  return useCachedResource(url,period,{allowStale:false,staleAfter:120000});
 }
 function secondsSince(value:string|number|null|undefined,now:number) {if(value==null)return null;const t=typeof value==='number'?value*1000:Date.parse(value);return Number.isFinite(t)?Math.max(0,(now-t)/1000):null;}
 function ageText(seconds:number|null) {return seconds==null?'Unknown':seconds<90?`${Math.round(seconds)} s`:`${Math.round(seconds/60)} min`;}
@@ -44,7 +48,9 @@ export default function OperationsPage() {
   useEffect(()=>{const timer=globalThis.setInterval(()=>{if(!document.hidden)setNow(Date.now());},10000);return()=>globalThis.clearInterval(timer);},[]);
   useEffect(()=>{if(!rolling)return;const update=()=>{if(!document.hidden&&Date.now()-Date.parse(isoInput(window.t1))>=120000)setWindow(initialWindow());};update();const timer=globalThis.setInterval(update,30000);return()=>globalThis.clearInterval(timer);},[rolling,window.t1,setWindow]);
   const {data:history,error:historyError}=useCachedResource('/api/observation/injections?'+query,0,{maxAge:120000,debounce:150,keepPrevious:rolling});
-  const {data:activity,error:activityError}=useCachedResource('/api/t1?compact=true&'+query,0,{maxAge:120000,debounce:150,keepPrevious:rolling});
+  const {data:loadedActivity,error:activityReadError}=useCachedResource('/api/t1?compact=true&'+query,0,{maxAge:120000,debounce:150,keepPrevious:rolling});
+  const {shown:activity,error:activityImageError}=usePreparedView(loadedActivity,activityImages);
+  const activityError=activityReadError||activityImageError;
   const data=live.data,inj=data?.injections,c=inj?.counts??{};
   const liveAge=secondsSince(data?.clock?.utc,now),stateAge=secondsSince(data?.observation?.state?.observed_at,now),state=data?.observation?.state?.value;
   const obsHealth:Health=live.error?'late':stateAge==null||state==null?'unknown':stateAge>120?'late':state==='running'?'ok':'silent';
@@ -75,7 +81,7 @@ export default function OperationsPage() {
       </button>
     </div>
     {photoOpen&&<FigureZoom title="Coherent All Sky Monitor (CASM)" onClose={()=>setPhotoOpen(false)} actions={<><span>Owens Valley Radio Observatory · Big Pine, California</span><a href={telescopePhoto} target="_blank" rel="noreferrer">Original photo</a></>}><img src={telescopePhoto} width="4032" height="3024" alt="Coherent All Sky Monitor antennas at Owens Valley Radio Observatory"/></FigureZoom>}
-    <div className="overview-section-label"><span>Live snapshot · Now</span><span>Checked every 30 s while visible</span></div>
+    <div className="overview-section-label"><span>Live snapshot · Now <span className="refresh-status" role="status">{live.updating||search.updating||snaps.updating?'Updating…':''}</span></span><span>Checked every 30 s while visible</span></div>
     <section className="overview-stats" aria-label="Live status">
       <Stat title="Observation" value={state??'Unknown'} note={`State checked ${ageText(stateAge)} ago`} status={obsHealth} label={obsHealth==='ok'?'Running':obsHealth==='late'?'Stale / check':obsHealth==='silent'?'Not running':'Unknown'} to="/readiness"/>
       <Stat title="Search streams" value={searchFresh?`${healthy} / 8`:'Unknown'} note="Streams with recent gulp evidence" status={searchHealth} label={searchHealth==='ok'?'All reporting':searchHealth==='late'?'Late / stale':searchHealth==='silent'?'Stream silent':'Unknown'} to="/search"/>
@@ -93,7 +99,7 @@ export default function OperationsPage() {
     <div className="overview-diagnostics"><section className="overview-panel overview-search"><div className="overview-panel-heading"><h3>Search activity</h3><span>8 streams</span></div>
       {activityError&&<Notice>{activityError}</Notice>}{!activity&&!activityError&&<p className="overview-loading">Loading search activity…</p>}
       {activity&&<>{activity.activity_plot_url?<OverviewImage src={activity.activity_plot_url} title="Search activity"/>:<Notice>Search figure unavailable.</Notice>}{activity.status==='partial'&&<Notice>{activity.reason}</Notice>}</>}
-      <div className="overview-panel-footer"><span>Purple: counts · red strips: cap warnings</span><Link to={'/search?'+query}>Search (T1) →</Link></div>
+      <div className="overview-panel-footer"><span>Purple: counts · red strips: cap warnings</span><Link to={'/search?'+(activity?new URLSearchParams({t0:activity.t0,t1:activity.t1,time_tz:activity.time_tz}):query)}>Search (T1) →</Link></div>
     </section><section className="overview-panel overview-visibility">{catalog.data?<VisibilityPreview catalog={catalog.data} t0={t0} t1={t1} zone={zone}/>:<Notice>{catalog.error||'Loading visibility context…'}</Notice>}</section></div>
     <details className="overview-records"><summary>Observation records</summary><Evidence value={{observation:data?.observation,injection_ledger:inj?.source,history_complete:history?.counts_complete,history_start:history?.window_start_utc,history_end:history?.window_end_utc,search_ledger:search.data?.ledger}}/><Link to="/cands">Candidates →</Link></details>
   </div>;

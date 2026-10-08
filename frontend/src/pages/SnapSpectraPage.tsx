@@ -45,16 +45,16 @@ export default function SnapSpectraPage() {
   const allAdcs=scope==='all';
   const [reading,setReading]=useState(false),[receipt,setReceipt]=useState(''),[error,setError]=useState('');
   const {data:acquisition,error:statusError}=useCachedResource('/api/snap-workspace/acquisition',10000);
-  const health=useCachedResource('/api/snap-workspace/health',30000,{allowStale:false});
-  const membership=useCachedResource('/api/snap-workspace/beamforming',30000,{allowStale:false});
+  const health=useCachedResource('/api/snap-workspace/health',30000,{allowStale:false,staleAfter:120000});
+  const membership=useCachedResource('/api/snap-workspace/beamforming',30000,{allowStale:false,staleAfter:120000});
   const membershipKnown=!membership.error&&membership.data?.status==='complete';
   const beamformingKeys=useMemo(()=>new Set<string>(membershipKnown?(membership.data?.inputs??[]).filter((i:Json)=>i.beamforming===true).map((i:Json)=>`${i.ip}/${i.adc}`):[]),[membershipKnown,membership.data]);
-  // Retain the displayed selection during membership revalidation, but remove
-  // its green membership claim until the new check succeeds.
+  // Retain selection on failures too, but expire the membership claim separately
+  // from routine revalidation so an hourly spectra update doesn't flash gray.
   const previousMembers=useRef(new Set<string>());
   if(membershipKnown)previousMembers.current=beamformingKeys;
   const revision=acquisition?.latest_job?.finished??'';
-  const {data:frame,error:frameError}=useSnapResource(mode==='live'?(acquisition||statusError?`/api/snap-workspace/spectra?v=${revision}`:null):selected?snapshotUrl(selected):null,mode==='live'&&!playback?60000:0);
+  const {data:frame,error:frameError,updating:frameUpdating}=useSnapResource(mode==='live'?(acquisition||statusError?`/api/snap-workspace/spectra?v=${revision}`:null):selected?snapshotUrl(selected):null,mode==='live'&&!playback?60000:0,mode==='live');
   const compare=useSnapResource(comparing&&comparison?snapshotUrl(comparison):null);
   const referenceFor=(ip:string)=>comparing?compare.data?.boards?.find((b:Json)=>b.ip===ip)??null:null;
   const changes=useSnapResource('/api/snap-workspace/changes',60000);
@@ -129,10 +129,10 @@ export default function SnapSpectraPage() {
     </section>
     {acquisition?.due&&<Notice>Read is due or overdue. Saved timestamps below show what was actually acquired.</Notice>}
     {[error,statusError,frameError?frameError+(frame?' Showing the last successful spectrum at its labelled time.':''):''].filter(Boolean).map((e,i)=><Notice key={i}>{e}</Notice>)}
-    <SnapHealth data={health.data} error={health.error}/>
+    <SnapHealth data={health.data} error={health.error} expired={health.expired}/>
     <div className="snap-arrangement"><div className="snap-toolbar control-surface"><div className="snap-controls"><div className="field-row">
       <button className="primary" onClick={acquire} disabled={reading||!frame||!acquisition?.manual_enabled||!!acquisition?.manual_refusal}>{reading?'Queuing read…':'Ping now · get spectra'}</button>
-      <span className="muted">Every {acquisition?acquisition.configured_interval_s/3600:'…'} h · page refresh 60 s</span>
+      <span className="muted">Every {acquisition?acquisition.configured_interval_s/3600:'…'} h · page refresh 60 s</span><span className="refresh-status" role="status">{frameUpdating||health.updating||membership.updating?'Updating…':''}</span>
     </div><div className="snap-job-status">{acquisition?.manual_refusal&&<span>{acquisition.manual_refusal.detail}</span>}{receipt&&<span role="status">{receipt}</span>}</div></div><div className="field-row">
       <div className="choice-row" aria-label="Panel order">{[['snap','Compact · SNAP order'],['station','Compact · station order'],['grid','Station grid']].map(([v,label])=><button key={v} aria-pressed={layout===v} className={layout===v?'active':''} onClick={()=>setLayout(v)}>{label}</button>)}</div>
       <PowerScaleControl value={powerScale} onChange={setPowerScale}/>

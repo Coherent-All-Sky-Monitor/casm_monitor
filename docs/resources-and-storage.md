@@ -10,8 +10,11 @@ remain separate. Identical in-flight GETs share one request. Departed pages
 stop polling; already-running shared reads may finish and populate the cache.
 No speculative native visibility reads or hardware queries run on navigation.
 
-Live health expires after its polling interval (normally 30 s); failed checks
-show Unknown. Snapshot plots retain actual data timestamps and refresh failures.
+As of October 8, live health revalidates every 30 s and can retain the last
+successful response for at most 120 s while waiting. Polling no longer discards
+it at the start of a request. Actual measurement-age rules still apply, failures
+show Unknown immediately, and a local deadline expires a hanging response.
+Snapshot plots retain actual data timestamps and refresh failures.
 Newly selected intervals/quantities never inherit a different result's labels.
 Overview and Search keep successful rolling plots visible during updates, with
 their displayed interval. Rolling endpoints persist across quick tab returns,
@@ -26,7 +29,31 @@ and completed scientific/Search plot products use immutable HTTP caching.
 Acquisition/upload actions still fetch their own current authorisation nonce;
 POST actions are not replayed from the read cache.
 
-Measured after deployment with local Chromium, normal navigation and real data:
+## Stable background refresh, October 8, 2026
+
+Routine refreshes leave plots at full contrast and keep zoom, scrolling and
+selections usable. The small Updating label appears after 500 ms; it never
+delays a completed result. Overview/Search PNGs and visibility/calibration
+rasters decode off-screen before their pixels, labels and timestamps commit
+together. Failed image loads retain the previous complete view with an error.
+An upper-triangle refresh retains the last complete matrix until all selected
+pairs are ready; initial loading still shows bounded batch progress. The two
+workers, 16-pair batches and four-window cache remain unchanged.
+
+The SNAP live view keeps the previous labelled spectra across an acquisition
+revision while the hourly replacement loads. Health and beamforming membership
+use the separate bounded freshness rule above. No plotting estimator, backend
+polling/acquisition cadence, hardware command, upload gate or service changed.
+Existing Candidates and Source history use their stable item keys and saved
+image caches; the history players keep their existing numeric buffers.
+
+`scripts/check_refresh_stability_browser.py` uses intercepted browser-only
+fixtures for delays, out-of-order reference responses, failed PNGs and health
+expiry. `scripts/check_navigation_freshness.py` exercises saved live products,
+failed GETs and both history players without operational writes. Neither test
+establishes current telescope health or scientific correctness of a fixture.
+
+October 6 navigation measurements with local Chromium and real data:
 
 | Item | Before | After |
 | --- | --- | --- |

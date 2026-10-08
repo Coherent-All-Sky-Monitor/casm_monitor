@@ -79,7 +79,7 @@ def main():
         controls=page.get_by_role('group',name='Static sky comparison',exact=True)
         controls.get_by_role('button',name='Compare',exact=True).click()
         expect(page.locator('#cal-cross .cal-subtraction-pair').first.locator('section')).to_have_count(2,timeout=60000)
-        page.wait_for_function('!document.querySelector(".cal-view-pending")')
+        page.wait_for_function('document.querySelector(".cal-saved-view")?.getAttribute("aria-busy")==="false"')
         assert page.locator('#cal-quality .cal-rank1-key>span').count()==3
         assert page.locator('#cal-weights .cal-curve-key').first.locator('span').count()==2
         page.get_by_role('group',name='Cross-correlation view',exact=True).get_by_role('button',name='Spectrum',exact=True).click()
@@ -91,7 +91,7 @@ def main():
         assert page.locator('.figure-modal .cal-curve-key span').count()==2
         page.keyboard.press('Escape')
         controls.get_by_role('button',name='Without subtraction',exact=True).click()
-        page.wait_for_function('!document.querySelector(".cal-view-pending")')
+        page.wait_for_function('document.querySelector(".cal-saved-view")?.getAttribute("aria-busy")==="false"')
         assert 'Selected for next steps: With subtraction' in page.locator('.cal-subtraction-selector').inner_text()
         page.locator('.cal-solution-actions>div').first.get_by_role('button',name='Use this solution').click()
         expect(page).to_have_url(f'{BASE}/cal/{OTHER}')

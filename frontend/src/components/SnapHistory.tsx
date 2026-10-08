@@ -10,10 +10,10 @@ export const snapDay=(ts:number)=>new Date(ts*1000).toISOString().slice(0,10);
 export const snapshotUrl=(s:SnapSnapshot)=>`/api/snap-workspace/spectra?ids=${s.ids.join(',')}`;
 
 /** Keyed responses: never display the previous date under the next date's label. */
-export function useSnapResource(url:string|null, interval=0) {
+export function useSnapResource(url:string|null, interval=0, keepPrevious=false) {
   // Saved ID selections are immutable; live spectra still revalidate on their
   // normal cadence. Errors retain the last successful, correctly labelled read.
-  return useCachedResource(url,interval,{maxAge:interval||300000});
+  return useCachedResource(url,interval,{maxAge:interval||300000,keepPrevious});
 }
 
 export async function snapshotForRead(id:number, ts:number):Promise<SnapSnapshot> {

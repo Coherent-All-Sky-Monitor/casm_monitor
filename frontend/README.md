@@ -204,6 +204,15 @@ compressed north-up maps, keeping the first plot row near the top. Less-used
 visibility controls and detailed SNAP status are expandable. SNAP status chips
 are white, with separate coloured Streaming/PPS labels and readable UTC times.
 Keyboard focus, touchscreen target sizes and reduced-motion behavior remain.
+Background refresh keeps completed plots at full contrast and clickable. A
+small Updating label appears after 500 ms. `RefreshState.ts` decodes replacement
+rasters before committing their accompanying labels/times and preserves the
+previous view on failure. Matrix refresh waits for the full selected triangle;
+its first load can still show partial progress. Status and membership poll every
+30 s with a separate 120 s maximum response age; actual measurement-age limits
+and failed-read warnings remain active. No acquisition cadence changed.
+`scripts/check_refresh_stability_browser.py` verifies delayed/out-of-order reads,
+image failure, zoom retention and health expiry using browser-only fixtures.
 Hourly spectrum reads now also run the getter-only cross-board PPS check under
 the existing lease. The page only polls saved results. **PPS timing** compares
 fresh advancing timestamps with explicitly accepted fixed offsets: unchanged is
