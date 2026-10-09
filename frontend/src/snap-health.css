@@ -12,6 +12,9 @@
 .snap-health-badge.ok {background:#176a40;}
 .snap-health-badge.attention {background:#b42e38;}
 .snap-health-box.attention {--health:#b42e38;}
+.snap-health-badge.warning {background:#e7c44a;color:#352a0b;}
+.snap-health-box.warning {--health:#e7c44a;}
+.snap-health-box.warning>strong {color:#352a0b;}
 .snap-health-badge small {font-size:12px;}
 .snap-health-badge b {font-size:14px;}
 .snap-health-time {display:block;margin-top:7px;font-size:12px;color:#43516a;line-height:1.5;font-variant-numeric:tabular-nums;}

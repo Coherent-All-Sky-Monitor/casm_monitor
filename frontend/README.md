@@ -215,10 +215,12 @@ and failed-read warnings remain active. No acquisition cadence changed.
 image failure, zoom retention and health expiry using browser-only fixtures.
 Hourly spectrum reads now also run the getter-only cross-board PPS check under
 the existing lease. The page only polls saved results. **PPS timing** compares
-fresh advancing timestamps with explicitly accepted fixed offsets: unchanged is
-green, changed/stalled is red, and failed/stale is Unknown. It no longer depends
-on source-coherence evidence. Exact alignment remains separately available in
-the API; a green accepted offset does not assert sample-exact alignment.
+fresh advancing timestamps with the saved reference and board-specific tolerance.
+SNAPs 1/3: both readings in {−2, −1} are green; any 0 within {−2, −1, 0} is
+yellow pending a visibility phase check. SNAP 2 requires 0. Other offsets or
+stopped PPS are red; failed/stale/incomplete reads are Unknown. Overview uses
+the same colours, and both measured offsets stay visible. The strict API result
+and saved baseline remain unchanged; green does not assert sample-exact alignment.
 See [source-history API](../docs/api-commissioning.md#sun-cyg-a-cas-a-and-tau-a-visibility-history).
 
 For real documentation screenshots and a bounded service CPU/RAM sample, run

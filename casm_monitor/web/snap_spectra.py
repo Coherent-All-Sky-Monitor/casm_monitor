@@ -115,7 +115,9 @@ def board_health(board, summary, vis, now, interval):
 
 def aggregate_health(boards, field):
     states = [b[field]['state'] for b in boards]
-    state = 'attention' if 'attention' in states else 'ok' if states and all(s == 'ok' for s in states) else 'unknown'
+    state = ('attention' if 'attention' in states else
+             'unknown' if not states or any(s not in {'ok', 'warning'} for s in states) else
+             'warning' if 'warning' in states else 'ok')
     return dict(state=state, ok=sum(s == 'ok' for s in states), total=len(states))
 
 

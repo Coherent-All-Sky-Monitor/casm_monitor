@@ -145,7 +145,7 @@ def test_timing_remote_lease_gate_never_starts_ssh(monkeypatch):
 
 def baseline_boards(**changes):
     return [dict(ip=ip,pps_status=dict(state='ok' if ip=='a' else 'attention',
-            fresh=True, period_ok=True, reference_ip='a', delta_ticks=offset,
+            fresh=True, period_ok=True, reference_ip='a', delta_ticks=offset, delta_ticks_before=offset,
             detail='PPS advancing' if ip=='a' else 'TT offset -1 ticks', **changes))
             for ip,offset in [('a','0'),('b','-1')]]
 
@@ -170,11 +170,11 @@ def test_changed_offset_red_and_baseline_never_follows_it():
     baseline=accepted_baseline()
     apply_baseline(boards,baseline)
     assert boards[1]['timing_status']['state']=='attention'
-    assert '-1 → -2' in boards[1]['timing_status']['detail']
+    assert 'outside accepted range' in boards[1]['timing_status']['detail']
     assert baseline['offsets']['b']=='-1'
 
 
-def test_operator_accepted_latest_minus_one_keeps_both_frames():
+def test_unlisted_board_stays_strict_and_keeps_both_frames():
     from casm_monitor.web.snap_spectra import apply_timing
     from casm_monitor.web.snap_timing_status import apply_baseline
     boards=baseline_boards()
@@ -189,10 +189,10 @@ def test_operator_accepted_latest_minus_one_keeps_both_frames():
     apply_timing(boards,report,101)
     apply_baseline(boards,accepted_baseline())
     status=boards[1]['timing_status']
-    assert status['state']=='ok'
+    assert status['state']=='attention'
     assert status['delta_ticks_before']=='-2'
     assert status['delta_ticks']=='-1'
-    assert status['detail']=='PPS advancing · latest -1 ticks accepted · earlier frame -2 ticks'
+    assert 'outside accepted range' in status['detail']
     assert boards[1]['pps_status']['state']=='unknown'  # strict result preserved
     apply_timing(boards,report,5600)
     apply_baseline(boards,accepted_baseline())

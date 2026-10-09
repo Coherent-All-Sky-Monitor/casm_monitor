@@ -1,7 +1,7 @@
 import { Json, stamp } from './Workspace';
 import '../snap-health.css';
 
-export const snapHealthLabel=(state:string)=>state==='ok'?'OK':state==='attention'?'Needs attention':'Unknown';
+export const snapHealthLabel=(state:string)=>state==='ok'?'OK':state==='warning'?'Review offset':state==='attention'?'Needs attention':'Unknown';
 
 function StatusBox({title,status}:{title:string;status:Json}) {
   return <div className={`snap-health-box ${status.state}`}>
@@ -22,7 +22,7 @@ export function SnapHealth({data,error,expired=false}:{data:Json|null;error:stri
         <div className="snap-health-badges">{[['Streaming',b.streaming],['PPS timing',pps]].map(([label,raw])=>{
           const s:Json=error?{state:'unknown',detail:'Status refresh failed'}:raw as Json;
           return <span key={label as string} className={`snap-health-badge ${s.state}`} title={`${s.detail??''} · ${stamp(s.ts)}`}>
-            {label as string} · <b>{snapHealthLabel(s.state)}</b>{label==='PPS timing'&&s.delta_ticks!=null&&<small> · {s.state!=='ok'&&s.delta_ticks_before!=null&&s.delta_ticks_before!==s.delta_ticks?`${s.delta_ticks_before} → `:''}{s.delta_ticks} ticks</small>}
+            {label as string} · <b>{s.label??snapHealthLabel(s.state)}</b>{label==='PPS timing'&&s.delta_ticks!=null&&<small> · {s.delta_ticks_before!=null&&s.delta_ticks_before!==s.delta_ticks?`${s.delta_ticks_before} → `:''}{s.delta_ticks} ticks</small>}
           </span>;
         })}</div>
         <small className="snap-health-time">PPS · {stamp(b.pps_status.ts)}</small>
@@ -36,7 +36,7 @@ export function SnapHealth({data,error,expired=false}:{data:Json|null;error:stri
       <StatusBox title="PPS timing" status={error?{state:'unknown',detail:'Status refresh failed'}:b.timing_status??b.pps_status}/>
       <p className="snap-control-note">Control: {b.control_status==='ok'?'last read succeeded':b.control_status==='unavailable'?'read unavailable':b.control_status==='partial'?'partial read':'not verified'} · {stamp(b.latest_attempt)}</p>
     </article>)}</div>
-    <p className="snap-health-caption">Streaming uses cached visibility data (≤ 15 min). PPS timing uses the accepted offsets to SNAP 0. The checked −2 → −1 case is accepted when the latest offset is −1; both readings remain in the details. Other offset changes or stopped PPS need attention; missing/stale checks stay Unknown after 90 min. Spectra and PPS are checked hourly; page refresh only loads saved results.</p>
+    <p className="snap-health-caption">PPS offsets are relative to SNAP 0. SNAPs 1/3: −1 or −2 is green; 0 is yellow pending a visibility phase check. SNAP 2 must stay at 0. Both readings count; other offsets or stopped PPS are red. Unreadable checks are Unknown; saved checks expire after 90 min. Spectra and PPS update hourly. Streaming uses recent cached visibility data (≤ 15 min).</p>
     </details>
   </section>;
 }

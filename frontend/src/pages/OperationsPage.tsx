@@ -63,7 +63,7 @@ export default function OperationsPage() {
   const visAge=typeof vis?.value==='number'&&visMeasureAge!=null?vis.value+visMeasureAge:null;
   const visHealth:Health=live.error?'late':visAge==null?'unknown':visAge>600?'late':'ok';
   const snapState=(key:string)=>snaps.error?'unknown':snaps.data?.[key]?.state??'unknown';
-  const snapTone=(key:string):Health=>snapState(key)==='ok'?'ok':snapState(key)==='attention'?(key==='timing'?'silent':'late'):'unknown';
+  const snapTone=(key:string):Health=>snapState(key)==='ok'?'ok':snapState(key)==='warning'?'yellow':snapState(key)==='attention'?(key==='timing'?'silent':'late'):'unknown';
   const alerts:{text:string;to:string}[]=[];
   if((data||live.error)&&obsHealth!=='ok')alerts.push({text:live.error?'Live observation refresh failed.':stateAge==null?'Observation state unavailable.':stateAge>120?'Observation state is stale.':`Observation state: ${state??'unknown'}.`,to:'/readiness'});
   if((search.data||search.error)&&searchHealth!=='ok')alerts.push({text:!searchFresh?'Search status unavailable or stale.':`${8-healthy} search streams need checking.`,to:'/search'});
@@ -88,7 +88,7 @@ export default function OperationsPage() {
       <Stat title="Injection recovery · last 24 h" value={inj&&inj.status!=='unavailable'?`${c.recovered} / ${c.completed_fired}`:'Unavailable'} note="Recovered / completed fired trials" status={recoveryHealth} label={recoveryLabel} to="/review"/>
       <Stat title="Visibility data age" value={ageText(visAge)} note="Newest cached visibility · fresh ≤ 10 min" status={visHealth} label={visHealth==='ok'?'Recent data':visHealth==='late'?'Stale / check':'Unknown'} to="/vis"/>
       <Stat title="SNAP streaming" value={snaps.data&&!snaps.error?`${snaps.data.streaming.ok} / ${snaps.data.streaming.total}`:'Unknown'} note="Recent cached data · ≤ 15 min" status={snapTone('streaming')} label={snapHealthLabel(snapState('streaming'))} to="/snaps"/>
-      <Stat title="SNAP PPS timing" value={snaps.data&&!snaps.error?`${(snaps.data.timing??snaps.data.pps).ok} / ${snaps.data.pps.total}`:'Unknown'} note="Offsets versus accepted reference" status={snapTone(snaps.data?.timing?'timing':'pps')} label={snapHealthLabel(snapState(snaps.data?.timing?'timing':'pps'))} to="/snaps"/>
+      <Stat title="SNAP PPS timing" value={snaps.data&&!snaps.error?`${(snaps.data.timing??snaps.data.pps).ok} / ${snaps.data.pps.total}`:'Unknown'} note="Boards within accepted offset range" status={snapTone(snaps.data?.timing?'timing':'pps')} label={snapState(snaps.data?.timing?'timing':'pps')==='ok'?'Within tolerance':snapHealthLabel(snapState(snaps.data?.timing?'timing':'pps'))} to="/snaps"/>
     </section>
     {alerts.length>0&&<section className="overview-attention" aria-label="Needs attention"><strong>Needs attention</strong>{alerts.map(a=><Link key={a.text} to={a.to}>{a.text} →</Link>)}</section>}
     <section className="overview-controls"><div className="overview-control-line"><strong>{rolling?'Rolling 24 hours':'Historical interval'}</strong><span>{localStamp(t0,zone)} – {localStamp(t1,zone)}</span><div className="overview-history-actions"><TimeZone value={zone} onChange={setZone}/><button className={rolling?'active':''} onClick={()=>{setRolling(true);setWindow(initialWindow());}}>Live · rolling 24 h</button></div></div>

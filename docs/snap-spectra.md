@@ -165,19 +165,36 @@ The strict `pps_status` and `pps` aggregate retain the exact-match rule.
 Displayed `timing_status` / `timing` instead compare against an explicitly
 accepted fixed reference. On September 25 at 06:52:43 UTC the operator-requested
 reference was saved from the fresh 06:38:49 read: SNAPs 0/1/2/3 have offsets
-**0/−1/0/−1 ticks** relative to SNAP 0. Green means advancing PPS with unchanged
-offsets, not sample-exact alignment. Changed offsets/reference or stopped PPS
-are red **Needs attention**. Missing, failed or stale checks remain Unknown.
-On September 29 the operator accepted the observed **−2 → −1 tick** case:
-when the latest offset is the accepted −1, its timing box stays green and
-details retain the earlier −2 frame. This narrowly scoped display policy does
-not claim identical frames or exact alignment. Other transitions, including
-a latest −2, remain Needs attention. The strict API result and recorded
-baseline are unchanged; no hardware adjustment or automatic relearning occurs.
+**0/−1/0/−1 ticks** relative to SNAP 0. The October 8 PDT operator-approved
+display tolerance supersedes the earlier one-direction −2 → −1 exception:
+
+- SNAPs 1/3 (.51/.73), still mapped to those IDs with accepted baseline −1:
+  both readings in {−2, −1} are green **Within tolerance**. If either is 0
+  and both are in {−2, −1, 0}, they are yellow **Review offset**, pending a
+  visibility phase check of the zero-offset cases. Any other value is red.
+- SNAP 2 retains its exact 0-tick requirement. Other identities/baselines
+  retain exact comparisons; the relay tolerance is not inherited automatically.
+- Stopped PPS, bad periods or a changed reference remain red **Needs attention**.
+  Unreadable, incomplete or stale evidence remains Unknown.
+
+Both frames are visible, including green transitions. The Overview and SNAPs
+page share the policy. The aggregate prioritizes red, then Unknown, then yellow,
+then green; its `ok` count includes only green boards. `timing_status.state`
+and the aggregate can now return `warning`; per-board `accepted_offsets` and
+`review_offsets` describe the display policy. The strict `pps_status`, reader,
+recorded baseline and acquisition cadence are unchanged. Green indicates an
+accepted PPS capture range, not proven sample alignment. No hardware adjustment
+or automatic relearning occurs, and the zero-offset range is not yet green.
 Checks expire after 90 minutes; newer failures supersede older success.
 The summary requires every configured antenna board and does not grade relays.
 No source-check age or periodic native visibility analysis affects these boxes.
 The separate dated science result remains in `casm-wiki/monitor-snap-source-check.md`.
+
+Policy regression coverage is in `tests/test_snap_timing_policy.py` (both-frame
+combinations, strict SNAP 2, stale/read/period failures and aggregate priority).
+`PYTHONPATH=. python scripts/check_snap_timing_policy_browser.py` checks the four
+colours in SNAPs and Overview with intercepted API fixtures and no hardware calls.
+
 The baseline is stored in monitoring SQLite at `watermarks(snap_read, pps_baseline)`.
 Acquisitions never relearn it. Only after explicit operator acceptance, replace
 it using a fresh saved complete read (no hardware contact from this command):
