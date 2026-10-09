@@ -215,9 +215,9 @@ and failed-read warnings remain active. No acquisition cadence changed.
 image failure, zoom retention and health expiry using browser-only fixtures.
 Hourly spectrum reads now also run the getter-only cross-board PPS check under
 the existing lease. The page only polls saved results. **PPS timing** compares
-fresh advancing timestamps with the saved reference and board-specific tolerance.
-SNAPs 1/3: both readings in {−2, −1} are green; any 0 within {−2, −1, 0} is
-yellow pending a visibility phase check. SNAP 2 requires 0. Other offsets or
+fresh advancing timestamps with SNAP 0. For all four current boards, both readings
+from −2 through +2 ticks inclusive are green, including 0. The saved reference
+remains 0/−1/0/−1; the range is relative to SNAP 0, not to those offsets. Larger offsets or
 stopped PPS are red; failed/stale/incomplete reads are Unknown. Overview uses
 the same colours, and both measured offsets stay visible. The strict API result
 and saved baseline remain unchanged; green does not assert sample-exact alignment.

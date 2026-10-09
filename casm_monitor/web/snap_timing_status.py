@@ -1,9 +1,10 @@
 """Display-only PPS policy; raw evidence and the saved baseline stay unchanged."""
 import math
 
-# Audited relayed inputs only. Do not extend this tolerance to new/reassigned
-# boards or a different accepted baseline without a new operator decision.
-RELAY_BOARDS = {'192.168.120.51': 1, '192.168.120.73': 3}
+# Operator-selected absolute offset range against SNAP 0. Keep the audited
+# identities/baseline explicit; replacement boards need a fresh decision.
+ARRAY_BOARDS = {'192.168.120.52': (0, '0'), '192.168.120.51': (1, '-1'),
+                '192.168.120.62': (2, '0'), '192.168.120.73': (3, '-1')}
 REFERENCE_IP = '192.168.120.52'
 INCONSISTENT = 'Inconsistent cross-board TT delta; alignment unverified'
 
@@ -75,21 +76,16 @@ def apply_baseline(boards, baseline):
             status.update(state='unknown',detail='Two PPS offset readings unavailable')
             continue
 
-        relay = (baseline['reference_ip'] == REFERENCE_IP and expected == '-1'
-                 and board['ip'] in RELAY_BOARDS
-                 and board.get('feng_id') == RELAY_BOARDS[board['ip']])
-        accepted = {-2, -1} if relay else {int(expected)}
-        review = {0} if relay else set()
+        array_board = (baseline['reference_ip'] == REFERENCE_IP
+                       and ARRAY_BOARDS.get(board['ip']) == (board.get('feng_id'), expected))
+        accepted = set(range(-2, 3)) if array_board else {int(expected)}
         status.update(accepted_offsets=[str(v) for v in sorted(accepted)],
-                      review_offsets=[str(v) for v in sorted(review)])
+                      review_offsets=[])
         measured = str(pair[1]) if pair[0] == pair[1] else f'{pair[0]} → {pair[1]}'
-        allowed = '−2 / −1' if relay else expected
+        allowed = '−2 to +2' if array_board else expected
         if set(pair) <= accepted:
             status.update(state='ok',label='Within tolerance',
                           detail=f'PPS advancing · {measured} ticks · accepted {allowed} ticks')
-        elif set(pair) <= accepted | review:
-            status.update(state='warning',label='Review offset',
-                          detail=f'PPS advancing · {measured} ticks · 0-tick offset awaits visibility phase check')
         else:
             status.update(state='attention',label='Needs attention',
                           detail=f'PPS offset outside accepted range: {measured} ticks; accepted {allowed} ticks')

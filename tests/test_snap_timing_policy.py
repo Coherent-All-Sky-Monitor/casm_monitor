@@ -28,27 +28,27 @@ def evidence(before=-1, after=-1, target=1):
     return boards, baseline, report
 
 
-@pytest.mark.parametrize('target', [1, 3])
-@pytest.mark.parametrize('before,after', product(range(-3, 3), repeat=2))
-def test_both_frames_determine_relay_colour_without_mutating_evidence(target, before, after):
+@pytest.mark.parametrize('target', [1, 2, 3])
+@pytest.mark.parametrize('before,after', product(range(-3, 4), repeat=2))
+def test_both_frames_use_absolute_two_tick_range_without_mutating_evidence(target, before, after):
     boards, baseline, _ = evidence(before, after, target)
     raw = deepcopy([b['pps_status'] for b in boards]); accepted = deepcopy(baseline)
     apply_baseline(boards, baseline)
     pair = {before, after}
-    expected = 'ok' if pair <= {-2, -1} else 'warning' if pair <= {-2, -1, 0} else 'attention'
+    expected = 'ok' if pair <= {-2, -1, 0, 1, 2} else 'attention'
     status = boards[target]['timing_status']
     assert status['state'] == expected
-    assert status['label'] == {'ok': 'Within tolerance', 'warning': 'Review offset', 'attention': 'Needs attention'}[expected]
+    assert status['label'] == {'ok': 'Within tolerance', 'attention': 'Needs attention'}[expected]
     assert status['delta_ticks_before'] == str(before) and status['delta_ticks'] == str(after)
-    assert status['accepted_offsets'] == ['-2', '-1'] and status['review_offsets'] == ['0']
+    assert status['accepted_offsets'] == ['-2', '-1', '0', '1', '2'] and status['review_offsets'] == []
     assert [b['pps_status'] for b in boards] == raw and baseline == accepted
 
 
-@pytest.mark.parametrize('before,after', product(range(-2, 3), repeat=2))
-def test_snap_two_requires_zero_in_both_frames(before, after):
-    boards, baseline, _ = evidence(before, after, target=2)
+def test_all_boards_green_for_zero_and_reference_remains_zero():
+    boards, baseline, _ = evidence(0, 0)
     apply_baseline(boards, baseline)
-    assert boards[2]['timing_status']['state'] == ('ok' if before == after == 0 else 'attention')
+    assert all(b['timing_status']['state'] == 'ok' for b in boards)
+    assert boards[0]['timing_status']['delta_ticks'] == '0'
 
 
 @pytest.mark.parametrize('change,expected', [

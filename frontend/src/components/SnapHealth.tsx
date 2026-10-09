@@ -36,7 +36,7 @@ export function SnapHealth({data,error,expired=false}:{data:Json|null;error:stri
       <StatusBox title="PPS timing" status={error?{state:'unknown',detail:'Status refresh failed'}:b.timing_status??b.pps_status}/>
       <p className="snap-control-note">Control: {b.control_status==='ok'?'last read succeeded':b.control_status==='unavailable'?'read unavailable':b.control_status==='partial'?'partial read':'not verified'} · {stamp(b.latest_attempt)}</p>
     </article>)}</div>
-    <p className="snap-health-caption">PPS offsets are relative to SNAP 0. SNAPs 1/3: −1 or −2 is green; 0 is yellow pending a visibility phase check. SNAP 2 must stay at 0. Both readings count; other offsets or stopped PPS are red. Unreadable checks are Unknown; saved checks expire after 90 min. Spectra and PPS update hourly. Streaming uses recent cached visibility data (≤ 15 min).</p>
+    <p className="snap-health-caption">PPS offsets from −2 to +2 ticks relative to SNAP 0 are green. Both readings must be within that range. Larger offsets or stopped PPS are red; unreadable checks are Unknown. Saved checks expire after 90 min. Spectra and PPS update hourly. Streaming uses recent cached visibility data (≤ 15 min).</p>
     </details>
   </section>;
 }

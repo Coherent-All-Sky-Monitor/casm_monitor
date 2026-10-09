@@ -38,16 +38,18 @@ def health_fixture(before, after, unreadable=False):
 
 
 def main():
-    output = Path('/home/casm/scratch/casm-observation-preview/snap-timing-policy-20261009')
+    output = Path('/home/casm/scratch/casm-observation-preview/snap-timing-policy-20261009-two-tick')
     output.mkdir(parents=True, exist_ok=True)
     errors, writes, results = [], [], []
-    cases = [('ok', -1, -2, False, 'ok', 'Within tolerance', 'rgb(23, 106, 64)'),
-             ('warning', 0, -1, False, 'yellow', 'Review offset', 'rgb(231, 196, 74)'),
-             ('attention', -3, -1, False, 'silent', 'Needs attention', 'rgb(180, 46, 56)'),
-             ('unknown', -1, 0, True, 'unknown', 'Unknown', 'rgb(82, 99, 123)')]
+    cases = [('negative', 'ok', -1, -2, False, 'ok', 'Within tolerance', 'rgb(23, 106, 64)'),
+             ('zero', 'ok', 0, -1, False, 'ok', 'Within tolerance', 'rgb(23, 106, 64)'),
+             ('limits', 'ok', -2, 2, False, 'ok', 'Within tolerance', 'rgb(23, 106, 64)'),
+             ('low', 'attention', -3, -1, False, 'silent', 'Needs attention', 'rgb(180, 46, 56)'),
+             ('high', 'attention', 2, 3, False, 'silent', 'Needs attention', 'rgb(180, 46, 56)'),
+             ('unreadable', 'unknown', -1, 0, True, 'unknown', 'Unknown', 'rgb(82, 99, 123)')]
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        for state, before, after, unreadable, tone, label, colour in cases:
+        for name, state, before, after, unreadable, tone, label, colour in cases:
             fixture = health_fixture(before, after, unreadable)
             context = browser.new_context(viewport=dict(width=1500, height=1000))
             page = context.new_page()
@@ -81,19 +83,19 @@ def main():
                 expect(badge).to_contain_text(label)
                 expect(badge).to_contain_text(f'{before} → {after} ticks')
                 assert badge.evaluate('e=>getComputedStyle(e).backgroundColor') == colour
-            # Streaming stays independently green even when PPS is yellow/red/unknown.
+            # Streaming stays independently green even when PPS is red/unknown.
             for n in range(4):
                 expect(page.locator('.snap-health-chip').nth(n).locator('.snap-health-badge').first).to_have_class('snap-health-badge ok')
             page.get_by_text('Board status details', exact=True).click()
             expect(page.locator('.snap-health-board').nth(1).locator('.snap-health-box').nth(1)).to_have_class('snap-health-box '+state)
-            page.locator('.snap-health-section').screenshot(path=str(output/f'{state}-snaps.png'))
+            page.locator('.snap-health-section').screenshot(path=str(output/f'{name}-snaps.png'))
             page.get_by_role('navigation', name='Main navigation').get_by_role('link', name='Overview', exact=True).click()
             card = page.locator('.overview-stat').filter(has_text='SNAP PPS timing')
             expect(card).to_have_class('overview-stat '+tone)
             expect(card.locator('.overview-status')).to_have_text(label)
             expect(card.locator('strong')).to_have_text('4 / 4' if state == 'ok' else '2 / 4')
-            card.screenshot(path=str(output/f'{state}-overview.png'))
-            results.append(dict(state=state, overview_tone=tone, label=label))
+            card.screenshot(path=str(output/f'{name}-overview.png'))
+            results.append(dict(case=name, state=state, overview_tone=tone, label=label))
             context.close()
         browser.close()
     assert not errors, errors
