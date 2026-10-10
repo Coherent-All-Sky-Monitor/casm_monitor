@@ -21,6 +21,38 @@ from casm_monitor.jobs import render_figures as rf
 from casm_monitor.store import ShardWriter, Store
 from casm_monitor.web import vis as webvis
 
+
+@pytest.mark.parametrize("targets", [None, ["imaging"], ["imaging", "vis", "snaps"]])
+def test_imaging_never_dispatched_including_legacy_jobs(settings, monkeypatch, targets):
+    from casm_monitor.collectors.figures import SCHEDULED_TARGETS
+    import casm_monitor.figures.observation as observation
+
+    assert "imaging" not in SCHEDULED_TARGETS
+    assert "imaging" not in rf.TARGETS
+    monkeypatch.setattr(rf, "load_settings", lambda _: settings)
+    def forbidden(*args):
+        pytest.fail("retired imaging must never run")
+    monkeypatch.setattr(rf, "_render_imaging", forbidden)
+    seen = []
+    def renderer(target):
+        def render(*args):
+            seen.append(target)
+            return {}
+        return render
+    for target in ("vis", "snaps", "cands"):
+        monkeypatch.setattr(rf, "_render_" + target, renderer(target))
+    monkeypatch.setattr(observation, "render_observation", renderer("observation"))
+    result = rf.run({"targets": targets})
+    assert set(seen) == set(result["targets"])
+    assert "imaging" not in result["targets"]
+    assert bool(result["skipped"]) == (targets is not None)
+
+
+def test_unknown_render_target_still_refused(settings, monkeypatch):
+    monkeypatch.setattr(rf, "load_settings", lambda _: settings)
+    with pytest.raises(ValueError, match="unknown render_figures target"):
+        rf.run({"targets": ["imaging", "typo"]})
+
 OBS = "2026-09-04-16:43:47"
 LAYOUT = (
     "antenna,x,y,z,snap,adc,packet_idx,functional,include_in_beamforming,row,col\n"
@@ -110,7 +142,7 @@ def test_scheduler_submits_render_figures_job(settings, store):
     assert len(jobs) == 1
     assert jobs[0]["kind"] == RENDER_FIGURES_KIND
     params = json.loads(jobs[0]["params"])
-    assert set(params["targets"]) == {"observation", "vis", "snaps", "imaging", "cands"}
+    assert set(params["targets"]) == {"observation", "vis", "snaps", "cands"}
     assert params["reason"] == "scheduled"
     job_id = store.latest_scalar("figures.scheduled_job_id")
     assert job_id is not None

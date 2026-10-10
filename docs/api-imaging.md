@@ -1,5 +1,11 @@
 # Imaging tab API contract (M4)
 
+Historical contract: imaging is absent from the current 8061 navigation and,
+as of October 10, 2026, removed from monitor scheduling and job dispatch.
+Explicit legacy `imaging` targets are recorded as skipped. Saved artifacts and
+the scientific implementation are retained, without automatic refresh.
+See [current worker arrangement](resources-and-storage.md#independent-acquisition-and-retired-imaging-october-10-2026).
+
 Written by the frontend agent for the backend agent implementing these routes
 concurrently, per `docs/plan.md` section "4. Imaging". The frontend
 (`frontend/src/lib/api.ts`, `frontend/src/lib/types.ts`) is built exactly

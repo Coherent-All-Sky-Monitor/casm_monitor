@@ -32,7 +32,7 @@ def _apply_address_space_limit(limit_bytes: int | None) -> None:
     (currently only ``render_figures``) regresses back into loading something
     unbounded, the subprocess is killed (``MemoryError``/SIGSEGV -> non-zero
     exit, caught by the worker as a normal job failure) well under the job
-    worker's 256G cgroup, instead of taking the whole service down again.
+    worker's cgroup limit, instead of taking the whole service down again.
     Soft-fails (no-op, not an error) on platforms without ``resource`` (not
     POSIX) or without ``RLIMIT_AS`` (documented, not silently skipped).
     """

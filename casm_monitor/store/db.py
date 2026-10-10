@@ -823,16 +823,27 @@ class Store:
         d["result"] = _jload(d.get("result"))
         return d
 
-    def claim_next_job(self, worker: str | None = None, lease_s: float = 60.0) -> dict[str, Any] | None:
-        """Atomically move the oldest queued job to ``running`` with a lease."""
+    def claim_next_job(
+        self, worker: str | None = None, lease_s: float = 60.0,
+        *, kinds: Sequence[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Atomically lease the oldest eligible job; leave other kinds queued.
+
+        ``None`` accepts every kind; an empty sequence accepts none.
+        """
+        if kinds is not None and not kinds:
+            return None
+        sql = "SELECT id FROM jobs WHERE state = 'queued'"
+        args = tuple(kinds or ())
+        if kinds is not None:
+            sql += " AND kind IN (" + ",".join("?" for _ in args) + ")"
+        sql += " ORDER BY id ASC LIMIT 1"
         who = worker or f"{socket.gethostname()}:{os.getpid()}"
         now = time.time()
         with self._lock:
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
-                row = self._conn.execute(
-                    "SELECT id FROM jobs WHERE state = 'queued' ORDER BY id ASC LIMIT 1"
-                ).fetchone()
+                row = self._conn.execute(sql, args).fetchone()
                 if row is None:
                     self._conn.rollback()
                     return None
@@ -892,20 +903,33 @@ class Store:
             self.execute("UPDATE jobs SET state = 'cancelled' WHERE id = ?", (job_id,))
         return "cancelled"
 
-    def reconcile_orphaned_jobs(self, now: float | None = None) -> list[int]:
-        """Fail every ``running`` job whose lease has expired (worker restart)."""
+    def reconcile_orphaned_jobs(
+        self, now: float | None = None, *, kinds: Sequence[str] | None = None,
+    ) -> list[int]:
+        """Fail expired jobs in this worker's scope, atomically with lease checks."""
+        if kinds is not None and not kinds:
+            return []
         t = time.time() if now is None else now
-        rows = self.query(
-            "SELECT id FROM jobs WHERE state = 'running' AND (lease_until IS NULL OR lease_until < ?)",
-            (t,),
-        )
-        ids = [int(r["id"]) for r in rows]
+        sql = "SELECT id FROM jobs WHERE state = 'running' AND (lease_until IS NULL OR lease_until < ?)"
+        args: list[Any] = [t]
+        if kinds is not None:
+            sql += " AND kind IN (" + ",".join("?" for _ in kinds) + ")"
+            args.extend(kinds)
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                ids = [int(r["id"]) for r in self._conn.execute(sql, args).fetchall()]
+                for job_id in ids:
+                    self._conn.execute(
+                        "UPDATE jobs SET state = 'failed', finished = ?, lease_until = NULL, result = ? "
+                        "WHERE id = ?",
+                        (t, _jdump({"reason": "orphaned"}), job_id),
+                    )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
         for job_id in ids:
-            self.execute(
-                "UPDATE jobs SET state = 'failed', finished = ?, lease_until = NULL, result = ? "
-                "WHERE id = ?",
-                (t, _jdump({"reason": "orphaned"}), job_id),
-            )
             self.add_event(
                 "job_orphaned",
                 severity="warn",

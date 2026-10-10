@@ -203,7 +203,14 @@ whether a read is due. GET never contacts hardware or the production HTTP API.
 The configured interval is not a verification that acquisition is working;
 `cadence_verified` remains false and actual read ages are shown separately.
 
-`POST /api/snap-workspace/acquire`, body `{"confirm":true,"ips":null}`, forwards
+Current acquisition (October 10, 2026): the confirmed workspace POST submits
+directly to the existing durable queue with the same origin/CSRF guards,
+pending-job checks, read lease and cooldown. The dedicated
+`casm-monitor-snap-read.service --kinds snap_read` handles both hourly and manual
+jobs independently of figure rendering. No second scheduler or hardware reader
+was added. The port-8060 bridge described below is historical and retired.
+
+The original `POST /api/snap-workspace/acquire`, body `{"confirm":true,"ips":null}`, forwarded
 one request to the fixed existing production endpoint
 `http://127.0.0.1:8060/api/snaps/board-read`. Explicit configured IPs may replace
 null. Arbitrary fields, destinations, jobs and unknown boards are refused.

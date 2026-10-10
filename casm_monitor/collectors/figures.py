@@ -9,7 +9,7 @@ concurrently in a thread pool, and the long run also starved the other
 collectors (vis age climbed to 820 s).
 
 The render now happens in :mod:`casm_monitor.jobs.render_figures`, a job kind
-run by ``casm-monitor-jobs.service`` (``MemoryMax=256G``, one job at a time),
+run by ``casm-monitor-jobs.service`` (render-only, one job at a time),
 which also bounds its own memory (never reads ``vis_full``, reduces the
 ``vis_avg8`` window shard by shard -- see that module and ``figures/
 vis_figures.py``'s docstrings).
@@ -17,7 +17,7 @@ vis_figures.py``'s docstrings).
 This collector is cheap and does no I/O beyond a couple of SQLite queries:
 
 * every :data:`CADENCE_S` (60 s) it submits a ``render_figures`` job for all
-  of :data:`SCHEDULED_TARGETS` (vis, snaps, imaging and the M5 candidates
+  of :data:`SCHEDULED_TARGETS` (observation, vis, snaps and the M5 candidates
   funnel chart), but only
   every :data:`SUBMIT_INTERVAL_S` (30 min), refusing (via
   ``Store.submit_job_atomic``'s ``refuse_if_pending``) while one is already
@@ -42,13 +42,9 @@ from .base import Collector, CollectorContext
 log = logging.getLogger("casm_monitor.collect.figures")
 
 RENDER_FIGURES_KIND = "render_figures"
-#: Targets of the half-hourly scheduled render. ``imaging`` (M4) joined the
-#: pair in 2026-09-09: its own pass is incremental (it images at most 64 new
-#: integrations into a frame cache and rebuilds the cheap products from it),
-#: so adding it does not lengthen the job by a 24 h re-render. ``cands`` (M5)
-#: renders the T2 funnel PNGs the Candidates tab serves, which used to be
-#: rendered by the GET route itself (2026-09-09 review, finding 1).
-SCHEDULED_TARGETS = ["observation", "vis", "snaps", "imaging", "cands"]
+# Imaging retired from monitor jobs on 2026-10-10. Keep acquisition independent
+# of these renders; historical queued imaging targets are skipped by the runner.
+SCHEDULED_TARGETS = ["observation", "vis", "snaps", "cands"]
 SUBMIT_INTERVAL_S = 1800.0  # 30 min
 LAST_SUBMIT_STREAM = "figures"
 LAST_SUBMIT_KEY = "last_submit_ts"

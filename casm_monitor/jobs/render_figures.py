@@ -1,11 +1,11 @@
-"""The ``render_figures`` job: renders the Vis, SNAPs, Imaging and
+"""The ``render_figures`` job: renders the Vis, SNAPs, Observation and
 Candidates-funnel PNGs.
 
 Moved here from ``FigureCollector`` (2026-09-09): the collector process runs
 under ``MemoryMax=8G`` and rendering 16 figures concurrently off a whole 24 h
 ``vis_avg8``/``vis_full`` window put it in an OOM crash loop (21:23-22:16
 PDT) that also starved every other collector. This job runs inside
-``casm-monitor-jobs.service`` (``MemoryMax=256G``, one job at a time), so a
+``casm-monitor-jobs.service`` (``MemoryMax=16G``, one job at a time), so a
 slow or memory-heavy render pass no longer competes with the cheap collectors
 for the same cgroup.
 
@@ -49,18 +49,13 @@ from ..web.vis import load_deployed_cal
 
 log = logging.getLogger("casm_monitor.jobs.render_figures")
 
-# Bounded, not the collector's 16: keeps a handful of Figure objects and their
-# canvases in flight at once, not sixteen 24 h-window renders at a time.
-# Raised 4 -> 8 alongside the 2026-09-08 imshow/single-render figure
-# optimisation: the jobs unit's CPUQuota is 1600% (16 cores), so 8 concurrent
-# renders is still well inside budget, and each render is now cheap enough
-# (matrix figure well under the 15 s target on a synthetic 24-input cube,
-# see bench_render.py) that the win from more parallel workers is real,
-# not just more contention. RLIMIT_AS stays 16G regardless (kinds.py).
-MAX_WORKERS = 8
+# Background plots share the host with real-time processing. Keep the render
+# pool small; SNAP acquisition has its own worker and never waits for this pool.
+MAX_WORKERS = 2
 BASE_REFS = ("raw", "sun")
 
-TARGETS = ("vis", "snaps", "imaging", "cands", "observation")
+TARGETS = ("vis", "snaps", "cands", "observation")
+RETIRED_TARGETS = ("imaging",)
 
 
 def _vf():
@@ -1131,13 +1126,17 @@ def _render_cands(store: Store, settings: Settings) -> dict[str, Any]:
 def run(params: dict[str, Any]) -> dict[str, Any]:
     """Job entry point (runs in the job subprocess, see jobs/run_job.py)."""
     settings = load_settings(params.get("config"))
-    targets = [str(t) for t in (params.get("targets") or list(TARGETS))]
-    unknown = [t for t in targets if t not in TARGETS]
+    requested = [str(t) for t in (params.get("targets") or list(TARGETS))]
+    unknown = [t for t in requested if t not in TARGETS + RETIRED_TARGETS]
     if unknown:
         raise ValueError(f"unknown render_figures target(s) {unknown}; known: {TARGETS}")
+    targets = [t for t in requested if t in TARGETS]
+    skipped = {t: "retired: imaging disabled in monitor jobs" for t in requested if t in RETIRED_TARGETS}
+    if skipped:
+        log.warning("Skipping retired render targets: %s", sorted(skipped))
     reason = str(params.get("reason") or "scheduled")
     store = Store(settings.db_path, store_root=settings.store_root)
-    result: dict[str, Any] = {"reason": reason, "targets": targets}
+    result: dict[str, Any] = {"reason": reason, "targets": targets, "skipped": skipped}
     try:
         started = time.time()
         if "observation" in targets:
@@ -1151,10 +1150,6 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
             print("render_figures: rendering snaps", flush=True)
             result["snaps"] = _render_snaps(store, settings)
             print(f"render_figures: snaps done: {result['snaps']}", flush=True)
-        if "imaging" in targets:
-            print("render_figures: rendering imaging", flush=True)
-            result["imaging"] = _render_imaging(store, settings)
-            print(f"render_figures: imaging done: {result['imaging']}", flush=True)
         if "cands" in targets:
             print("render_figures: rendering cands", flush=True)
             result["cands"] = _render_cands(store, settings)
@@ -1164,7 +1159,7 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
             "render_figures",
             severity="info",
             subject=f"targets={targets}",
-            detail={"reason": reason, "targets": targets, "elapsed_s": result["elapsed_s"]},
+            detail={"reason": reason, "targets": targets, "skipped": skipped, "elapsed_s": result["elapsed_s"]},
         )
         return result
     finally:

@@ -62,14 +62,7 @@ def _noop(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def _render_figures(params: dict[str, Any]) -> dict[str, Any]:
-    """Render the Vis, SNAPs and Imaging tab figures (moved off the collector,
-    2026-09-09: it OOM'd ``casm-monitor-collect.service``, MemoryMax=8G).
-
-    The imaging target (M4) is the one that runs a process pool of its own
-    (``allsky_snapshots(workers=8)``, ~5 s per integration measured); it stays
-    inside the same 16 GB address-space cap because each snapshot is ~142 MB
-    peak and the cap applies per process.
-    """
+    """Render saved monitor figures, with imaging retired since 2026-10-10."""
     from .render_figures import run as run_render_figures
 
     return run_render_figures(params)
@@ -191,10 +184,9 @@ KINDS: dict[str, JobKind] = {
         # is generously above the ~3 GB/target peak RSS this renders at.
         address_space_limit_bytes=16 * 1024 * 1024 * 1024,
         description=(
-            "render the Vis + SNAPs + Imaging tab figure PNGs (and the imaging "
-            "MP4, the source cutouts and the Candidates funnel charts) and their "
+            "render the Vis + SNAPs + Observation figure PNGs and Candidates funnel charts and their "
             "manifests; params {\"targets\": [\"vis\", \"snaps\", "
-            '"imaging", "cands"], "reason": "scheduled"|"manual"|"board_read"}'
+            '"observation", "cands"], "reason": "scheduled"|"manual"|"board_read"}'
         ),
     ),
 }

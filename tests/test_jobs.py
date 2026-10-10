@@ -73,6 +73,68 @@ def test_claim_is_exclusive_and_fifo(settings, store: Store):
     assert store.claim_next_job("w3") is None
 
 
+def test_scoped_claim_bypasses_other_kinds_and_keeps_fifo(settings, store):
+    render = store.submit_job("render_figures", {})
+    first = store.submit_job("snap_read", {})
+    second = store.submit_job("snap_read", {})
+    other = Store(settings.db_path, store_root=settings.store_root)
+    try:
+        assert store.claim_next_job("snap1", kinds=["snap_read"])["id"] == first
+        assert other.claim_next_job("snap2", kinds=["snap_read"])["id"] == second
+        assert store.claim_next_job("snap3", kinds=["snap_read"]) is None
+        assert store.get_job(render)["state"] == "queued"
+        assert store.claim_next_job("none", kinds=[]) is None
+        assert other.claim_next_job("render", kinds=["render_figures"])["id"] == render
+    finally:
+        other.close()
+
+
+def test_scoped_worker_drain_does_not_run_render_or_hardware(settings, store):
+    render = store.submit_job("render_figures", {})
+    snap = store.submit_job("snap_read", {})
+    noop = store.submit_job("noop", {"seconds": 0})
+    worker = JobWorker(settings, store=store, kinds=["noop"])
+    assert worker.run_pending() == 1
+    assert store.get_job(noop)["state"] == "done"
+    assert store.get_job(render)["state"] == "queued"
+    assert store.get_job(snap)["state"] == "queued"
+
+
+def test_scoped_worker_loop_claims_only_its_kinds(settings, store, monkeypatch):
+    render = store.submit_job("render_figures", {})
+    snap = store.submit_job("snap_read", {})
+    worker = JobWorker(settings, store=store, kinds=["snap_read"])
+    seen = []
+    def finish(job):
+        seen.append(job["id"])
+        store.finish_job(job["id"], "done", {})
+        worker.stop()
+        return "done"
+    monkeypatch.setattr(worker, "run_job", finish)
+    worker.loop()
+    assert seen == [snap]
+    assert store.get_job(render)["state"] == "queued"
+    assert store.events(kind="job_worker_started")[0]["detail"]["kinds"] == ["snap_read"]
+
+
+def test_scoped_reconciliation_leaves_other_workers_jobs(settings, store):
+    render = store.submit_job("render_figures", {})
+    snap = store.submit_job("snap_read", {})
+    live = store.submit_job("snap_read", {})
+    store.execute("UPDATE jobs SET state='running', lease_until=?", (time.time() - 300,))
+    store.execute("UPDATE jobs SET lease_until=? WHERE id=?", (time.time() + 60, live))
+    assert JobWorker(settings, store=store, kinds=["snap_read"]).reconcile() == [snap]
+    assert store.get_job(render)["state"] == "running"
+    assert store.get_job(live)["state"] == "running"
+    assert store.reconcile_orphaned_jobs(kinds=[]) == []
+
+
+@pytest.mark.parametrize("kinds", [[], ["unknown"], ["snap_read", "unknown"]])
+def test_invalid_worker_scope_is_refused(settings, store, kinds):
+    with pytest.raises(ValueError, match="worker kinds"):
+        JobWorker(settings, store=store, kinds=kinds)
+
+
 def test_cancel_queued_and_running(settings, store: Store):
     queued = store.submit_job("noop", {"seconds": 0})
     assert store.cancel_job(queued) == "cancelled"

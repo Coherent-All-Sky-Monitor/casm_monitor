@@ -1,5 +1,42 @@
 # Webpage resources and data products
 
+## Independent acquisition and retired imaging, October 10, 2026
+
+Hourly and manual SNAP diagnostics run in `casm-monitor-snap-read.service`,
+using `python -m casm_monitor.jobs.worker --kinds snap_read`. It claims only
+SNAP jobs from the existing production database. `casm-monitor-jobs.service`
+now claims only `render_figures`; an older queued render cannot delay a SNAP
+read. The separate calibration store and worker are unchanged.
+
+Imaging has been removed from the scheduled targets and job dispatch. Old
+queued requests containing `imaging` record it as skipped and still process
+their supported targets. Imaging code and saved products remain on disk for
+future development; no imaging is restarted by enabling the monitor workers.
+
+The remaining render pool is two threads, with a 16 GiB service memory limit,
+four-CPU quota and low CPU/I/O priority. The SNAP worker has a separate 2 GiB,
+one-CPU budget. These bounds reduce competition; they do not guarantee latency
+under every shared-host workload. Collector and worker units explicitly use
+the main checkout as their working directory, avoiding the old editable-install
+worktree. Current unit templates are in `deploy/systemd/`.
+
+The existing hourly scheduler, five-minute manual cooldown, persisted hardware
+read lease and sequential board acquisition are retained. Spectra and the
+getter-only PPS comparison run in the same SNAP job. Diagnostic acquisition
+uses the existing autocorrelator mux/readout controls; no FPGA programming, EQ,
+PPS re-sync or weights deployment is added. Opening a page remains a saved-data
+read. Install all three collector/render/SNAP units together, reload systemd,
+restart the collector, and enable/start both workers. Do not restore the old
+unfiltered jobs unit or launch a second unrestricted worker on this database.
+
+Queue verification: inspect `jobs.kind`, `state`, `worker`, `params` and `result`
+in `/mnt/nvme3/casm_monitor/monitor.sqlite`, plus each service's journal.
+`job_worker_started` records the allowed kinds. A completed job's per-board
+errors and actual saved-spectrum timestamps remain authoritative; `done` alone
+does not establish that every board read succeeded. Tests cover mixed-kind FIFO,
+exclusive claims, scoped reconciliation, legacy imaging requests, scheduler
+cooldowns and the manual acquisition route with mocked boards.
+
 ## SSH-focused navigation, October 6, 2026
 
 Overview, Search, Visibilities and SNAPs restore cached plots and selected
@@ -89,7 +126,7 @@ not refreshed: its configured calibrator `calibration.py`, `results.py` and
 `products.py` no longer exist upstream, and other recorded sources have drifted.
 Its existing snapshot was preserved rather than partially regenerated.
 
-The workspace on **8061** runs separately from the collector and two job
+The workspace on **8061** runs separately from the collector and three job
 workers. The legacy 8060 and 8050 web services were stopped and disabled on
 September 25, 2026; their data and backend services remain in place.
 Opening Overview, Search, Visibilities

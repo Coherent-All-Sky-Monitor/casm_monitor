@@ -5,6 +5,12 @@ Open **SNAPs** at `/snaps`. The white panels show **Power (dB)** versus
 These are stored autocorrelator readouts, not the 3072-channel production/Kafka
 spectra. Opening the page or browsing history never contacts hardware.
 
+Since October 10, hourly and **Read now** requests use the dedicated
+`casm-monitor-snap-read.service`. The existing serialized reader, read lease,
+hourly cadence and manual cooldown are unchanged. Spectrum and PPS acquisition
+no longer wait behind background plot jobs. See
+[worker separation and imaging retirement](resources-and-storage.md#independent-acquisition-and-retired-imaging-october-10-2026).
+
 ## Views and scales
 
 - **Compact · SNAP order** defaults to the latest recorded deployed CB weights,

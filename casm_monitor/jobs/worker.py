@@ -1,4 +1,4 @@
-"""The single job worker.
+"""A job worker, optionally restricted to explicitly selected kinds.
 
 One process, one job at a time, over the durable SQLite queue:
 
@@ -59,7 +59,13 @@ STATE_LOST = "lost"
 
 
 class JobWorker:
-    def __init__(self, settings: Settings, store: Store | None = None) -> None:
+    def __init__(
+        self, settings: Settings, store: Store | None = None,
+        *, kinds: Sequence[str] | None = None,
+    ) -> None:
+        if kinds is not None and (not kinds or any(k not in KINDS for k in kinds)):
+            raise ValueError("worker kinds must be a nonempty selection of registered job kinds")
+        self.kinds = tuple(dict.fromkeys(kinds)) if kinds is not None else None
         self.settings = settings
         self._own_store = store is None
         self.store = store or Store(settings.db_path, store_root=settings.store_root)
@@ -82,7 +88,7 @@ class JobWorker:
 
     def reconcile(self) -> list[int]:
         """Fail jobs left ``running`` by a dead worker."""
-        ids = self.store.reconcile_orphaned_jobs()
+        ids = self.store.reconcile_orphaned_jobs(kinds=self.kinds)
         if ids:
             log.warning("marked orphaned jobs failed: %s", ids)
         return ids
@@ -302,7 +308,7 @@ class JobWorker:
         while max_jobs is None or done < max_jobs:
             if self._stop:
                 break
-            job = self.store.claim_next_job(self.worker_id, LEASE_S)
+            job = self.store.claim_next_job(self.worker_id, LEASE_S, kinds=self.kinds)
             if job is None:
                 break
             self.run_job(job)
@@ -312,11 +318,12 @@ class JobWorker:
     def loop(self) -> None:
         self.reconcile()
         self.store.add_event(
-            "job_worker_started", severity="info", subject=self.worker_id, detail={"kinds": sorted(KINDS)}
+            "job_worker_started", severity="info", subject=self.worker_id,
+            detail={"kinds": sorted(self.kinds if self.kinds is not None else KINDS)}
         )
         try:
             while not self._stop:
-                job = self.store.claim_next_job(self.worker_id, LEASE_S)
+                job = self.store.claim_next_job(self.worker_id, LEASE_S, kinds=self.kinds)
                 if job is None:
                     time.sleep(IDLE_SLEEP_S)
                     continue
@@ -331,6 +338,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="CASM monitor job worker")
     parser.add_argument("--config", default=None)
     parser.add_argument("--drain", action="store_true", help="run queued jobs then exit")
+    parser.add_argument("--kinds", nargs="+", choices=sorted(KINDS),
+                        help="claim/reconcile only these job kinds (default: all)")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
     logging.basicConfig(
@@ -338,7 +347,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     settings = load_settings(args.config)
-    worker = JobWorker(settings)
+    worker = JobWorker(settings, kinds=args.kinds)
     signal.signal(signal.SIGTERM, worker.stop)
     signal.signal(signal.SIGINT, worker.stop)
     try:
