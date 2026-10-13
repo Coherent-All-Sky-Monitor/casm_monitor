@@ -27,7 +27,7 @@ SOURCES = {'sun': 'Sun', 'cyg_a': 'Cyg A', 'cas_a': 'Cas A', 'tau_a': 'Tau A'}
 HALF_WINDOW = 7200
 MAX_DAYS = 7
 MAX_TRANSITS = 3
-FIGURE_VERSION = 'stationary-cross-power-v2'
+FIGURE_VERSION = 'stationary-cross-power-v3-time-edges'
 _CACHE: OrderedDict[tuple, dict] = OrderedDict()
 
 

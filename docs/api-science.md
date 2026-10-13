@@ -115,6 +115,21 @@ absolute-percentile range, phase a cyclic fixed −π to π. These are display
 limits, not normalization or data clipping. Matrix thumbnails use these same
 rules. Their amplitude/signed colour limits are per baseline, so brightness
 alone is not an absolute comparison between baselines; phase limits are shared.
+
+Restart handling (October 12, 2026 local): each observing run may start on a
+different cadence origin. Live tiles, all-pairs thumbnails and source-transit
+tiles place samples at their actual timestamps, leaving uncovered time blank.
+Each sample occupies one nominal integration centred on its timestamp. Regular
+grids use one raster column per integration; shifted runs use sub-integration
+pixels, bounded to 8192 columns, without interpolating values across gaps.
+Tile `time_start`/`time_end` report the integration-cell edges for axes and
+markers; snapshot `t0`/`t1` still identify the first/last actual measurements.
+Stale data retain their original timestamps. Duplicate, nonfinite or reversed
+timestamps are still rejected. The collector publishes short avg8 batches at
+the end of each pass, so a restart no longer adds an eight-integration wait.
+The complete-file guard, eight-channel averaging and crash-safe staging remain.
+Regression/saved-data browser check: `scripts/check_restart_gaps_browser.py`.
+
 Latest-integration spectra are the UI default; window means are explicit.
 Spectrum axes are Frequency (MHz) versus the selected quantity (counts or rad).
 Dynamic-spectrum axes are Time (named time zone) and Frequency (MHz), with the

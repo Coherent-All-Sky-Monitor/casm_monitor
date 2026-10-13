@@ -12,7 +12,7 @@ def saved(tmp_path):
     dest=tmp_path/'actions'/'test'/'inspection'
     dest.mkdir(parents=True)
     meta=dict(antennas=[9,12],ref_ant=9,stages=['raw','geometric','svd'],schemes={'uniform':True},
-              freq_mhz=[500,450,400],preview_freq_mhz=[500,450,400],t0=1.,t1=2.,integration_s=1.)
+              freq_mhz=[500,450,400],preview_freq_mhz=[500,450,400],t0=1.,t1=2.,integration_s=1.,preview_times=[1.,2.])
     (dest/'inspection.json').write_text(json.dumps(meta))
     (dest.parent/'result.json').write_text('{}')
     ones=np.ones((2,3))
@@ -40,6 +40,25 @@ def test_reject_invalid_selections(saved):
                    {'stage':'geometric','quantity':'amp'}):
         with pytest.raises(ValueError):snapshot(saved,**params)
     with pytest.raises(ValueError):latest_inspection(saved/'nonexistent')
+
+
+def test_saved_calibration_waterfall_keeps_restart_gaps(saved):
+    import base64
+    import io
+    from PIL import Image
+    path = saved/'actions'/'test'/'inspection'/'inspection.json'
+    meta = json.loads(path.read_text())
+    meta.update(preview_times=[1., 10.25], t1=10.25)
+    path.write_text(json.dumps(meta))
+    tile = snapshot(saved)['panels'][0]['tile']
+    pixels = np.asarray(Image.open(io.BytesIO(base64.b64decode(tile['src'].split(',')[1]))))
+    assert tile['time_start'] == .5 and tile['time_end'] == 10.75
+    assert np.all(pixels[:, tile['width']//2] == [238,240,243,255])
+    assert not np.any(np.all(pixels[:,0] == [238,240,243,255], axis=1))
+    del meta['preview_times']
+    path.write_text(json.dumps(meta))
+    with pytest.raises(ValueError, match='timestamps are missing'):
+        snapshot(saved)
 
 
 def test_incomplete_inspection_is_not_published(saved):

@@ -13,8 +13,9 @@ What it does each cadence (30 s, against a 137.44 s integration):
    keeping only the baselines among the wired inputs -- 24 inputs = 300
    baselines today, 0.12 s per integration measured;
 4. publish one ``vis_full`` shard per integration (complex64 ``(n_bl, 3072)``,
-   TTL 3 d) and one ``vis_avg8`` shard per eight integrations (8x
-   channel-averaged, ``(n, n_bl, 384)``, TTL 60 d);
+   TTL 3 d) and ``vis_avg8`` shards of up to eight integrations (8x
+   channel-averaged, ``(n, n_bl, 384)``, TTL 60 d), publishing any short
+   remainder at the end of the pass;
 5. record the per-input autocorrelation band power, the subband-dark flags,
    ``vis.age_s``, and mirror the newest integration for the web process.
 
@@ -68,7 +69,7 @@ STREAM_FULL = "vis_full"
 STREAM_AVG8 = "vis_avg8"
 CHAN_AVG = 8
 AVG_NCHAN = NCHAN // CHAN_AVG  # 384
-# Integrations buffered into one vis_avg8 shard (~18 min of history).
+# Maximum integrations in one vis_avg8 shard; each pass publishes its remainder.
 AVG_BUFFER = 8
 # ... and the age at which a short buffer is flushed anyway, so a stalled
 # correlator cannot leave the last few integrations unpublished for ever.
@@ -615,7 +616,9 @@ class VisCollector(Collector):
         read_s = 0.0
         for run in contiguous_runs(todo, AVG_BUFFER):
             read_s += self._process_run(ctx, obs, run, inputs)
-        self._flush_buffer(ctx)
+        # Do not make live plots wait for eight integrations (~18 minutes).
+        # Backfills still batch their reads/shards; crash-safe staging remains.
+        self._flush_buffer(ctx, force=True)
 
         newest_ts = self._newest_ts(ctx, obs, files, obs_t0)
         if newest_ts is not None:

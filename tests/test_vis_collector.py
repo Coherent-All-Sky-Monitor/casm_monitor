@@ -370,6 +370,42 @@ def test_collect_reports_no_files_without_raising(settings, tmp_path, layout) ->
     store.close()
 
 
+def test_each_collect_pass_publishes_short_batches_and_recovered_staging(settings, layout, monkeypatch):
+    store = Store(settings.db_path, store_root=settings.store_root)
+    ctx = CollectorContext(settings=settings, store=store,
+                           shards=ShardWriter(store, settings.shards_root))
+    inputs = [0, 2, 3]
+    frame = np.ones((visc.NCHAN, 6), dtype=np.complex64)
+    freq = rowmap.freq_axis_mhz()
+    now = visc.time.time()
+    first = visc.PendingIntegration(0, 0, now-2*visc.DT_S, True)
+    second = visc.PendingIntegration(0, 1, now-visc.DT_S, False)
+    # Simulate a crash after the first full-resolution write, before avg8 flush.
+    previous = visc.VisCollector(settings)
+    previous._publish(ctx, OBS, first, first.ts, frame, inputs, freq)
+    assert store.list_shards(visc.STREAM_AVG8) == []
+    collector = visc.VisCollector(settings)
+    monkeypatch.setattr(visc, 'newest_observation', lambda path: OBS)
+    monkeypatch.setattr(visc, 'scan_observation_files', lambda *args: [])
+    monkeypatch.setattr(visc, 'pending_integrations', lambda *args, **kw: [second])
+    def process(ctx, obs, run, selected):
+        for item in run:
+            collector._publish(ctx, obs, item, item.ts, frame*2, selected, freq)
+        return 0.
+    monkeypatch.setattr(collector, '_process_run', process)
+    collector.collect(ctx)
+    shards = store.list_shards(visc.STREAM_AVG8)
+    assert len(shards) == 1 and shards[0]['shape'] == [2, 6, visc.AVG_NCHAN]
+    assert shards[0]['meta']['t'] == [first.ts, second.ts]
+    assert visc.read_avg8_staging(settings, OBS) is None
+    # Idle polls must not duplicate the published samples.
+    monkeypatch.setattr(visc, 'pending_integrations', lambda *args, **kw: [])
+    collector.collect(ctx)
+    assert len(store.list_shards(visc.STREAM_AVG8)) == 1
+    collector.close(ctx)
+    store.close()
+
+
 def test_collect_records_an_obs_change_event(settings, tmp_path, layout) -> None:
     from dataclasses import replace
 

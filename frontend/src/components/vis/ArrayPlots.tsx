@@ -5,7 +5,7 @@ import {PowerScale,powerValue,powerLabel} from '../powerScale';
 export type Quantity = "amp" | "real" | "imag" | "phase";
 export type Antenna = {packet_idx:number; antenna:number; station:string; position_enu_m:number[]; snap?:number|null; slot?:string|null; adc?:number|null; beamforming?:boolean|null};
 export function wiringLabel(a:Antenna) {return `SNAP ${a.snap??'—'} · SLOT ${a.slot??'—'} · ADC ${a.adc??'—'}`;}
-export type Tile = {src:string;scale:string;min:number;max:number;log:boolean;width:number;height:number};
+export type Tile = {src:string;scale:string;min:number;max:number;log:boolean;width:number;height:number;time_start?:number;time_end?:number};
 export type Panel = {input:number;pair:number[];is_auto:boolean;valid_fraction:number;spectra:Record<Quantity,{latest:(number|null)[];mean:(number|null)[]}>;images:Partial<Record<Quantity,Tile>>;power_images?:Partial<Record<PowerScale,Tile>>};
 export type Snapshot = {inputs:Antenna[];default_inputs:number[];membership:{status:string;product_id:string|null};reference_input:number;reference:string;mode:string;panels:Panel[];freq_mhz:number[];t0:number;t1:number;samples:number;integration_s:number;matrix:Record<Quantity,(number|null)[][]>;provenance:Record<string,unknown>};
 export const QUANTITIES: [Quantity,string][] = [["amp","|V|"],["real","Real(V)"],["imag","Imag(V)"],["phase","Phase"]];
@@ -86,14 +86,17 @@ export function DynamicSpectrum({tile,data,zone,quantity,valueLabel,marker}:{til
   const f0=Math.min(...data.freq_mhz),f1=Math.max(...data.freq_mhz);
   const frequencyTicks=niceTicks(f0,f1,Math.min(25,size.height/17+1));
   const frequencyWidth=Math.max(37,...frequencyTicks.map(f=>frequencyLabel(f).length*6+4));
-  const times=timeTicks(data.t0,data.t1,size.width,zone);
+  // New tiles carry their true integration-cell edges. Saved legacy figures
+  // retain their original axes until regenerated.
+  const t0=tile.time_start??data.t0,t1=tile.time_end??data.t1;
+  const times=timeTicks(t0,t1,size.width,zone);
   return <div className="dynamic-figure">
     <div className="array-dynamic" style={{gridTemplateColumns:`15px ${frequencyWidth}px minmax(0, 1fr)`}}>
       <span className="dynamic-y-label">Frequency (MHz)</span>
       <div className="dynamic-frequency">{frequencyTicks.map(f=>{const p=(f1-f)/(f1-f0),anchor=p<.03?0:p>.97?100:50;return <span key={f} style={{top:`${p*100}%`,transform:`translateY(-${anchor}%)`,['--tick-anchor' as string]:`${anchor}%`}}>{frequencyLabel(f)}</span>;})}</div>
       <img ref={raster} src={tile.src} alt={`${valueLabel??quantityLabel(quantity)} dynamic spectrum`} draggable={false}/>
-      {marker&&marker.time>=data.t0&&marker.time<=data.t1&&<div className="dynamic-marker"><span style={{left:`${(marker.time-data.t0)/(data.t1-data.t0)*100}%`}}><small>{marker.label}</small></span></div>}
-      <div className="dynamic-time">{times.map(t=>{const p=(t-data.t0)/(data.t1-data.t0),anchor=p<.05?0:p>.95?100:50;return <span key={t} title={clock(t,zone,true)} style={{left:`${p*100}%`,transform:`translateX(-${anchor}%)`,['--tick-anchor' as string]:`${anchor}%`}}>{clock(t,zone)}</span>;})}</div>
+      {marker&&marker.time>=t0&&marker.time<=t1&&<div className="dynamic-marker"><span style={{left:`${(marker.time-t0)/(t1-t0)*100}%`}}><small>{marker.label}</small></span></div>}
+      <div className="dynamic-time">{times.map(t=>{const p=(t-t0)/(t1-t0),anchor=p<.05?0:p>.95?100:50;return <span key={t} title={clock(t,zone,true)} style={{left:`${p*100}%`,transform:`translateX(-${anchor}%)`,['--tick-anchor' as string]:`${anchor}%`}}>{clock(t,zone)}</span>;})}</div>
       <div className="dynamic-x-label">Time ({zone==='UTC'?'UTC':zone})<small>{clock(data.t0,zone,true)} – {clock(data.t1,zone,true)}</small></div>
     </div>
     <div className="tile-scale" aria-label={`${valueLabel??axisLabel(quantity)} colour scale`}>

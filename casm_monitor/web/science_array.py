@@ -74,10 +74,46 @@ def preview_values(z, max_channels=128):
                 amp=vis_ops.block_mean(np.abs(z), max_channels), phase=phase(mean))
 
 
+def time_raster(stamps, integration_s=DT_S):
+    """Map bounded raster columns to actual integration times; -1 means no data.
+
+    A restart can establish a new cadence origin. Each sample occupies at most
+    one nominal integration centred on its timestamp, independently of earlier
+    runs. A duration array supports already-averaged diagnostic cells of
+    different lengths. No new time averaging or gap filling is performed.
+    """
+    stamps = np.asarray(stamps, dtype=float)
+    if (stamps.ndim != 1 or not len(stamps) or not np.all(np.isfinite(stamps))
+            or np.any(np.diff(stamps) <= 0)):
+        raise HTTPException(409, 'Visibility timestamps must be finite and increasing')
+    durations = np.broadcast_to(np.asarray(integration_s, dtype=float), stamps.shape)
+    if not np.all(np.isfinite(durations)) or np.any(durations <= 0):
+        raise HTTPException(409, 'Integration durations must be positive and finite')
+    step = float(np.min(durations))
+    start, end = float(stamps[0] - durations[0] / 2), float(stamps[-1] + durations[-1] / 2)
+    relative = (stamps - stamps[0]) / step
+    aligned = np.all(durations == step) and np.all(np.abs(relative - np.rint(relative)) < 1e-6)
+    nominal_width = int(round(relative[-1])) + 1
+    # Regular data retain their one-column-per-integration raster. Across
+    # restarts use sub-integration pixels, with a hard bound on allocation.
+    width = min(8192, nominal_width if aligned else int(np.ceil((end - start) / step * 8)))
+    centres = start + (np.arange(width) + .5) * (end - start) / width
+    right = np.searchsorted(stamps, centres).clip(0, len(stamps) - 1)
+    left = (right - 1).clip(0)
+    dl, dr = np.abs(centres - stamps[left]), np.abs(stamps[right] - centres)
+    covers_left, covers_right = dl <= durations[left]/2+1e-6, dr <= durations[right]/2+1e-6
+    nearest = np.where(covers_left & (~covers_right | (dl <= dr)), left, right)
+    nearest[~covers_left & ~covers_right] = -1
+    return nearest, start, end
+
+
 def image_tile(values, stamps, quantity, *, power_scale=None):
     from matplotlib import colormaps
     from PIL import Image
     a = np.asarray(values, dtype=float)
+    rows, time_start, time_end = time_raster(stamps)
+    if a.ndim != 2 or a.shape[0] != len(stamps) or not a.shape[1]:
+        raise HTTPException(409, 'Visibility image dimensions do not match timestamps')
     if power_scale == 'db':
         # Autocorrelation power, relative to one native count. Never abs/floor
         # signed or zero power merely to make its logarithm drawable.
@@ -107,12 +143,9 @@ def image_tile(values, stamps, quantity, *, power_scale=None):
         scaled = (a - lo) / (hi - lo)
     rgb = colormaps[cmap](np.clip(np.nan_to_num(scaled), 0, 1), bytes=True)[..., :3]
     rgb[~np.isfinite(a)] = (29, 35, 43)
-    # Keep empty integrations empty. Do not stretch adjacent measurements over gaps.
-    ix = np.rint((stamps - stamps[0]) / DT_S).astype(int)
-    if np.any(np.abs((stamps-stamps[0])/DT_S - ix) > .05) or len(set(ix)) != len(ix):
-        raise HTTPException(409, 'Irregular timestamps require the detailed visibility view')
-    pixels = np.full((ix[-1]+1, a.shape[1], 3), (29,35,43), dtype=np.uint8)
-    pixels[ix] = rgb
+    pixels = np.full((len(rows), a.shape[1], 3), (29,35,43), dtype=np.uint8)
+    present = rows >= 0
+    pixels[present] = rgb[rows[present]]
     image = Image.fromarray(np.swapaxes(pixels, 0, 1))
     buf = io.BytesIO()
     image.save(buf, format='PNG')
@@ -121,7 +154,8 @@ def image_tile(values, stamps, quantity, *, power_scale=None):
     return dict(src='data:image/png;base64,'+base64.b64encode(buf.getvalue()).decode(),
                 scale='data:image/png;base64,'+base64.b64encode(scale.getvalue()).decode(),
                 min=float(lo), max=float(hi), log=logarithmic,
-                width=image.width, height=image.height)
+                width=image.width, height=image.height,
+                time_start=time_start, time_end=time_end)
 
 
 IMAGE_VIEWS = ('all', 'none', 'real', 'imag', 'amp', 'phase', 'power_db', 'power_linear')

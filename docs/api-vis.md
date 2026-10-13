@@ -86,7 +86,9 @@ the per-input facts needed for panel titles.
 - `obs.age_s` is the age of the newest cached integration (the status strip's
   `vis.age_s`: amber past 600 s, stale past 1800 s); `n_cached` counts
   full-resolution `vis_full` shards (3 d retention) and `n_cached_avg8` the
-  8x channel-averaged `vis_avg8` shards (60 d, eight integrations each).
+  8x channel-averaged `vis_avg8` shards (60 d, up to eight integrations each).
+  Short batches publish at the end of each collector pass; live plots do not
+  wait for a batch to fill. Each recorded integration remains a separate sample.
 - Each `vis_avg8` channel is the MEAN of its 8 native channels, and its
   frequency axis reports the mean frequency of that block (channel 0 is the
   mean of native channels 0-7, not native channel 0's own frequency) --

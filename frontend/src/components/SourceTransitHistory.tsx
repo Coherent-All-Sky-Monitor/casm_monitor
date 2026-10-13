@@ -13,7 +13,7 @@ type Beam = DynamicAxes & {tile:Tile; name:string; date:string; transit_unix:num
 function BeamFigure({beam}:{beam:Beam}) {
   return <><DynamicSpectrum tile={beam.tile} data={beam} zone={LOCAL} quantity="real"
     valueLabel="Beam cross-power (weighted counts)" marker={{time:beam.transit_unix,label:'Transit'}}/>
-    <BeamLightCurve curve={beam.light_curve} t0={beam.t0} t1={beam.t1} integration={beam.integration_s} transit={beam.transit_unix} zone={LOCAL}/></>;
+    <BeamLightCurve curve={beam.light_curve} t0={beam.tile.time_start??beam.t0} t1={beam.tile.time_end??beam.t1} integration={beam.integration_s} transit={beam.transit_unix} zone={LOCAL}/></>;
 }
 
 export function SourceTransitHistory({data}:{data:Json}) {

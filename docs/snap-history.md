@@ -78,6 +78,15 @@ EQ/FFT changes are labelled against the first setting encountered. No samples
 or missing hours are interpolated. Selection, wiring and beamforming membership
 are captured from the page when playback opens, not reconstructed historically.
 
+This also applies across observation/monitor restarts: failed reads do not
+become zero spectra, and a missing board never borrows another frame's data.
+Live can retain the last successful read with its original timestamp and stale
+status. Trends break across missing hours or changed EQ epochs. October 12
+regression audit: `tests/test_snap_spectra.py`, `tests/test_snap_workspace.py`
+and `frontend/tests/snap-playback.test.mjs`; the hourly reader remains independent
+of visibility rendering. A saved movie steps between recorded reads and labels
+the gap, rather than inventing hourly frames during an outage.
+
 The browser fetches up to 12 frames at a time for the initial input selection and
 prefetches the next batch. It retains two batches plus the displayed frame while
 seeking, not the full week. Steps within a loaded batch make no HTTP request.

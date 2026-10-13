@@ -160,6 +160,11 @@ step complete. Forward navigation is disabled until the calibration is saved.
    every stage side by side. Phase is angle of complex mean; magnitude is
    mean magnitude. Dynamic previews average at most 180 time × 256 frequency
    cells, applying the SVD correction before averaging.
+   Saved preview timestamps set the waterfall positions, including across
+   observing restarts; missing time stays blank. The original preview's time
+   averaging remains, so gaps shorter than an averaged cell are not resolved.
+   Missing timestamp metadata requires preparing diagnostics again instead of
+   inventing a uniform timeline. Existing exported PNGs/notebooks stay unchanged.
 
    Antenna weights show applied phase, normalized amplitude and int8 preview,
    differences from the deployed reference, and RMS phase residual over the

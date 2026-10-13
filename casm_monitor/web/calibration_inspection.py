@@ -7,7 +7,7 @@ from functools import lru_cache
 
 import numpy as np
 
-from .science_array import finite_list, phase
+from .science_array import finite_list, phase, time_raster
 
 
 @lru_cache(maxsize=12)
@@ -37,7 +37,7 @@ def latest_inspection(root, expected_static=None):
     return path.parent, json.loads(path.read_text())
 
 
-def tile(values, quantity, freq):
+def tile(values, quantity, freq, stamps, integration_s):
     from matplotlib import colormaps
     from PIL import Image
     finite = values[np.isfinite(values)]
@@ -55,12 +55,19 @@ def tile(values, quantity, freq):
     # Raster top is high frequency, regardless of native file ordering.
     if freq[0] < freq[-1]:
         rgb = rgb[:, ::-1]
+    rows, start, end = time_raster(stamps, integration_s)
+    if len(stamps) != len(values):
+        raise ValueError('Saved diagnostic timestamps do not match its preview')
+    pixels = np.full((len(rows), values.shape[1], 4), (238, 240, 243, 255), dtype=np.uint8)
+    present = rows >= 0
+    pixels[present] = rgb[rows[present]]
     def png(pixels):
         buf = io.BytesIO()
         Image.fromarray(pixels).save(buf, format='PNG')
         return 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()
-    return dict(src=png(rgb.transpose(1, 0, 2)), scale=png(colormaps[cmap](np.linspace(0, 1, 256), bytes=True)[None, :, :]),
-                min=low, max=high, log=False, width=values.shape[0], height=values.shape[1])
+    return dict(src=png(pixels.transpose(1, 0, 2)), scale=png(colormaps[cmap](np.linspace(0, 1, 256), bytes=True)[None, :, :]),
+                min=low, max=high, log=False, width=len(rows), height=values.shape[1],
+                time_start=start, time_end=end)
 
 
 def component(z, amplitude, quantity):
@@ -91,6 +98,19 @@ def snapshot(root, reference=None, stage='svd', quantity='phase', scheme='unifor
     actual = amplitude*weights
     quantized = (np.rint(np.nan_to_num(actual.real)*127) + 1j*np.rint(np.nan_to_num(actual.imag)*127))/127
     panels = []
+    stamps = meta.get('preview_times')
+    if not stamps:
+        raise ValueError('Saved diagnostic timestamps are missing; prepare the array diagnostics again')
+    # The saved diagnostic may already contain time averages. Keep their
+    # recorded centres and nominal average duration, never stretch an image
+    # uniformly from the first to last measurement across an outage.
+    # The canonical inspection uses np.array_split over integrations: earlier
+    # cells can contain one more sample. A single average duration would create
+    # artificial gaps between those wider cells even in uninterrupted data.
+    count, extra = divmod(meta.get('samples', len(stamps)), len(stamps))
+    preview_dt = np.full(len(stamps), max(1, count), dtype=float)
+    preview_dt[:extra] += 1
+    preview_dt *= meta['integration_s']
     for antenna in ([target] if target is not None else ants):
         if antenna == ref:
             continue
@@ -101,7 +121,8 @@ def snapshot(root, reference=None, stage='svd', quantity='phase', scheme='unifor
         if antenna > ref:
             z, dynamic = z.conj(), dynamic.conj()
         panels.append(dict(antenna=antenna, values=finite_list(component(z, saved[stage+'_amp'], quantity)),
-            tile=tile(component(dynamic, saved[stage+'_dynamic_amp'], quantity), quantity, meta['preview_freq_mhz'])))
+            tile=tile(component(dynamic, saved[stage+'_dynamic_amp'], quantity), quantity,
+                      meta['preview_freq_mhz'], stamps, preview_dt)))
     antenna_panels = []
     for i, antenna in enumerate(ants):
         reference_amp = np.abs(recorded[i])

@@ -70,6 +70,55 @@ def test_dynamic_raster_retains_actual_gaps_and_undefined_phase():
     np.testing.assert_equal(im[1,0],[29,35,43])
 
 
+@pytest.mark.parametrize('quantity,power_scale', [
+    ('real', None), ('imag', None), ('amp', None), ('phase', None),
+    ('amp', 'db'), ('amp', 'linear'),
+])
+def test_restart_raster_uses_actual_times_without_filling_outages(quantity, power_scale):
+    # Three independent observing runs, including the measured October 12
+    # restart's 35.65 s change of cadence origin and a longer later outage.
+    dt = array.DT_S
+    stamps = 1791829000 + np.array([0, dt, 7*dt+35.65, 8*dt+35.65, 30*dt+21, 31*dt+21])
+    values = np.arange(1., 13.).reshape(6, 2)
+    values[2, 1] = np.nan
+    tile = array.image_tile(values, stamps, quantity, power_scale=power_scale)
+    rows, start, end = array.time_raster(stamps)
+    pixels = np.asarray(Image.open(io.BytesIO(base64.b64decode(tile['src'].split(',')[1]))))
+    assert tile['time_start'] == start == stamps[0] - dt/2
+    assert tile['time_end'] == end == stamps[-1] + dt/2
+    assert set(rows) == {-1, 0, 1, 2, 3, 4, 5}
+    centres = start + (np.arange(len(rows))+.5)*(end-start)/len(rows)
+    assert np.all(np.abs(centres[rows>=0]-stamps[rows[rows>=0]]) <= dt/2+1e-6)
+    assert np.all(np.min(np.abs(centres[rows<0, None]-stamps), axis=1) > dt/2)
+    assert np.all(pixels[:, rows<0] == [29,35,43])
+    assert np.all(pixels[1, rows==2] == [29,35,43])
+    assert not np.any(np.all(pixels[0, rows>=0] == [29,35,43], axis=1))
+
+
+def test_raster_is_bounded_and_single_sample_has_a_nonzero_time_extent():
+    rows, start, end = array.time_raster([1000.])
+    assert rows.tolist() == [0]
+    assert end-start == pytest.approx(array.DT_S)
+    rows, _, _ = array.time_raster([0, 365*86400.])
+    assert len(rows) == 8192
+    assert np.count_nonzero(rows<0) > 8000
+
+
+def test_unequal_averaged_cell_widths_do_not_create_false_gaps():
+    # Four original integrations averaged into three cells (2, 1, 1).
+    rows, start, end = array.time_raster([.5, 2., 3.], [2., 1., 1.])
+    assert (start, end) == (-.5, 3.5)
+    assert set(rows) == {0,1,2}
+    rows, _, _ = array.time_raster([.5, 12., 13.], [2., 1., 1.])
+    assert set(rows) == {-1,0,1,2}
+
+
+@pytest.mark.parametrize('stamps', [[], [0,0], [2,1], [0,np.nan], [0,np.inf]])
+def test_raster_still_rejects_invalid_timestamps(stamps):
+    with pytest.raises(HTTPException):
+        array.time_raster(stamps)
+
+
 def test_auto_power_tiles_use_ten_log_and_preserve_nonpositive_linear_values():
     power=np.array([[-1.,0.,1.,10.,100.],[1.,10.,100.,1000.,10000.]])
     stamps=np.array([0,2*array.DT_S])
