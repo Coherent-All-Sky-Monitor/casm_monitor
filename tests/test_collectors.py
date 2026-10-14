@@ -248,6 +248,8 @@ def test_default_collector_set_names(settings):
         "obs",
         "hella",
         "hella_corr2",
+        "hella_runtime_corr1",
+        "hella_runtime_corr2",
         "services",
         "kafka_bp",
         "zapdos",

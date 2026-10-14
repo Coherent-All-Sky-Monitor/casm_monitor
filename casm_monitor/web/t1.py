@@ -507,6 +507,11 @@ def build_router(reader, settings):
         return {"checked_utc": iso(now), "ledger": info,
                 "streams": [{key:row[key] for key in fields} for row in rows]}
 
+    @router.get("/configuration")
+    def search_configuration():
+        from .hella_config import configuration
+        return configuration(reader)
+
     @router.get("/products/{filename}")
     def product(filename: str):
         if not settings.observation_cache_root or not re.fullmatch(r"[0-9a-f]{64}\.png", filename):

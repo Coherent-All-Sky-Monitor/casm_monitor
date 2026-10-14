@@ -2,6 +2,48 @@
 
 ## Current observation workspace
 
+### Current HELLA configuration
+
+`GET /api/t1/configuration` reads the saved process-associated configuration
+for streams 0–7. It is independent of the selected plotting interval. The
+white Search configuration panel presents DM/S/N, derived boxcar trial widths,
+gulp size, **SumThreshold RFI** ON/OFF, and the static mask as channels and MHz.
+All streams share one summary only when all eight settings agree; stream
+buttons and the details table expose differences. SCRUNCH passes, spectral
+clipping bounds and explicitly configured baseline/quantisation parameters
+remain in the disclosure. Boxcar trials follow the fork's rounded geometric
+grid, capped at WIDTH_MAX/2 and 15 trials: MIN=1, MAX=128, ratio=2 means
+1, 2, 4, 8, 16, 32, 64 samples. Raw settings remain in details; the Search
+histogram's existing 0–6 display is unchanged.
+
+Two `HellaRuntimeCollector` instances sample every 60 seconds: local `/proc`
+and files on corr1, one bounded read-only SSH probe on corr2. Each process's
+`-c /tmp/hella_N.cfg` includes wrapper overrides, with last assignment winning.
+Only allowlisted search fields are saved in `hella.runtime.corr1/corr2` scalar
+JSON; process environments and unrelated config values are never collected.
+Page requests read two indexed scalar rows and never SSH, scan logs or run GPU
+code. The browser polls every 30 seconds while visible. A failed read replaces
+the old success; snapshots older than 180 seconds become Unknown. Edited-since-
+launch files, duplicate processes and unfamiliar executable paths cannot
+produce active flag badges. The two-second startup allowance covers the
+wrapper appending overrides immediately before exec. This is file/process
+association, not introspection of process memory or proof of flagger efficacy.
+
+The mask follows the deployed fork's `[FLAG1, FLAG2)` convention and requires
+a configured flagging SCRUNCH pass. Channel 0 is 484.375 MHz; spacing is
+−0.030517578125 MHz across 3072 channels. Thus FLAG1=0, FLAG2=472 labels
+channels 0–471, 470.0012–484.375 MHz (channel centres). The striped region is
+the static mask only, not per-gulp SumThreshold decisions. SumThreshold is
+enabled by the presence of its config line, including a defaults-only line;
+its numeric parameters are shown in their native order. Other omitted
+parameters are not silently filled from source-code defaults.
+
+Verification: `tests/test_hella_runtime.py`, the collector and T1 suites, and
+`scripts/check_search_configuration_browser.py`. No search/trigger setting,
+mask, running HELLA process or T2 service is changed by this panel.
+
+### Plots and stream liveness
+
 The 8061 Search (T1) page uses `GET /api/t1?t0=...&t1=...&time_tz=...` for its
 dated plots and `GET /api/t1/status` for independent live stream boxes. The
 latter reads only the gulp ledger and includes current gulp count/rate, age,

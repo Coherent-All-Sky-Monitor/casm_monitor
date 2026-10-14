@@ -6,6 +6,7 @@ import {useCachedResource, useTabState} from '../components/CachedResource';
 import {localStamp} from '../components/OverviewPlots';
 import "../search.css";
 import {useDelayedBusy,usePreparedView} from '../components/RefreshState';
+import {SearchConfiguration} from '../components/SearchConfiguration';
 
 const searchImages=(data:Json)=>[data.plot_url??`/api/t1/plot.png?${new URLSearchParams({t0:data.t0,t1:data.t1,time_tz:data.time_tz})}`];
 
@@ -41,11 +42,11 @@ export default function T1Page() {
   const plotUrl=data?.plot_url??`/api/t1/plot.png?${query}`;
   return <div className="workspace-page search-t1-page">
     <div className="page-heading"><h2>Search (T1)</h2><p className="muted">Hella · 8 streams · 64 beams per stream</p></div>
-    <div className="control-surface">
+    <div className="search-top-grid"><SearchConfiguration/><div className="control-surface">
       <div className="field-row"><TimeZone value={zone} onChange={setZone}/><button onClick={()=>{setRolling(true);setWindow(initialWindow());}}>Live · rolling 24 h</button><span>{rolling?"Updates every 5 minutes":"Historical interval"}</span></div>
       <TimeWindow value={window} timeZone={zone} onChange={w=>{setRolling(false);setWindow(w);}}/>
       <button className="primary" disabled={busy} onClick={load}>Inspect interval</button><span className="refresh-status" role="status">{updating?'Updating…':''}</span>
-    </div>
+    </div></div>
     {error&&<Notice>{error}</Notice>}
     {status.error&&<Notice>Stream status refresh failed. Current state is unknown.</Notice>}
     {streams.length>0&&<>

@@ -128,6 +128,12 @@ activation remains separate from the preview build.
 `/search` is **Search (T1)**, with white Matplotlib figures, labelled count
 scales and the shared click-to-zoom viewer. Zoom pins the image and interval;
 it does not query or rebin data. Stream cards wrap on smaller screens.
+Its white **Search configuration** card shows current process-associated HELLA
+settings, SumThreshold RFI ON/OFF and a striped static-mask band. All-stream and
+individual-stream buttons expose mismatches; detailed flag parameters are
+collapsed. This card remains current when the plotted interval is historical.
+It polls saved evidence, never contacting the correlators from a page request.
+See [configuration API and freshness](../docs/api-search.md).
 `/cal/compare`, `/cal/transit`,
 `/cal` and `/sources` expose their respective scientific workflows. Existing
 candidate/event routes remain available. The old 8060 monitor and 8050 T3 web

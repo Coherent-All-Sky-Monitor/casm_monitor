@@ -32,6 +32,7 @@ from ..config import Settings, load_settings
 from ..store import ShardWriter, Store, apply_retention
 from .base import Collector, CollectorContext
 from .hella import HellaCollector
+from .hella_runtime import HellaRuntimeCollector
 from .kafka_bp import KafkaBandpassCollector
 from .nodes import DisksCollector, GpusCollector, StoreCollector
 from .obs import ObsCollector
@@ -55,6 +56,8 @@ def default_collectors(settings: Settings) -> list[Collector]:
         ObsCollector(settings),
         HellaCollector(settings, node="corr1"),
         HellaCollector(settings, node="corr2", cadence_s=settings.cadence("hella_corr2", 600.0)),
+        HellaRuntimeCollector(settings, node="corr1"),
+        HellaRuntimeCollector(settings, node="corr2"),
         ServicesCollector(settings),
         KafkaBandpassCollector(settings),
         ZapdosCollector(settings),
