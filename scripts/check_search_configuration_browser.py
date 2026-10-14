@@ -25,10 +25,11 @@ def main():
         page.goto(BASE+'/search',wait_until='domcontentloaded')
         card = page.get_by_role('region',name='Current HELLA search configuration')
         expect(card.get_by_text('All 8 match',exact=True)).to_be_visible(timeout=30000)
-        expect(card.get_by_role('table',name='Search settings')).to_contain_text('ON')
+        expect(card.get_by_role('table',name='Flagging settings')).to_contain_text('ON')
         expect(card.get_by_role('table',name='Search settings')).to_contain_text('1–64')
-        expect(card.get_by_role('table',name='Mask frequency ranges')).to_contain_text('470–484.38')
-        expect(card.get_by_role('table',name='Mask frequency ranges')).to_contain_text('0–471')
+        expect(card.get_by_role('table',name='Flagging settings')).to_contain_text('470.00–484.38 MHz')
+        expect(card.get_by_role('table',name='Flagging settings')).to_contain_text('0–471')
+        expect(card.get_by_role('img')).to_have_count(0)
         expect(card.get_by_role('combobox')).to_have_count(0)
         for width in (1600,1440,800,390):
             page.set_viewport_size({'width':width,'height':1050})
@@ -41,7 +42,7 @@ def main():
         expect(card).to_contain_text('1 1 1000000 1')
         page.close()
 
-        for mode in ('mixed','off','unknown','failure','interior'):
+        for mode in ('mixed','off','unknown','failure','interior','invalid'):
             fixture = copy.deepcopy(live)
             fixture['checked_utc'] = datetime.now(timezone.utc).isoformat()
             if mode == 'mixed':
@@ -56,6 +57,8 @@ def main():
                     stream.update(status='unknown',settings=None,reason='Configuration edited after launch')
             elif mode == 'interior':
                 fixture['common']['mask'].update(enabled=True,first=1000,last=1500)
+            elif mode == 'invalid':
+                fixture['common']['mask'].update(enabled=True,first=-1,last=100)
             context = browser.new_context(viewport={'width':1440,'height':1050})
             context.route('**/api/t1/configuration',lambda route,_request,body=fixture,mode=mode:route.fulfill(
                 status=503 if mode=='failure' else 200,content_type='application/json',body=json.dumps(body)))
@@ -69,23 +72,24 @@ def main():
                 card.locator('summary').click()
                 expect(card.locator('.search-config-table tbody tr').nth(4)).to_contain_text('13')
             elif mode == 'off':
-                expect(card.locator('.search-settings-table .off')).to_have_text('OFF')
-                expect(card.locator('.search-mask-track .masked')).to_have_count(0)
-                expect(card.locator('.search-mask-track .kept')).to_have_count(1)
+                expect(card.locator('.search-settings-table .off')).to_have_count(2)
+                expect(card.get_by_role('row',name='Masked frequencies None',exact=True)).to_be_visible()
+                expect(card.get_by_role('row',name='Masked channels None',exact=True)).to_be_visible()
             elif mode == 'interior':
-                expect(card.locator('.search-mask-track .masked')).to_have_count(1)
-                expect(card.locator('.search-mask-track .kept')).to_have_count(2)
-                expect(card.get_by_role('table',name='Mask frequency ranges')).to_contain_text('1000–1500')
+                expect(card.get_by_role('table',name='Flagging settings')).to_contain_text('1000–1500')
+            elif mode == 'invalid':
+                expect(card.get_by_role('row',name='Channel mask Unknown',exact=True)).to_be_visible()
+                expect(card.get_by_role('row',name='Masked frequencies —',exact=True)).to_be_visible()
             else:
                 expect(card.locator('.search-config-note')).to_contain_text(
                     'Configuration read unavailable' if mode=='failure' else 'Some streams are unverified')
                 expect(card.locator('.search-settings-table .on')).to_have_count(0)
-                expect(card.locator('.search-mask-track .kept')).to_have_count(0)
+                expect(card.get_by_role('row',name='Channel mask Unknown',exact=True)).to_be_visible()
             context.close()
         browser.close()
     assert not errors, errors
     assert not writes, writes
-    print(json.dumps({'checks':'live tables/ranges, responsive, no selector, stream details, mixed, off, unknown, failed read, interior mask',
+    print(json.dumps({'checks':'live tables/ranges, responsive, no selector/bar, stream details, mixed, off, unknown, failed read, interior/invalid mask',
                       'errors':errors,'writes':writes,'screenshots':str(OUTPUT)},indent=2))
 
 

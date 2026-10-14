@@ -16,36 +16,28 @@ export function SearchConfiguration(){
   const status=!fresh?'Checking settings':matched?'All 8 match':count===8?'Settings differ':`${count}/8 verified`;
   const band=data?.band,mask=cfg?.mask,st=cfg?.sumthreshold;
   const segments=maskSegments(band,mask);
-  const masked=segments?.filter(s=>s.masked).reduce((n,s)=>n+s.count,0);
-  const percent=segments&&band?100*(masked??0)/band.nchan:null;
-  const ticks=band?[band.low_mhz,...[400,420,440,460,480].filter(f=>f>band.low_mhz+.12*(band.high_mhz-band.low_mhz)&&f<band.high_mhz-.12*(band.high_mhz-band.low_mhz)),band.high_mhz]:[];
+  const masked=segments?.find(s=>s.masked);
+  const maskState=segments?(masked?'on':'off'):'unknown';
   return <section className="search-config" aria-label="Current HELLA search configuration">
     <header className="search-config-heading"><h3>Search configuration</h3><span className={`search-config-badge ${matched?'on':'unknown'}`}>{status}</span></header>
     {!cfg&&<p className="search-config-note" role="status">{result.error?'Configuration read unavailable.':!fresh?'Waiting for the latest configuration…':count===8?'Settings differ between streams. See stream details below.':'Some streams are unverified. See stream details below.'}</p>}
     <div className="search-config-body">
-      <table className="search-settings-table" aria-label="Search settings"><thead><tr><th scope="col">Setting</th><th scope="col">Current value</th></tr></thead><tbody>
+      <table className="search-settings-table" aria-label="Search settings"><thead><tr><th scope="col">Search</th><th scope="col">Current value</th></tr></thead><tbody>
         <tr><th scope="row">DM range</th><td>{range(cfg?.dm_min,cfg?.dm_max)} <span>pc cm⁻³</span></td></tr>
         <tr><th scope="row">Search S/N</th><td>{cfg?.snr==null?'—':`≥ ${fmt(cfg.snr,2)}`}</td></tr>
         <tr><th scope="row">Boxcar widths</th><td>{cfg?.widths?.length?range(cfg.widths[0],cfg.widths[cfg.widths.length-1]):'—'} <span>samples · {cfg?.widths?.length??'—'} trials</span></td></tr>
         <tr><th scope="row">Gulp</th><td>{cfg?.gulp_s==null?'—':`${fmt(cfg.gulp_s,2)} s`} <span>· {fmt(cfg?.gulp)} samples</span></td></tr>
-        <tr><th scope="row">SumThreshold RFI</th><td><span className={`search-config-badge ${st?.enabled===true?'on':st?.enabled===false?'off':'unknown'}`}>{st?.enabled===true?'ON':st?.enabled===false?'OFF':'Unknown'}</span></td></tr>
-        <tr><th scope="row">Static channel mask</th><td>{segments?(masked?`${fmt(masked)} channels`:'OFF'):'Unknown'} {masked?<span>· {fmt(percent,1)}% of band</span>:null}</td></tr>
       </tbody></table>
-      <section className="search-mask" aria-label="Static channel mask">
-        <header><h4>Channel mask</h4><span>Low → high frequency</span></header>
-        <div className="search-mask-track" role="img" aria-label={segments?segments.map(s=>`${s.masked?'Masked':'Kept'}: ${fmt(s.low,2)}–${fmt(s.high,2)} MHz, channels ${s.first}–${s.last}`).join('; '):'Channel mask unknown'}>
-          {segments?segments.map(s=><div key={s.first} className={s.masked?'masked':'kept'} style={{width:`${100*s.fraction}%`}} title={`${s.masked?'Masked':'Kept'} · channels ${s.first}–${s.last} · ${fmt(s.low,2)}–${fmt(s.high,2)} MHz`}>{s.fraction>.13?(s.masked?'Masked':'Kept'):null}</div>):<span>Unknown</span>}
-        </div>
-        <div className="search-mask-axis" aria-hidden="true">{ticks.map((f:number,i:number)=><span key={f} style={{left:`${100*(f-band.low_mhz)/(band.high_mhz-band.low_mhz)}%`}} className={i===0?'first':i===ticks.length-1?'last':''}>{fmt(f,1)}</span>)}</div>
-        <div className="search-mask-unit">Frequency (MHz)</div>
-        <table className="search-mask-ranges" aria-label="Mask frequency ranges"><thead><tr><th scope="col">Band</th><th scope="col">Frequency (MHz)</th><th scope="col">Channels</th></tr></thead><tbody>
-          {segments?segments.map(s=><tr key={s.first}><th scope="row"><i className={s.masked?'masked':'kept'}/>{s.masked?'Masked':'Kept'}</th><td>{fmt(s.low,2)}–{fmt(s.high,2)}</td><td>{s.first}–{s.last}</td></tr>):<tr><td colSpan={3}>Mask unavailable</td></tr>}
-        </tbody></table>
-        <p>{segments&&!masked?'No static mask. ':''}Channel 0 is the high-frequency end.{st?.enabled?' SumThreshold’s time-varying flags are separate.':''}</p>
-      </section>
+      <table className="search-settings-table" aria-label="Flagging settings"><thead><tr><th scope="col">Flagging</th><th scope="col">Current value</th></tr></thead><tbody>
+        <tr><th scope="row">SumThreshold RFI</th><td><span className={`search-config-badge ${st?.enabled===true?'on':st?.enabled===false?'off':'unknown'}`}>{st?.enabled===true?'ON':st?.enabled===false?'OFF':'Unknown'}</span></td></tr>
+        <tr><th scope="row">Channel mask</th><td><span className={`search-config-badge ${maskState}`}>{maskState==='unknown'?'Unknown':maskState.toUpperCase()}</span></td></tr>
+        <tr><th scope="row">Masked frequencies</th><td>{masked?<>{masked.low.toFixed(2)}–{masked.high.toFixed(2)} <span>MHz</span></>:segments?'None':'—'}</td></tr>
+        <tr><th scope="row">Masked channels</th><td>{masked?<>{masked.first}–{masked.last} <span>· {fmt(masked.count)} channels</span></>:segments?'None':'—'}</td></tr>
+      </tbody></table>
     </div>
     <details className="search-config-details"><summary>Flagger settings & stream details</summary>
       {cfg&&<dl>
+        <div><dt>Channel numbering</dt><dd>Channel 0 is the high-frequency end. Channel indices are inclusive; frequencies give channel centres.<small>SumThreshold’s time-varying flags are separate from the static channel mask.</small></dd></div>
         <div><dt>SumThreshold</dt><dd>{st?.enabled?'ON · '+(st.parameters||'build defaults'):'OFF'}</dd></div>
         {st?.enabled&&<div><dt>Parameter order</dt><dd>χ₁ · ρ · min/max window (samples) · neighbour radius · optional blank fraction</dd></div>}
         <div><dt>Bandpass clipping</dt><dd>SPEC_MIN {fmt(cfg.spec_min,3)} · SPEC_MAX {fmt(cfg.spec_max,3)}</dd></div>

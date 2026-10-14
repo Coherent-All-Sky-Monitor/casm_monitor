@@ -6,16 +6,16 @@
 
 `GET /api/t1/configuration` reads the saved process-associated configuration
 for streams 0–7. It is independent of the selected plotting interval. The
-white Search configuration panel uses a setting/value table for DM/S/N,
-derived boxcar trial widths, gulp size, **SumThreshold RFI** ON/OFF, and static
-mask channel count. Beside it, a labelled frequency bar and range table show
-**Kept** and **Masked** regions in MHz and native channel indices. Frequency
-increases left to right. Channel indices are inclusive; frequencies identify
-channel centres.
-Kept means outside the static mask; dynamic flagging can still apply there.
+Search configuration panel uses two compact setting/value tables: Search
+(DM/S/N, derived boxcar trial widths and gulp size) and Flagging
+(**SumThreshold RFI**, **Channel mask**, **Masked frequencies** and
+**Masked channels**). There is no frequency bar. Channel indices are inclusive;
+frequencies identify channel centres. OFF masks show None for both ranges;
+unknown or invalid masks show Unknown and no ranges.
 All streams share one summary only when all eight settings agree. There is no
 stream selector; unexpected differences appear in the details table and prevent
-a common summary. Styling is neutral grey/charcoal, with green ON badges.
+a common summary. Styling uses warm off-white/taupe rows, dark text and muted
+green ON badges. The tables stack on narrow screens.
 SCRUNCH passes, spectral
 clipping bounds and explicitly configured baseline/quantisation parameters
 remain in the disclosure. Boxcar trials follow the fork's rounded geometric
@@ -39,7 +39,7 @@ association, not introspection of process memory or proof of flagger efficacy.
 The mask follows the deployed fork's `[FLAG1, FLAG2)` convention and requires
 a configured flagging SCRUNCH pass. Channel 0 is 484.375 MHz; spacing is
 −0.030517578125 MHz across 3072 channels. Thus FLAG1=0, FLAG2=472 labels
-channels 0–471, 470.0012–484.375 MHz (channel centres). The striped region is
+channels 0–471, 470.0012–484.375 MHz (channel centres). The mask rows describe
 the static mask only, not per-gulp SumThreshold decisions. SumThreshold is
 enabled by the presence of its config line, including a defaults-only line;
 its numeric parameters are shown in their native order. Other omitted
@@ -47,8 +47,8 @@ parameters are not silently filled from source-code defaults.
 
 Verification: `tests/test_hella_runtime.py` plus the collector and T1 suites
 cover saved configuration reads. `frontend/tests/search-mask.test.mjs` and
-`scripts/check_search_configuration_browser.py` cover mask placement, table
-layout, desktop/mobile widths and mixed/OFF/Unknown/interior-mask states.
+`scripts/check_search_configuration_browser.py` cover mask ranges, table
+layout, desktop/mobile widths and mixed/OFF/Unknown/interior/invalid-mask states.
 No search/trigger setting, mask, running HELLA process or T2 service is changed
 by this panel.
 
