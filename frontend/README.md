@@ -129,11 +129,12 @@ activation remains separate from the preview build.
 scales and the shared click-to-zoom viewer. Zoom pins the image and interval;
 it does not query or rebin data. Stream cards wrap on smaller screens.
 Its **Search configuration** card has one row per setting in two compact
-sections: Search and Flagging. The mask has separate status, frequency and
+headerless tables. The mask has separate status, frequency and
 channel rows, with no bar graphic. SumThreshold RFI has an ON/OFF badge.
-All streams share one display with no
-selector; mismatches and detailed flag parameters are in the disclosure.
-Warm off-white/taupe rows use dark text and muted green badges. The two columns stack on narrow
+All streams share one display with no selector. **Details** keeps sampling,
+boxcar trials and last-check times; the per-stream table only appears for
+differences or unavailable reads. Raw parameters remain available in the API.
+White backgrounds use black text and green badges. The two columns stack on narrow
 screens. This card remains current when the plotted interval is historical.
 It polls saved evidence, never contacting the correlators from a page request.
 See [configuration API and freshness](../docs/api-search.md).

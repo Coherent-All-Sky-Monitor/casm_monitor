@@ -6,7 +6,7 @@
 
 `GET /api/t1/configuration` reads the saved process-associated configuration
 for streams 0–7. It is independent of the selected plotting interval. The
-Search configuration panel uses two compact setting/value tables: Search
+Search configuration panel uses two compact, headerless setting/value tables: Search
 (DM/S/N, derived boxcar trial widths and gulp size) and Flagging
 (**SumThreshold RFI**, **Channel mask**, **Masked frequencies** and
 **Masked channels**). There is no frequency bar. Channel indices are inclusive;
@@ -14,13 +14,13 @@ frequencies identify channel centres. OFF masks show None for both ranges;
 unknown or invalid masks show Unknown and no ranges.
 All streams share one summary only when all eight settings agree. There is no
 stream selector; unexpected differences appear in the details table and prevent
-a common summary. Styling uses warm off-white/taupe rows, dark text and muted
-green ON badges. The tables stack on narrow screens.
-SCRUNCH passes, spectral
-clipping bounds and explicitly configured baseline/quantisation parameters
-remain in the disclosure. Boxcar trials follow the fork's rounded geometric
+a common summary. Styling uses white backgrounds, black text and green status
+badges. The tables stack on narrow screens. **Details** shows sampling, boxcar
+trials and each correlator's last-check time. The per-stream table only appears
+when settings differ or are unavailable. Raw flagger/config parameters remain
+in the API rather than the user interface. Boxcar trials follow the fork's rounded geometric
 grid, capped at WIDTH_MAX/2 and 15 trials: MIN=1, MAX=128, ratio=2 means
-1, 2, 4, 8, 16, 32, 64 samples. Raw settings remain in details; the Search
+1, 2, 4, 8, 16, 32, 64 samples. Raw settings remain in the API; the Search
 histogram's existing 0–6 display is unchanged.
 
 Two `HellaRuntimeCollector` instances sample every 60 seconds: local `/proc`
@@ -42,7 +42,7 @@ a configured flagging SCRUNCH pass. Channel 0 is 484.375 MHz; spacing is
 channels 0–471, 470.0012–484.375 MHz (channel centres). The mask rows describe
 the static mask only, not per-gulp SumThreshold decisions. SumThreshold is
 enabled by the presence of its config line, including a defaults-only line;
-its numeric parameters are shown in their native order. Other omitted
+its numeric parameters are retained in their native order in the API. Other omitted
 parameters are not silently filled from source-code defaults.
 
 Verification: `tests/test_hella_runtime.py` plus the collector and T1 suites

@@ -24,13 +24,15 @@ def main():
         page.on('request', lambda r: writes.append(r.url) if r.method not in ('GET','HEAD') else None)
         page.goto(BASE+'/search',wait_until='domcontentloaded')
         card = page.get_by_role('region',name='Current HELLA search configuration')
-        expect(card.get_by_text('All 8 match',exact=True)).to_be_visible(timeout=30000)
+        expect(card.get_by_text('All 8 streams match',exact=True)).to_be_visible(timeout=30000)
         expect(card.get_by_role('table',name='Flagging settings')).to_contain_text('ON')
         expect(card.get_by_role('table',name='Search settings')).to_contain_text('1–64')
         expect(card.get_by_role('table',name='Flagging settings')).to_contain_text('470.00–484.38 MHz')
         expect(card.get_by_role('table',name='Flagging settings')).to_contain_text('0–471')
         expect(card.get_by_role('img')).to_have_count(0)
         expect(card.get_by_role('combobox')).to_have_count(0)
+        expect(card.locator('.search-settings-table thead')).to_have_count(0)
+        assert card.evaluate("e=>getComputedStyle(e).backgroundColor") == 'rgb(255, 255, 255)'
         for width in (1600,1440,800,390):
             page.set_viewport_size({'width':width,'height':1050})
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'), width
@@ -38,8 +40,12 @@ def main():
         page.set_viewport_size({'width':1600,'height':1050})
         page.screenshot(path=str(OUTPUT/'search-live.png'))
         card.locator('summary').click()
-        expect(card.locator('.search-config-table')).to_contain_text('4 · corr2')
-        expect(card).to_contain_text('1 1 1000000 1')
+        expect(card.locator('.search-config-table')).to_have_count(0)
+        expect(card).to_contain_text('corr1 last checked')
+        expect(card).to_contain_text('1, 2, 4, 8, 16, 32, 64 samples')
+        expect(card).not_to_contain_text('SCRUNCH')
+        expect(card).not_to_contain_text('SPEC_MIN')
+        card.screenshot(path=str(OUTPUT/'configuration-details.png'))
         page.close()
 
         for mode in ('mixed','off','unknown','failure','interior','invalid'):
