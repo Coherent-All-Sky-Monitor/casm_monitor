@@ -6,10 +6,17 @@
 
 `GET /api/t1/configuration` reads the saved process-associated configuration
 for streams 0–7. It is independent of the selected plotting interval. The
-white Search configuration panel presents DM/S/N, derived boxcar trial widths,
-gulp size, **SumThreshold RFI** ON/OFF, and the static mask as channels and MHz.
-All streams share one summary only when all eight settings agree; stream
-buttons and the details table expose differences. SCRUNCH passes, spectral
+white Search configuration panel uses a setting/value table for DM/S/N,
+derived boxcar trial widths, gulp size, **SumThreshold RFI** ON/OFF, and static
+mask channel count. Beside it, a labelled frequency bar and range table show
+**Kept** and **Masked** regions in MHz and native channel indices. Frequency
+increases left to right. Channel indices are inclusive; frequencies identify
+channel centres.
+Kept means outside the static mask; dynamic flagging can still apply there.
+All streams share one summary only when all eight settings agree. There is no
+stream selector; unexpected differences appear in the details table and prevent
+a common summary. Styling is neutral grey/charcoal, with green ON badges.
+SCRUNCH passes, spectral
 clipping bounds and explicitly configured baseline/quantisation parameters
 remain in the disclosure. Boxcar trials follow the fork's rounded geometric
 grid, capped at WIDTH_MAX/2 and 15 trials: MIN=1, MAX=128, ratio=2 means
@@ -38,9 +45,12 @@ enabled by the presence of its config line, including a defaults-only line;
 its numeric parameters are shown in their native order. Other omitted
 parameters are not silently filled from source-code defaults.
 
-Verification: `tests/test_hella_runtime.py`, the collector and T1 suites, and
-`scripts/check_search_configuration_browser.py`. No search/trigger setting,
-mask, running HELLA process or T2 service is changed by this panel.
+Verification: `tests/test_hella_runtime.py` plus the collector and T1 suites
+cover saved configuration reads. `frontend/tests/search-mask.test.mjs` and
+`scripts/check_search_configuration_browser.py` cover mask placement, table
+layout, desktop/mobile widths and mixed/OFF/Unknown/interior-mask states.
+No search/trigger setting, mask, running HELLA process or T2 service is changed
+by this panel.
 
 ### Plots and stream liveness
 

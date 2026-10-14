@@ -1,6 +1,7 @@
 """Search configuration layout/interaction checks, GETs and browser fixtures only."""
 import copy
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import ProxyHandler, build_opener
 
@@ -24,23 +25,25 @@ def main():
         page.goto(BASE+'/search',wait_until='domcontentloaded')
         card = page.get_by_role('region',name='Current HELLA search configuration')
         expect(card.get_by_text('All 8 match',exact=True)).to_be_visible(timeout=30000)
-        expect(card.locator('.search-config-metrics')).to_contain_text('ON')
-        expect(card.locator('.search-config-metrics')).to_contain_text('1–64')
+        expect(card.get_by_role('table',name='Search settings')).to_contain_text('ON')
+        expect(card.get_by_role('table',name='Search settings')).to_contain_text('1–64')
+        expect(card.get_by_role('table',name='Mask frequency ranges')).to_contain_text('470–484.38')
+        expect(card.get_by_role('table',name='Mask frequency ranges')).to_contain_text('0–471')
+        expect(card.get_by_role('combobox')).to_have_count(0)
         for width in (1600,1440,800,390):
             page.set_viewport_size({'width':width,'height':1050})
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'), width
             card.screenshot(path=str(OUTPUT/f'configuration-{width}.png'))
         page.set_viewport_size({'width':1600,'height':1050})
         page.screenshot(path=str(OUTPUT/'search-live.png'))
-        card.get_by_role('button',name='4',exact=True).click()
-        expect(card.get_by_text('Stream 4 · corr2',exact=True)).to_be_visible()
         card.locator('summary').click()
-        expect(card).to_contain_text('/tmp/hella_4.cfg')
+        expect(card.locator('.search-config-table')).to_contain_text('4 · corr2')
         expect(card).to_contain_text('1 1 1000000 1')
         page.close()
 
-        for mode in ('mixed','off','unknown','failure'):
+        for mode in ('mixed','off','unknown','failure','interior'):
             fixture = copy.deepcopy(live)
+            fixture['checked_utc'] = datetime.now(timezone.utc).isoformat()
             if mode == 'mixed':
                 fixture.update(all_match=False,common=None)
                 fixture['streams'][4]['settings']['snr'] = 13
@@ -51,6 +54,8 @@ def main():
                 fixture.update(all_match=False,common=None,verified_count=0)
                 for stream in fixture['streams']:
                     stream.update(status='unknown',settings=None,reason='Configuration edited after launch')
+            elif mode == 'interior':
+                fixture['common']['mask'].update(enabled=True,first=1000,last=1500)
             context = browser.new_context(viewport={'width':1440,'height':1050})
             context.route('**/api/t1/configuration',lambda route,_request,body=fixture,mode=mode:route.fulfill(
                 status=503 if mode=='failure' else 200,content_type='application/json',body=json.dumps(body)))
@@ -60,21 +65,27 @@ def main():
             card = page.get_by_role('region',name='Current HELLA search configuration')
             if mode == 'mixed':
                 expect(card).to_contain_text('Settings differ',timeout=15000)
-                expect(card.locator('.search-config-metrics .on')).to_have_count(0)
-                card.get_by_role('button',name='4',exact=True).click()
-                expect(card.locator('.search-config-metrics')).to_contain_text('≥ 13')
+                expect(card.locator('.search-settings-table .on')).to_have_count(0)
+                card.locator('summary').click()
+                expect(card.locator('.search-config-table tbody tr').nth(4)).to_contain_text('13')
             elif mode == 'off':
-                expect(card.locator('.search-config-metrics .off')).to_have_text('OFF')
-                expect(card.locator('.search-band-track i')).to_have_count(0)
+                expect(card.locator('.search-settings-table .off')).to_have_text('OFF')
+                expect(card.locator('.search-mask-track .masked')).to_have_count(0)
+                expect(card.locator('.search-mask-track .kept')).to_have_count(1)
+            elif mode == 'interior':
+                expect(card.locator('.search-mask-track .masked')).to_have_count(1)
+                expect(card.locator('.search-mask-track .kept')).to_have_count(2)
+                expect(card.get_by_role('table',name='Mask frequency ranges')).to_contain_text('1000–1500')
             else:
                 expect(card.locator('.search-config-note')).to_contain_text(
                     'Configuration read unavailable' if mode=='failure' else 'Some streams are unverified')
-                expect(card.locator('.search-config-metrics .on')).to_have_count(0)
+                expect(card.locator('.search-settings-table .on')).to_have_count(0)
+                expect(card.locator('.search-mask-track .kept')).to_have_count(0)
             context.close()
         browser.close()
     assert not errors, errors
     assert not writes, writes
-    print(json.dumps({'checks':'live, responsive, stream details, mixed, off, unknown, failed read',
+    print(json.dumps({'checks':'live tables/ranges, responsive, no selector, stream details, mixed, off, unknown, failed read, interior mask',
                       'errors':errors,'writes':writes,'screenshots':str(OUTPUT)},indent=2))
 
 

@@ -128,10 +128,12 @@ activation remains separate from the preview build.
 `/search` is **Search (T1)**, with white Matplotlib figures, labelled count
 scales and the shared click-to-zoom viewer. Zoom pins the image and interval;
 it does not query or rebin data. Stream cards wrap on smaller screens.
-Its white **Search configuration** card shows current process-associated HELLA
-settings, SumThreshold RFI ON/OFF and a striped static-mask band. All-stream and
-individual-stream buttons expose mismatches; detailed flag parameters are
-collapsed. This card remains current when the plotted interval is historical.
+Its white **Search configuration** card has one row per main setting and a
+labelled **Kept / Masked** frequency bar with MHz/channel ranges beneath it.
+SumThreshold RFI has an ON/OFF badge. All streams share one display with no
+selector; mismatches and detailed flag parameters are in the disclosure.
+The white/charcoal/grey palette reserves green for status. The two columns stack on narrow
+screens. This card remains current when the plotted interval is historical.
 It polls saved evidence, never contacting the correlators from a page request.
 See [configuration API and freshness](../docs/api-search.md).
 `/cal/compare`, `/cal/transit`,
